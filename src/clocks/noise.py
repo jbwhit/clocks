@@ -30,3 +30,21 @@ def log_likelihood_gaussian(
         -0.5 * np.sum((residuals / noise_std) ** 2)
         - len(residuals) * np.log(noise_std * np.sqrt(2 * np.pi))
     )
+
+
+def log_likelihood_gaussian_batch(
+    observed: NDArray[np.floating],
+    predicted_batch: NDArray[np.floating],
+    noise_std: float,
+) -> NDArray[np.floating]:
+    """Batch log-likelihood: one observed vector vs many predicted vectors.
+
+    observed: (n_clocks,)
+    predicted_batch: (n_particles, n_clocks)
+    Returns: (n_particles,) log-likelihoods.
+    """
+    residuals = observed[np.newaxis, :] - predicted_batch
+    n_clocks = observed.shape[0]
+    return -0.5 * np.sum((residuals / noise_std) ** 2, axis=1) - n_clocks * np.log(
+        noise_std * np.sqrt(2 * np.pi)
+    )

@@ -2,7 +2,11 @@
 
 import numpy as np
 
-from clocks.noise import add_clock_noise, log_likelihood_gaussian
+from clocks.noise import (
+    add_clock_noise,
+    log_likelihood_gaussian,
+    log_likelihood_gaussian_batch,
+)
 
 
 class TestAddClockNoise:
@@ -48,3 +52,31 @@ class TestLogLikelihood:
         ll_above = log_likelihood_gaussian(observed, observed + 0.02, noise_std)
         ll_below = log_likelihood_gaussian(observed, observed - 0.02, noise_std)
         np.testing.assert_allclose(ll_above, ll_below)
+
+
+class TestLogLikelihoodBatch:
+    def test_matches_scalar(self) -> None:
+        """Batch result should match calling scalar version per row."""
+        observed = np.array([0.9, 0.95, 0.99])
+        predicted_batch = np.array(
+            [
+                [0.9, 0.95, 0.99],
+                [0.88, 0.93, 0.97],
+                [0.92, 0.96, 1.00],
+            ]
+        )
+        noise_std = 0.01
+        batch_ll = log_likelihood_gaussian_batch(observed, predicted_batch, noise_std)
+        scalar_ll = np.array(
+            [
+                log_likelihood_gaussian(observed, predicted_batch[i], noise_std)
+                for i in range(3)
+            ]
+        )
+        np.testing.assert_allclose(batch_ll, scalar_ll)
+
+    def test_shape(self) -> None:
+        observed = np.array([0.9, 0.95])
+        predicted_batch = np.ones((50, 2)) * 0.9
+        result = log_likelihood_gaussian_batch(observed, predicted_batch, 0.01)
+        assert result.shape == (50,)

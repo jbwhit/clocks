@@ -72,3 +72,36 @@ def clock_rates(
     )
     potential = gravitational_potential(distances, mass_config.masses)
     return time_dilation_factor(potential)
+
+
+def clock_rates_batch(
+    mass_positions: NDArray[np.floating],
+    masses: NDArray[np.floating],
+    clock_array: ClockArray,
+) -> NDArray[np.floating]:
+    """Batch forward model for single-mass particles.
+
+    Computes predicted clock rates for many hypothesized point masses at once.
+
+    mass_positions: (n_particles, n_dims) — position of each particle's mass
+    masses: (n_particles,) — mass value for each particle
+    clock_array: the fixed clock layout
+
+    Returns: (n_particles, n_clocks) array of predicted rates.
+    """
+    # clock_array.positions: (n_clocks, n_dims)
+    # mass_positions: (n_particles, n_dims)
+    # diff: (n_clocks, n_particles, n_dims)
+    diff = clock_array.positions[:, np.newaxis, :] - mass_positions[np.newaxis, :, :]
+    dist_sq = np.sum(diff**2, axis=-1) + clock_array.track_offset**2
+    distances = np.sqrt(dist_sq)  # (n_clocks, n_particles)
+
+    # potential: (n_clocks, n_particles)
+    safe_dist = np.maximum(distances, _EPS)
+    potential = -masses[np.newaxis, :] / safe_dist
+
+    # dilation: (n_clocks, n_particles)
+    argument = 1.0 + 2.0 * potential
+    rates = np.sqrt(np.maximum(argument, _EPS))
+
+    return rates.T  # (n_particles, n_clocks)

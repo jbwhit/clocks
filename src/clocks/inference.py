@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from clocks.noise import log_likelihood_gaussian
+from clocks.noise import log_likelihood_gaussian, log_likelihood_gaussian_batch
 from clocks.types import Observation, ParticleState
 
 
@@ -23,11 +23,13 @@ class ParticleFilter:
     ----------
     n_particles : Number of particles.
     prior_sampler : Callable(rng, n) → (n, n_params) array of prior samples.
-    forward_model : Callable(params) → (n_clocks,) predicted rates.
+    forward_model : Callable(params) → (n_clocks,) predicted rates for one particle.
     noise_std : Observation noise standard deviation.
     resample_threshold : Resample when ESS / n_particles drops below this.
     jitter_std : Std of Gaussian jitter applied after resampling.
     rng : Numpy random generator.
+    forward_model_batch : Optional Callable(particles) → (n_particles, n_clocks).
+        If provided, used instead of looping forward_model per particle.
     """
 
     def __init__(
@@ -39,9 +41,12 @@ class ParticleFilter:
         resample_threshold: float = 0.5,
         jitter_std: float = 0.01,
         rng: np.random.Generator | None = None,
+        forward_model_batch: Callable[[NDArray[np.floating]], NDArray[np.floating]]
+        | None = None,
     ) -> None:
         self.n_particles = n_particles
         self.forward_model = forward_model
+        self.forward_model_batch = forward_model_batch
         self.noise_std = noise_std
         self.resample_threshold = resample_threshold
         self.jitter_std = jitter_std
@@ -71,10 +76,18 @@ class ParticleFilter:
 
         # Reweight each particle by its likelihood
         log_weights = np.log(weights)
-        for i in range(self.n_particles):
-            predicted = self.forward_model(particles[i])
-            ll = log_likelihood_gaussian(observation.rates, predicted, self.noise_std)
-            log_weights[i] += ll
+        if self.forward_model_batch is not None:
+            predicted_batch = self.forward_model_batch(particles)
+            log_weights += log_likelihood_gaussian_batch(
+                observation.rates, predicted_batch, self.noise_std
+            )
+        else:
+            for i in range(self.n_particles):
+                predicted = self.forward_model(particles[i])
+                ll = log_likelihood_gaussian(
+                    observation.rates, predicted, self.noise_std
+                )
+                log_weights[i] += ll
 
         # Normalize weights (log-sum-exp for numerical stability)
         log_weights -= np.max(log_weights)

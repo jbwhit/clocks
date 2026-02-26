@@ -10,7 +10,7 @@ import numpy as np
 
 from clocks.inference import ParticleFilter
 from clocks.noise import add_clock_noise
-from clocks.physics import clock_rates
+from clocks.physics import clock_rates, clock_rates_batch
 from clocks.types import ClockArray, MassConfig, Observation
 from clocks.viz import animate_inference_2d
 
@@ -77,6 +77,9 @@ def main() -> None:
         )
         return clock_rates(mc, clock_array)
 
+    def forward_model_batch(particles: np.ndarray) -> np.ndarray:
+        return clock_rates_batch(particles[:, :2], particles[:, 2], clock_array)
+
     pf = ParticleFilter(
         n_particles=N_PARTICLES,
         prior_sampler=prior_sampler,
@@ -84,6 +87,7 @@ def main() -> None:
         noise_std=NOISE_STD,
         jitter_std=JITTER_STD,
         rng=rng,
+        forward_model_batch=forward_model_batch,
     )
 
     # Animate and save

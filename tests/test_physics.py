@@ -4,6 +4,7 @@ import numpy as np
 
 from clocks.physics import (
     clock_rates,
+    clock_rates_batch,
     compute_distances,
     gravitational_potential,
     time_dilation_factor,
@@ -139,3 +140,49 @@ class TestClockRates:
         ca = ClockArray(positions=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
         rates = clock_rates(mc, ca)
         np.testing.assert_allclose(rates[0], rates[1])
+
+
+class TestClockRatesBatch:
+    def test_matches_scalar_1d(self) -> None:
+        """Batch should match calling clock_rates per particle."""
+        ca = ClockArray(
+            positions=np.array([[-5.0], [0.0], [5.0]]),
+            track_offset=1.0,
+        )
+        mass_positions = np.array([[1.0], [3.0], [-2.0]])
+        masses = np.array([0.5, 0.8, 0.3])
+
+        batch_result = clock_rates_batch(mass_positions, masses, ca)
+        assert batch_result.shape == (3, 3)
+
+        for i in range(3):
+            mc = MassConfig(
+                positions=mass_positions[i : i + 1], masses=masses[i : i + 1]
+            )
+            scalar_result = clock_rates(mc, ca)
+            np.testing.assert_allclose(batch_result[i], scalar_result)
+
+    def test_matches_scalar_2d(self) -> None:
+        ca = ClockArray(
+            positions=np.array([[0.0, 0.0], [3.0, 4.0], [-2.0, 1.0]]),
+            track_offset=2.0,
+        )
+        mass_positions = np.array([[1.0, -1.0], [2.0, 3.0]])
+        masses = np.array([0.4, 0.6])
+
+        batch_result = clock_rates_batch(mass_positions, masses, ca)
+        assert batch_result.shape == (2, 3)
+
+        for i in range(2):
+            mc = MassConfig(
+                positions=mass_positions[i : i + 1], masses=masses[i : i + 1]
+            )
+            scalar_result = clock_rates(mc, ca)
+            np.testing.assert_allclose(batch_result[i], scalar_result)
+
+    def test_shape(self) -> None:
+        ca = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]))
+        mass_positions = np.array([[1.0], [2.0], [3.0], [4.0]])
+        masses = np.array([0.1, 0.2, 0.3, 0.4])
+        result = clock_rates_batch(mass_positions, masses, ca)
+        assert result.shape == (4, 3)

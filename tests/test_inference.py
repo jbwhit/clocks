@@ -4,7 +4,7 @@ import numpy as np
 
 from clocks.inference import ParticleFilter
 from clocks.noise import add_clock_noise
-from clocks.physics import clock_rates
+from clocks.physics import clock_rates, clock_rates_batch
 from clocks.types import ClockArray, MassConfig, Observation
 
 
@@ -141,3 +141,54 @@ class TestParticleFilter:
         # 1 initial + 10 updates
         assert len(pf.history) == 11
         assert pf.state.observations_seen == 10
+
+    def test_batch_matches_scalar(self) -> None:
+        """Batch forward model should produce same estimates as scalar."""
+        true_x, true_m = 2.5, 0.8
+        mc, ca = _make_1d_scenario(true_x, true_m)
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def forward_batch(particles: np.ndarray) -> np.ndarray:
+            return clock_rates_batch(particles[:, :1], particles[:, 1], ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        # Run scalar version
+        rng1 = np.random.default_rng(42)
+        pf_scalar = ParticleFilter(
+            n_particles=200,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            jitter_std=0.01,
+            rng=rng1,
+        )
+
+        # Run batch version with same seed
+        rng2 = np.random.default_rng(42)
+        pf_batch = ParticleFilter(
+            n_particles=200,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            jitter_std=0.01,
+            rng=rng2,
+            forward_model_batch=forward_batch,
+        )
+
+        # Same observations for both
+        rng_obs = np.random.default_rng(99)
+        for t in range(10):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng_obs)
+            obs = Observation(rates=noisy, time=float(t))
+            pf_scalar.update(obs)
+            pf_batch.update(obs)
+
+        est_scalar = pf_scalar.estimate()
+        est_batch = pf_batch.estimate()
+        np.testing.assert_allclose(est_scalar["mean"], est_batch["mean"], atol=1e-10)
+        np.testing.assert_allclose(est_scalar["std"], est_batch["std"], atol=1e-10)
