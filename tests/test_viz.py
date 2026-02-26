@@ -16,7 +16,6 @@ from clocks.viz import (
     animate_inference_2d,
     animate_inference_multi_1d,
     create_inference_dashboard,
-    create_inference_dashboard_2d,
     plot_clock_rates,
     plot_clock_rates_2d,
     plot_clock_setup,
@@ -202,73 +201,35 @@ class TestCreateDashboards:
         assert set(axes.keys()) == {"setup", "particles", "rates", "history"}
         plt.close(fig)
 
-    def test_2d_dashboard_keys(self) -> None:
-        fig, axes = create_inference_dashboard_2d()
+    def test_custom_figsize(self) -> None:
+        fig, axes = create_inference_dashboard(figsize=(13, 10))
         assert set(axes.keys()) == {"setup", "particles", "rates", "history"}
+        w, h = fig.get_size_inches()
+        assert (w, h) == (13, 10)
         plt.close(fig)
 
 
 # -- Animation (end-to-end with small data) --
 
 
-def _make_pf_and_obs_1d(
-    clock_array: ClockArray, mass_config: MassConfig, n_obs: int = 3
+def _make_pf_and_obs(
+    clock_array: ClockArray,
+    mass_config: MassConfig,
+    prior_sampler: callable,
+    forward_model: callable,
+    n_obs: int = 3,
 ) -> tuple[ParticleFilter, list[Observation]]:
+    """Build a ParticleFilter and observations for any scenario."""
     rng = np.random.default_rng(99)
     true_rates = clock_rates(mass_config, clock_array)
     observations = [
         Observation(rates=add_clock_noise(true_rates, 0.005, rng), time=float(t))
         for t in range(n_obs)
     ]
-
-    def prior(rng: np.random.Generator, n: int) -> np.ndarray:
-        return np.column_stack([rng.uniform(-5, 5, n), rng.uniform(0.1, 2, n)])
-
-    def fwd(params: np.ndarray) -> np.ndarray:
-        mc = MassConfig(positions=np.array([[params[0]]]), masses=np.array([params[1]]))
-        return clock_rates(mc, clock_array)
-
     pf = ParticleFilter(
         n_particles=50,
-        prior_sampler=prior,
-        forward_model=fwd,
-        noise_std=0.005,
-        jitter_std=0.02,
-        rng=rng,
-    )
-    return pf, observations
-
-
-def _make_pf_and_obs_2d(
-    clock_array: ClockArray, mass_config: MassConfig, n_obs: int = 3
-) -> tuple[ParticleFilter, list[Observation]]:
-    rng = np.random.default_rng(99)
-    true_rates = clock_rates(mass_config, clock_array)
-    observations = [
-        Observation(rates=add_clock_noise(true_rates, 0.005, rng), time=float(t))
-        for t in range(n_obs)
-    ]
-
-    def prior(rng: np.random.Generator, n: int) -> np.ndarray:
-        return np.column_stack(
-            [
-                rng.uniform(-5, 5, n),
-                rng.uniform(-5, 5, n),
-                rng.uniform(0.1, 2, n),
-            ]
-        )
-
-    def fwd(params: np.ndarray) -> np.ndarray:
-        mc = MassConfig(
-            positions=np.array([[params[0], params[1]]]),
-            masses=np.array([params[2]]),
-        )
-        return clock_rates(mc, clock_array)
-
-    pf = ParticleFilter(
-        n_particles=50,
-        prior_sampler=prior,
-        forward_model=fwd,
+        prior_sampler=prior_sampler,
+        forward_model=forward_model,
         noise_std=0.005,
         jitter_std=0.02,
         rng=rng,
@@ -283,7 +244,16 @@ class TestAnimateInference:
         mass_config_1d: MassConfig,
         tmp_path: Path,
     ) -> None:
-        pf, obs = _make_pf_and_obs_1d(clock_array_1d, mass_config_1d, n_obs=3)
+        def prior(rng: np.random.Generator, n: int) -> np.ndarray:
+            return np.column_stack([rng.uniform(-5, 5, n), rng.uniform(0.1, 2, n)])
+
+        def fwd(params: np.ndarray) -> np.ndarray:
+            mc = MassConfig(
+                positions=np.array([[params[0]]]), masses=np.array([params[1]])
+            )
+            return clock_rates(mc, clock_array_1d)
+
+        pf, obs = _make_pf_and_obs(clock_array_1d, mass_config_1d, prior, fwd, n_obs=3)
         out = tmp_path / "test.gif"
         animate_inference(
             clock_array=clock_array_1d,
@@ -303,7 +273,19 @@ class TestAnimateInference2d:
         mass_config_2d: MassConfig,
         tmp_path: Path,
     ) -> None:
-        pf, obs = _make_pf_and_obs_2d(clock_array_2d, mass_config_2d, n_obs=3)
+        def prior(rng: np.random.Generator, n: int) -> np.ndarray:
+            return np.column_stack(
+                [rng.uniform(-5, 5, n), rng.uniform(-5, 5, n), rng.uniform(0.1, 2, n)]
+            )
+
+        def fwd(params: np.ndarray) -> np.ndarray:
+            mc = MassConfig(
+                positions=np.array([[params[0], params[1]]]),
+                masses=np.array([params[2]]),
+            )
+            return clock_rates(mc, clock_array_2d)
+
+        pf, obs = _make_pf_and_obs(clock_array_2d, mass_config_2d, prior, fwd, n_obs=3)
         out = tmp_path / "test_2d.gif"
         animate_inference_2d(
             clock_array=clock_array_2d,
@@ -364,41 +346,6 @@ class TestPlotParticleCloudMulti1d:
         plt.close(fig)
 
 
-def _make_pf_and_obs_multi_1d(
-    clock_array: ClockArray, mass_config: MassConfig, n_obs: int = 3
-) -> tuple[ParticleFilter, list[Observation]]:
-    rng = np.random.default_rng(99)
-    true_rates = clock_rates(mass_config, clock_array)
-    observations = [
-        Observation(rates=add_clock_noise(true_rates, 0.005, rng), time=float(t))
-        for t in range(n_obs)
-    ]
-
-    def prior(rng: np.random.Generator, n: int) -> np.ndarray:
-        x = rng.uniform(-5, 5, (n, 2))
-        x.sort(axis=1)
-        return np.column_stack(
-            [x[:, 0], x[:, 1], rng.uniform(0.1, 2, n), rng.uniform(0.1, 2, n)]
-        )
-
-    def fwd(params: np.ndarray) -> np.ndarray:
-        mc = MassConfig(
-            positions=np.array([[params[0]], [params[1]]]),
-            masses=np.array([params[2], params[3]]),
-        )
-        return clock_rates(mc, clock_array)
-
-    pf = ParticleFilter(
-        n_particles=50,
-        prior_sampler=prior,
-        forward_model=fwd,
-        noise_std=0.005,
-        jitter_std=0.02,
-        rng=rng,
-    )
-    return pf, observations
-
-
 class TestAnimateInferenceMulti1d:
     def test_produces_gif(
         self,
@@ -406,8 +353,22 @@ class TestAnimateInferenceMulti1d:
         mass_config_multi_1d: MassConfig,
         tmp_path: Path,
     ) -> None:
-        pf, obs = _make_pf_and_obs_multi_1d(
-            clock_array_multi_1d, mass_config_multi_1d, n_obs=3
+        def prior(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-5, 5, (n, 2))
+            x.sort(axis=1)
+            return np.column_stack(
+                [x[:, 0], x[:, 1], rng.uniform(0.1, 2, n), rng.uniform(0.1, 2, n)]
+            )
+
+        def fwd(params: np.ndarray) -> np.ndarray:
+            mc = MassConfig(
+                positions=np.array([[params[0]], [params[1]]]),
+                masses=np.array([params[2], params[3]]),
+            )
+            return clock_rates(mc, clock_array_multi_1d)
+
+        pf, obs = _make_pf_and_obs(
+            clock_array_multi_1d, mass_config_multi_1d, prior, fwd, n_obs=3
         )
         out = tmp_path / "test_multi.gif"
         animate_inference_multi_1d(

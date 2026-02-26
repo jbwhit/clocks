@@ -1,6 +1,6 @@
 """Gravitational time dilation simulation and inference library."""
 
-from clocks.inference import ParticleFilter
+from clocks.inference import Estimate, ParticleFilter
 from clocks.noise import (
     add_clock_noise,
     log_likelihood_gaussian,
@@ -20,7 +20,6 @@ from clocks.viz import (
     animate_inference_2d,
     animate_inference_multi_1d,
     create_inference_dashboard,
-    create_inference_dashboard_2d,
     plot_clock_rates,
     plot_clock_rates_2d,
     plot_clock_setup,
@@ -33,6 +32,7 @@ from clocks.viz import (
 
 __all__ = [
     "ClockArray",
+    "Estimate",
     "MassConfig",
     "Observation",
     "ParticleFilter",
@@ -46,7 +46,6 @@ __all__ = [
     "clock_rates_batch_multi",
     "compute_distances",
     "create_inference_dashboard",
-    "create_inference_dashboard_2d",
     "gravitational_potential",
     "log_likelihood_gaussian",
     "log_likelihood_gaussian_batch",

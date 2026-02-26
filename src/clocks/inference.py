@@ -1,13 +1,21 @@
 """Particle filter (Sequential Monte Carlo) for mass inference."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
 
 from clocks.noise import log_likelihood_gaussian, log_likelihood_gaussian_batch
 from clocks.types import Observation, ParticleState
+
+
+class Estimate(TypedDict):
+    """Return type for ParticleFilter.estimate()."""
+
+    mean: NDArray[np.floating]
+    std: NDArray[np.floating]
+    ess: float
 
 
 class ParticleFilter:
@@ -129,7 +137,7 @@ class ParticleFilter:
         new_weights = np.ones(n) / n
         return new_particles, new_weights
 
-    def estimate(self) -> dict[str, Any]:
+    def estimate(self) -> Estimate:
         """Weighted mean and standard deviation of current particles."""
         p = self._state.particles
         w = self._state.weights

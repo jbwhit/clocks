@@ -323,30 +323,15 @@ def animate_inference(
         ax = axes["history"]
         ax.clear()
         steps = np.arange(1, len(means) + 1)
-        m = np.array(means)
-        s = np.array(stds)
-        ax.plot(steps, m[:, 0], color="tab:blue", label="x estimate")
-        ax.fill_between(
+        _plot_convergence(
+            ax,
             steps,
-            m[:, 0] - s[:, 0],
-            m[:, 0] + s[:, 0],
-            alpha=0.2,
-            color="tab:blue",
+            np.array(means),
+            np.array(stds),
+            true_params,
+            ["tab:blue", "tab:orange"],
+            ["x", "M"],
         )
-        ax.axhline(true_params[0], color="tab:blue", linestyle="--", alpha=0.5)
-        ax.plot(steps, m[:, 1], color="tab:orange", label="M estimate")
-        ax.fill_between(
-            steps,
-            m[:, 1] - s[:, 1],
-            m[:, 1] + s[:, 1],
-            alpha=0.2,
-            color="tab:orange",
-        )
-        ax.axhline(true_params[1], color="tab:orange", linestyle="--", alpha=0.5)
-        ax.set_xlabel("Observation #")
-        ax.set_ylabel("Parameter Value")
-        ax.legend(fontsize=8, loc="upper right")
-        ax.set_title("Convergence")
 
     anim = animation.FuncAnimation(
         fig,
@@ -354,32 +339,53 @@ def animate_inference(
         frames=len(observations),
         repeat=False,
     )
+    _save_animation(anim, fig, output_path, fps)
 
+
+def _save_animation(
+    anim: animation.FuncAnimation,
+    fig: Figure,
+    output_path: Path,
+    fps: int,
+) -> None:
+    """Save animation to file (gif or mp4) and close the figure."""
     suffix = output_path.suffix.lower()
     if suffix == ".gif":
         anim.save(str(output_path), writer="pillow", fps=fps)
     else:
         anim.save(str(output_path), fps=fps)
-
     plt.close(fig)
 
 
-def create_inference_dashboard_2d(
-    figsize: tuple[float, float] = (13, 10),
-) -> tuple[Figure, dict[str, Axes]]:
-    """Create a 2x2 dashboard for 2D inference animation.
-
-    Returns (fig, axes_dict) with keys: 'setup', 'particles', 'rates', 'history'.
-    """
-    fig, axs = plt.subplots(2, 2, figsize=figsize)
-    axes = {
-        "setup": axs[0, 0],
-        "particles": axs[0, 1],
-        "rates": axs[1, 0],
-        "history": axs[1, 1],
-    }
-    fig.tight_layout(pad=3.0)
-    return fig, axes
+def _plot_convergence(
+    ax: Axes,
+    steps: NDArray[np.integer],
+    means: NDArray[np.floating],
+    stds: NDArray[np.floating],
+    true_params: NDArray[np.floating],
+    colors: list[str],
+    labels: list[str],
+    *,
+    legend_kwargs: dict | None = None,
+) -> None:
+    """Plot convergence traces with uncertainty bands and true-value lines."""
+    for j, (color, lbl) in enumerate(zip(colors, labels)):
+        ax.plot(steps, means[:, j], color=color, label=f"{lbl} est")
+        ax.fill_between(
+            steps,
+            means[:, j] - stds[:, j],
+            means[:, j] + stds[:, j],
+            alpha=0.15,
+            color=color,
+        )
+        ax.axhline(true_params[j], color=color, linestyle="--", alpha=0.5)
+    ax.set_xlabel("Observation #")
+    ax.set_ylabel("Parameter Value")
+    legend_kw = {"fontsize": 8, "loc": "upper right"}
+    if legend_kwargs:
+        legend_kw.update(legend_kwargs)
+    ax.legend(**legend_kw)
+    ax.set_title("Convergence")
 
 
 def animate_inference_2d(
@@ -405,7 +411,7 @@ def animate_inference_2d(
     )
     true_rates = clock_rates(mass_config, clock_array)
 
-    fig, axes = create_inference_dashboard_2d()
+    fig, axes = create_inference_dashboard(figsize=(13, 10))
 
     # Static: physical setup
     plot_clock_setup_2d(axes["setup"], clock_array, mass_config)
@@ -477,31 +483,15 @@ def animate_inference_2d(
         ax = axes["history"]
         ax.clear()
         steps = np.arange(1, len(means) + 1)
-        m = np.array(means)
-        s = np.array(stds)
-
-        colors = ["tab:blue", "tab:green", "tab:orange"]
-        labels = ["x", "y", "M"]
-        for j, (color, lbl) in enumerate(zip(colors, labels)):
-            ax.plot(steps, m[:, j], color=color, label=f"{lbl} est")
-            ax.fill_between(
-                steps,
-                m[:, j] - s[:, j],
-                m[:, j] + s[:, j],
-                alpha=0.15,
-                color=color,
-            )
-            ax.axhline(
-                true_params[j],
-                color=color,
-                linestyle="--",
-                alpha=0.5,
-            )
-
-        ax.set_xlabel("Observation #")
-        ax.set_ylabel("Parameter Value")
-        ax.legend(fontsize=8, loc="upper right")
-        ax.set_title("Convergence")
+        _plot_convergence(
+            ax,
+            steps,
+            np.array(means),
+            np.array(stds),
+            true_params,
+            ["tab:blue", "tab:green", "tab:orange"],
+            ["x", "y", "M"],
+        )
 
     anim = animation.FuncAnimation(
         fig,
@@ -509,14 +499,7 @@ def animate_inference_2d(
         frames=len(observations),
         repeat=False,
     )
-
-    suffix = output_path.suffix.lower()
-    if suffix == ".gif":
-        anim.save(str(output_path), writer="pillow", fps=fps)
-    else:
-        anim.save(str(output_path), fps=fps)
-
-    plt.close(fig)
+    _save_animation(anim, fig, output_path, fps)
 
 
 def plot_particle_cloud_multi_1d(
@@ -574,14 +557,7 @@ def animate_inference_multi_1d(
     )
     true_rates = clock_rates(mass_config, clock_array)
 
-    fig, axs = plt.subplots(2, 2, figsize=(12, 8))
-    axes = {
-        "setup": axs[0, 0],
-        "particles": axs[0, 1],
-        "rates": axs[1, 0],
-        "history": axs[1, 1],
-    }
-    fig.tight_layout(pad=3.0)
+    fig, axes = create_inference_dashboard()
 
     # Static: physical setup
     plot_clock_setup(axes["setup"], clock_array, mass_config)
@@ -617,22 +593,16 @@ def animate_inference_multi_1d(
         ax = axes["history"]
         ax.clear()
         steps = np.arange(1, len(means) + 1)
-        m = np.array(means)
-        s = np.array(stds)
-        for j, (color, lbl) in enumerate(zip(_MULTI_COLORS, _MULTI_LABELS)):
-            ax.plot(steps, m[:, j], color=color, label=f"{lbl} est")
-            ax.fill_between(
-                steps,
-                m[:, j] - s[:, j],
-                m[:, j] + s[:, j],
-                alpha=0.15,
-                color=color,
-            )
-            ax.axhline(true_params[j], color=color, linestyle="--", alpha=0.5)
-        ax.set_xlabel("Observation #")
-        ax.set_ylabel("Parameter Value")
-        ax.legend(fontsize=7, loc="upper right", ncol=2)
-        ax.set_title("Convergence")
+        _plot_convergence(
+            ax,
+            steps,
+            np.array(means),
+            np.array(stds),
+            true_params,
+            _MULTI_COLORS,
+            _MULTI_LABELS,
+            legend_kwargs={"fontsize": 7, "ncol": 2},
+        )
 
     anim = animation.FuncAnimation(
         fig,
@@ -640,11 +610,4 @@ def animate_inference_multi_1d(
         frames=len(observations),
         repeat=False,
     )
-
-    suffix = output_path.suffix.lower()
-    if suffix == ".gif":
-        anim.save(str(output_path), writer="pillow", fps=fps)
-    else:
-        anim.save(str(output_path), fps=fps)
-
-    plt.close(fig)
+    _save_animation(anim, fig, output_path, fps)

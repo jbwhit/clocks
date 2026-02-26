@@ -1,6 +1,9 @@
 """Tests for the particle filter inference engine."""
 
+from collections.abc import Callable
+
 import numpy as np
+from numpy.typing import NDArray
 
 from clocks.inference import ParticleFilter
 from clocks.noise import add_clock_noise
@@ -29,7 +32,7 @@ def _make_1d_scenario(
 
 def _make_forward_model(
     clock_array: ClockArray,
-) -> callable:
+) -> Callable[[NDArray[np.floating]], NDArray[np.floating]]:
     """Create forward model callable for particle filter: params → rates."""
 
     def forward(params: np.ndarray) -> np.ndarray:
