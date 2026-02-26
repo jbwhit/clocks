@@ -43,6 +43,8 @@ class ParticleFilter:
         rng: np.random.Generator | None = None,
         forward_model_batch: Callable[[NDArray[np.floating]], NDArray[np.floating]]
         | None = None,
+        constraint_fn: Callable[[NDArray[np.floating]], NDArray[np.floating]]
+        | None = None,
     ) -> None:
         self.n_particles = n_particles
         self.forward_model = forward_model
@@ -50,6 +52,7 @@ class ParticleFilter:
         self.noise_std = noise_std
         self.resample_threshold = resample_threshold
         self.jitter_std = jitter_std
+        self.constraint_fn = constraint_fn
         self.rng = rng or np.random.default_rng()
 
         particles = prior_sampler(self.rng, n_particles)
@@ -121,6 +124,8 @@ class ParticleFilter:
 
         new_particles = particles[indices].copy()
         new_particles += self.rng.normal(0, self.jitter_std, size=new_particles.shape)
+        if self.constraint_fn is not None:
+            new_particles = self.constraint_fn(new_particles)
         new_weights = np.ones(n) / n
         return new_particles, new_weights
 

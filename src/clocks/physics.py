@@ -105,3 +105,42 @@ def clock_rates_batch(
     rates = np.sqrt(np.maximum(argument, _EPS))
 
     return rates.T  # (n_particles, n_clocks)
+
+
+def clock_rates_batch_multi(
+    mass_positions: NDArray[np.floating],
+    masses: NDArray[np.floating],
+    clock_array: ClockArray,
+) -> NDArray[np.floating]:
+    """Batch forward model for multi-mass particles.
+
+    Computes predicted clock rates for many hypothesized K-mass configurations.
+
+    mass_positions: (n_particles, K, n_dims) — positions of each particle's masses
+    masses: (n_particles, K) — mass values for each particle
+    clock_array: the fixed clock layout
+
+    Returns: (n_particles, n_clocks) array of predicted rates.
+    """
+    # clock_array.positions: (n_clocks, n_dims)
+    # mass_positions: (n_particles, K, n_dims)
+    # diff: (n_clocks, n_particles, K, n_dims)
+    diff = (
+        clock_array.positions[:, np.newaxis, np.newaxis, :]
+        - mass_positions[np.newaxis, :, :, :]
+    )
+    dist_sq = np.sum(diff**2, axis=-1) + clock_array.track_offset**2
+    distances = np.sqrt(dist_sq)  # (n_clocks, n_particles, K)
+
+    # potential per mass: (n_clocks, n_particles, K)
+    safe_dist = np.maximum(distances, _EPS)
+    potential_per_mass = -masses[np.newaxis, :, :] / safe_dist
+
+    # total potential: sum over K masses → (n_clocks, n_particles)
+    potential = np.sum(potential_per_mass, axis=-1)
+
+    # dilation: (n_clocks, n_particles)
+    argument = 1.0 + 2.0 * potential
+    rates = np.sqrt(np.maximum(argument, _EPS))
+
+    return rates.T  # (n_particles, n_clocks)

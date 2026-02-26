@@ -22,3 +22,7 @@ def demo_1d() -> None:
 
 def demo_2d() -> None:
     _run_script("demo_2d.py")
+
+
+def demo_multi_mass() -> None:
+    _run_script("demo_multi_mass.py")

@@ -9,6 +9,7 @@ from clocks.noise import (
 from clocks.physics import (
     clock_rates,
     clock_rates_batch,
+    clock_rates_batch_multi,
     compute_distances,
     gravitational_potential,
     time_dilation_factor,
@@ -17,6 +18,7 @@ from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 from clocks.viz import (
     animate_inference,
     animate_inference_2d,
+    animate_inference_multi_1d,
     create_inference_dashboard,
     create_inference_dashboard_2d,
     plot_clock_rates,
@@ -26,6 +28,7 @@ from clocks.viz import (
     plot_mass_histogram,
     plot_particle_cloud,
     plot_particle_cloud_2d,
+    plot_particle_cloud_multi_1d,
 )
 
 __all__ = [
@@ -37,8 +40,10 @@ __all__ = [
     "add_clock_noise",
     "animate_inference",
     "animate_inference_2d",
+    "animate_inference_multi_1d",
     "clock_rates",
     "clock_rates_batch",
+    "clock_rates_batch_multi",
     "compute_distances",
     "create_inference_dashboard",
     "create_inference_dashboard_2d",
@@ -52,5 +57,6 @@ __all__ = [
     "plot_mass_histogram",
     "plot_particle_cloud",
     "plot_particle_cloud_2d",
+    "plot_particle_cloud_multi_1d",
     "time_dilation_factor",
 ]

@@ -13,6 +13,10 @@ from clocks.inference import ParticleFilter
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
+# Parameter labels and colors for multi-mass convergence plots
+_MULTI_COLORS = ["tab:blue", "tab:cyan", "tab:orange", "tab:red"]
+_MULTI_LABELS = ["x\u2081", "x\u2082", "M\u2081", "M\u2082"]
+
 
 def plot_clock_setup(
     ax: Axes,
@@ -497,6 +501,137 @@ def animate_inference_2d(
         ax.set_xlabel("Observation #")
         ax.set_ylabel("Parameter Value")
         ax.legend(fontsize=8, loc="upper right")
+        ax.set_title("Convergence")
+
+    anim = animation.FuncAnimation(
+        fig,
+        update,
+        frames=len(observations),
+        repeat=False,
+    )
+
+    suffix = output_path.suffix.lower()
+    if suffix == ".gif":
+        anim.save(str(output_path), writer="pillow", fps=fps)
+    else:
+        anim.save(str(output_path), fps=fps)
+
+    plt.close(fig)
+
+
+def plot_particle_cloud_multi_1d(
+    ax: Axes,
+    particle_state: ParticleState,
+    true_params: NDArray[np.floating] | None = None,
+) -> None:
+    """Scatter plot of x1 vs x2 for multi-mass particles, colored by weight.
+
+    Particles layout: [x1, x2, M1, M2].
+    """
+    p = particle_state.particles
+    w = particle_state.weights
+
+    ax.scatter(p[:, 0], p[:, 1], c=w, cmap="viridis", s=5, alpha=0.6)
+    if true_params is not None:
+        ax.scatter(
+            true_params[0],
+            true_params[1],
+            marker="x",
+            s=100,
+            color="red",
+            linewidths=2,
+            label="True",
+        )
+        ax.legend(fontsize=8)
+
+    ax.set_xlabel("x\u2081")
+    ax.set_ylabel("x\u2082")
+    ax.set_title(f"Position Cloud (n_obs={particle_state.observations_seen})")
+
+
+def animate_inference_multi_1d(
+    clock_array: ClockArray,
+    mass_config: MassConfig,
+    observations: list[Observation],
+    pf: ParticleFilter,
+    output_path: Path,
+    fps: int = 4,
+    xlim: tuple[float, float] = (-8, 8),
+    mlim: tuple[float, float] = (0, 2),
+) -> None:
+    """Animate multi-mass particle filter (2 masses in 1D) and save to file.
+
+    Particles have 4 columns: [x1, x2, M1, M2].
+    Dashboard: setup | x1-vs-x2 scatter | clock rates | 4-trace convergence.
+    """
+    true_params = np.array(
+        [
+            mass_config.positions[0, 0],
+            mass_config.positions[1, 0],
+            mass_config.masses[0],
+            mass_config.masses[1],
+        ]
+    )
+    true_rates = clock_rates(mass_config, clock_array)
+
+    fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+    axes = {
+        "setup": axs[0, 0],
+        "particles": axs[0, 1],
+        "rates": axs[1, 0],
+        "history": axs[1, 1],
+    }
+    fig.tight_layout(pad=3.0)
+
+    # Static: physical setup
+    plot_clock_setup(axes["setup"], clock_array, mass_config)
+    axes["setup"].set_xlim(xlim)
+
+    # Track estimate history
+    means: list[NDArray] = []
+    stds: list[NDArray] = []
+
+    def update(frame: int) -> None:
+        obs = observations[frame]
+        pf.update(obs)
+        est = pf.estimate()
+        means.append(est["mean"])
+        stds.append(est["std"])
+
+        # Particles — x1 vs x2
+        ax = axes["particles"]
+        ax.clear()
+        plot_particle_cloud_multi_1d(ax, pf.state, true_params[:2])
+        ax.set_xlim(xlim)
+        ax.set_ylim(xlim)
+
+        # Rates
+        ax = axes["rates"]
+        ax.clear()
+        plot_clock_rates(ax, true_rates, clock_array, label="True", color="lightcoral")
+        plot_clock_rates(
+            ax, obs.rates, clock_array, label="Observed", color="steelblue"
+        )
+
+        # History — 4 traces
+        ax = axes["history"]
+        ax.clear()
+        steps = np.arange(1, len(means) + 1)
+        m = np.array(means)
+        s = np.array(stds)
+        for j, (color, lbl) in enumerate(zip(_MULTI_COLORS, _MULTI_LABELS)):
+            ax.plot(steps, m[:, j], color=color, label=f"{lbl} est")
+            ax.fill_between(
+                steps,
+                m[:, j] - s[:, j],
+                m[:, j] + s[:, j],
+                alpha=0.15,
+                color=color,
+            )
+            ax.axhline(true_params[j], color=color, linestyle="--", alpha=0.5)
+        ax.set_xlabel("Observation #")
+        ax.set_ylabel("Parameter Value")
+        ax.legend(fontsize=7, loc="upper right", ncol=2)
         ax.set_title("Convergence")
 
     anim = animation.FuncAnimation(

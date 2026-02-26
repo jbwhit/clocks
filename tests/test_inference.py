@@ -192,3 +192,36 @@ class TestParticleFilter:
         est_batch = pf_batch.estimate()
         np.testing.assert_allclose(est_scalar["mean"], est_batch["mean"], atol=1e-10)
         np.testing.assert_allclose(est_scalar["std"], est_batch["std"], atol=1e-10)
+
+    def test_constraint_fn_applied(self) -> None:
+        """Constraint function should be called after resampling."""
+        _, ca = _make_1d_scenario()
+        forward = _make_forward_model(ca)
+
+        call_count = [0]
+
+        def counting_constraint(particles: np.ndarray) -> np.ndarray:
+            call_count[0] += 1
+            return particles
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 2))
+
+        rng = np.random.default_rng(0)
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.01,
+            resample_threshold=1.0,  # always resample
+            rng=rng,
+            constraint_fn=counting_constraint,
+        )
+
+        for t in range(5):
+            obs = Observation(rates=np.array([0.9, 0.95, 0.99]), time=float(t))
+            pf.update(obs)
+
+        assert call_count[0] == 5, (
+            f"Constraint should be called on every resample, got {call_count[0]}"
+        )

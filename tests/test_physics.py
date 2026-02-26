@@ -5,6 +5,7 @@ import numpy as np
 from clocks.physics import (
     clock_rates,
     clock_rates_batch,
+    clock_rates_batch_multi,
     compute_distances,
     gravitational_potential,
     time_dilation_factor,
@@ -185,4 +186,103 @@ class TestClockRatesBatch:
         mass_positions = np.array([[1.0], [2.0], [3.0], [4.0]])
         masses = np.array([0.1, 0.2, 0.3, 0.4])
         result = clock_rates_batch(mass_positions, masses, ca)
+        assert result.shape == (4, 3)
+
+
+class TestClockRatesBatchMulti:
+    def test_matches_scalar_1d_k2(self) -> None:
+        """Batch multi should match calling clock_rates per particle for K=2 in 1D."""
+        ca = ClockArray(
+            positions=np.array([[-5.0], [0.0], [5.0]]),
+            track_offset=1.0,
+        )
+        # 3 particles, each with 2 masses in 1D
+        mass_positions = np.array(
+            [
+                [[1.0], [3.0]],
+                [[-2.0], [4.0]],
+                [[0.0], [-1.0]],
+            ]
+        )
+        masses = np.array(
+            [
+                [0.5, 0.3],
+                [0.8, 0.2],
+                [0.4, 0.6],
+            ]
+        )
+
+        batch_result = clock_rates_batch_multi(mass_positions, masses, ca)
+        assert batch_result.shape == (3, 3)
+
+        for i in range(3):
+            mc = MassConfig(positions=mass_positions[i], masses=masses[i])
+            scalar_result = clock_rates(mc, ca)
+            np.testing.assert_allclose(batch_result[i], scalar_result)
+
+    def test_matches_scalar_2d_k2(self) -> None:
+        """Batch multi should match scalar for K=2 in 2D."""
+        ca = ClockArray(
+            positions=np.array([[0.0, 0.0], [3.0, 4.0], [-2.0, 1.0]]),
+            track_offset=2.0,
+        )
+        mass_positions = np.array(
+            [
+                [[1.0, -1.0], [2.0, 3.0]],
+                [[-1.0, 2.0], [0.5, -0.5]],
+            ]
+        )
+        masses = np.array(
+            [
+                [0.4, 0.6],
+                [0.3, 0.7],
+            ]
+        )
+
+        batch_result = clock_rates_batch_multi(mass_positions, masses, ca)
+        assert batch_result.shape == (2, 3)
+
+        for i in range(2):
+            mc = MassConfig(positions=mass_positions[i], masses=masses[i])
+            scalar_result = clock_rates(mc, ca)
+            np.testing.assert_allclose(batch_result[i], scalar_result)
+
+    def test_k1_matches_single_mass_batch(self) -> None:
+        """K=1 multi-mass batch should match the single-mass batch function."""
+        ca = ClockArray(
+            positions=np.array([[-5.0], [0.0], [5.0]]),
+            track_offset=1.0,
+        )
+        mass_positions_single = np.array([[1.0], [3.0], [-2.0]])
+        masses_single = np.array([0.5, 0.8, 0.3])
+
+        # Single-mass batch
+        result_single = clock_rates_batch(mass_positions_single, masses_single, ca)
+
+        # Multi-mass batch with K=1
+        mass_positions_multi = mass_positions_single[:, np.newaxis, :]  # (3, 1, 1)
+        masses_multi = masses_single[:, np.newaxis]  # (3, 1)
+        result_multi = clock_rates_batch_multi(mass_positions_multi, masses_multi, ca)
+
+        np.testing.assert_allclose(result_multi, result_single)
+
+    def test_shape(self) -> None:
+        ca = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]))
+        mass_positions = np.array(
+            [
+                [[1.0], [2.0]],
+                [[3.0], [4.0]],
+                [[-1.0], [-2.0]],
+                [[0.0], [1.0]],
+            ]
+        )
+        masses = np.array(
+            [
+                [0.1, 0.2],
+                [0.3, 0.4],
+                [0.5, 0.6],
+                [0.7, 0.8],
+            ]
+        )
+        result = clock_rates_batch_multi(mass_positions, masses, ca)
         assert result.shape == (4, 3)
