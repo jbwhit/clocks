@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Running ruff format check..."
+uv run ruff format --check src/ tests/ scripts/
+
+echo "Running ruff lint..."
+uv run ruff check src/ tests/ scripts/
+
+echo "Pre-commit checks passed."
