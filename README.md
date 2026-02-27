@@ -25,16 +25,30 @@ uv sync
 **1D** — 3 clocks on a line, infer (x, M):
 
 ```bash
-uv run python scripts/demo_1d.py    # → output/demo_1d.gif
+uv run demo-1d    # → output/demo_1d.gif
 ```
+
+![1D inference demo](output/demo_1d.gif)
 
 **2D** — 8 clocks on a plane, infer (x, y, M):
 
 ```bash
-uv run python scripts/demo_2d.py    # → output/demo_2d.gif
+uv run demo-2d    # → output/demo_2d.gif
 ```
 
+![2D inference demo](output/demo_2d.gif)
+
 Each produces an animated GIF showing a 2×2 dashboard: physical setup, particle cloud converging on the true parameters, observed clock rates, and convergence history with uncertainty bands.
+
+**Model comparison** — 5 clocks, 2 hidden masses, infer K:
+
+```bash
+uv run demo-model-comparison    # → output/demo_model_comparison.gif
+```
+
+![Model comparison demo](output/demo_model_comparison.gif)
+
+Runs parallel particle filters for K=1..3 masses and tracks posterior probabilities. The correct model (K=2) is identified within a few observations.
 
 ## Run tests
 
@@ -53,8 +67,11 @@ src/clocks/
     inference.py   Particle filter (SMC with systematic resampling)
     viz.py         Matplotlib plotting and animation (1D + 2D)
 scripts/
-    demo_1d.py     1D end-to-end demo
-    demo_2d.py     2D end-to-end demo
+    demo_1d.py               1D end-to-end demo
+    demo_2d.py               2D end-to-end demo
+    demo_multi_mass.py       Two masses in 1D
+    demo_model_comparison.py Bayesian model comparison (infer K)
+    demo_density.py          Gaussian density forward model
 tests/
     test_physics.py, test_inference.py, test_noise.py, test_viz.py
 ```
