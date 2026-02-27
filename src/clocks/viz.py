@@ -9,9 +9,12 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from numpy.typing import NDArray
 
-from clocks.inference import ParticleFilter
+from clocks.inference import ModelComparison, ParticleFilter
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
+
+# Colors for posterior probability bars per K value
+_POSTERIOR_COLORS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"]
 
 # Parameter labels and colors for multi-mass convergence plots
 _MULTI_COLORS = ["tab:blue", "tab:cyan", "tab:orange", "tab:red"]
@@ -608,6 +611,71 @@ def animate_inference_multi_1d(
         fig,
         update,
         frames=len(observations),
+        repeat=False,
+    )
+    _save_animation(anim, fig, output_path, fps)
+
+
+def animate_model_comparison(
+    clock_array: ClockArray,
+    mass_config: MassConfig,
+    observations: list[Observation],
+    model_comparison: ModelComparison,
+    output_path: Path,
+    fps: int = 4,
+    figsize: tuple[float, float] = (10, 4),
+) -> None:
+    """Animate Bayesian model comparison: rates + posterior probabilities.
+
+    Left panel: true vs observed clock rates bar chart.
+    Right panel: horizontal bars of posterior probability for each K.
+    """
+    true_rates = clock_rates(mass_config, clock_array)
+    k_max = model_comparison.k_max
+    k_values = list(range(1, k_max + 1))
+    n_obs = len(observations)
+
+    fig, (ax_rates, ax_post) = plt.subplots(1, 2, figsize=figsize)
+    fig.tight_layout(pad=3.0)
+
+    def update(frame: int) -> None:
+        obs = observations[frame]
+        model_comparison.update(obs)
+        result = model_comparison.evidence()
+
+        # Left panel: clock rates
+        ax_rates.clear()
+        plot_clock_rates(
+            ax_rates, true_rates, clock_array, label="True", color="lightcoral"
+        )
+        plot_clock_rates(
+            ax_rates, obs.rates, clock_array, label="Observed", color="steelblue"
+        )
+
+        # Right panel: posterior probabilities
+        ax_post.clear()
+        posteriors = [result["posterior"][k] for k in k_values]
+        colors = [
+            _POSTERIOR_COLORS[i % len(_POSTERIOR_COLORS)] for i in range(len(k_values))
+        ]
+        labels = [f"K={k}" for k in k_values]
+        bars = ax_post.barh(labels, posteriors, color=colors, height=0.5)
+        for bar, p in zip(bars, posteriors):
+            ax_post.text(
+                bar.get_width() + 0.02,
+                bar.get_y() + bar.get_height() / 2,
+                f"{p:.2f}",
+                va="center",
+                fontsize=9,
+            )
+        ax_post.set_xlim(0, 1.15)
+        ax_post.set_xlabel("Posterior probability")
+        ax_post.set_title(f"Observation {frame + 1}/{n_obs}")
+
+    anim = animation.FuncAnimation(
+        fig,
+        update,
+        frames=n_obs,
         repeat=False,
     )
     _save_animation(anim, fig, output_path, fps)

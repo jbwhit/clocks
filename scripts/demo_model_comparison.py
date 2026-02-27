@@ -2,7 +2,10 @@
 
 Ground truth: K=2 masses. Runs parallel filters for K=1..3 and
 prints per-K log-evidence, posterior probabilities, and MAP estimate.
+Also generates an animated GIF showing posterior evolution.
 """
+
+from pathlib import Path
 
 import numpy as np
 
@@ -10,6 +13,7 @@ from clocks.inference import ModelComparison
 from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation
+from clocks.viz import animate_model_comparison
 
 # --- Configuration ---
 TRUE_X1 = -2.0
@@ -82,6 +86,37 @@ def main() -> None:
     print(f"Estimate: {est['mean']}")
     print(f"Std:      {est['std']}")
     print(f"ESS:      {est['ess']:.0f} / {N_PARTICLES}")
+
+    # --- Animated GIF ---
+    print("\nGenerating model comparison GIF...")
+    rng_gif = np.random.default_rng(SEED + 1)
+    observations = [
+        Observation(
+            rates=add_clock_noise(true_rates, NOISE_STD, rng_gif),
+            time=float(t),
+        )
+        for t in range(N_OBSERVATIONS)
+    ]
+    mc_gif = ModelComparison(
+        clock_array=clock_array,
+        noise_std=NOISE_STD,
+        n_dims=1,
+        k_max=K_MAX,
+        n_particles=N_PARTICLES,
+        jitter_std=JITTER_STD,
+        rng=rng_gif,
+    )
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+    gif_path = output_dir / "demo_model_comparison.gif"
+    animate_model_comparison(
+        clock_array=clock_array,
+        mass_config=mass_config,
+        observations=observations,
+        model_comparison=mc_gif,
+        output_path=gif_path,
+    )
+    print(f"Saved: {gif_path}")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from clocks.inference import ParticleFilter
+from clocks.inference import ModelComparison, ParticleFilter
 from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
@@ -15,6 +15,7 @@ from clocks.viz import (
     animate_inference,
     animate_inference_2d,
     animate_inference_multi_1d,
+    animate_model_comparison,
     create_inference_dashboard,
     plot_clock_rates,
     plot_clock_rates_2d,
@@ -376,6 +377,43 @@ class TestAnimateInferenceMulti1d:
             mass_config=mass_config_multi_1d,
             observations=obs,
             pf=pf,
+            output_path=out,
+        )
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+
+# -- Model comparison animation --
+
+
+class TestAnimateModelComparison:
+    def test_produces_gif(
+        self,
+        clock_array_multi_1d: ClockArray,
+        mass_config_multi_1d: MassConfig,
+        tmp_path: Path,
+    ) -> None:
+        rng = np.random.default_rng(42)
+        true_rates = clock_rates(mass_config_multi_1d, clock_array_multi_1d)
+        observations = [
+            Observation(rates=add_clock_noise(true_rates, 0.005, rng), time=float(t))
+            for t in range(3)
+        ]
+        mc = ModelComparison(
+            clock_array=clock_array_multi_1d,
+            noise_std=0.005,
+            n_dims=1,
+            k_max=3,
+            n_particles=50,
+            jitter_std=0.02,
+            rng=rng,
+        )
+        out = tmp_path / "test_model_comparison.gif"
+        animate_model_comparison(
+            clock_array=clock_array_multi_1d,
+            mass_config=mass_config_multi_1d,
+            observations=observations,
+            model_comparison=mc,
             output_path=out,
         )
         assert out.exists()
