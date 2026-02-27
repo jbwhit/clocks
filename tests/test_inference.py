@@ -3,9 +3,10 @@
 from collections.abc import Callable
 
 import numpy as np
+import pytest
 from numpy.typing import NDArray
 
-from clocks.inference import ParticleFilter
+from clocks.inference import ConvergenceInfo, ParticleFilter
 from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates, clock_rates_batch
 from clocks.types import ClockArray, MassConfig, Observation
@@ -228,3 +229,265 @@ class TestParticleFilter:
         assert call_count[0] == 5, (
             f"Constraint should be called on every resample, got {call_count[0]}"
         )
+
+    # --- Resampling methods ---
+
+    def test_stratified_resampling_converges(self) -> None:
+        """Stratified resampling should converge near the true parameters."""
+        rng = np.random.default_rng(42)
+        true_x, true_m = 2.5, 0.8
+        mc, ca = _make_1d_scenario(true_x, true_m)
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        pf = ParticleFilter(
+            n_particles=500,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            jitter_std=0.05,
+            rng=rng,
+            resampling="stratified",
+        )
+
+        for t in range(30):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            pf.update(Observation(rates=noisy, time=float(t)))
+
+        est = pf.estimate()
+        assert abs(est["mean"][0] - true_x) < 1.0
+        assert abs(est["mean"][1] - true_m) < 0.3
+
+    def test_residual_resampling_converges(self) -> None:
+        """Residual resampling should converge near the true parameters."""
+        rng = np.random.default_rng(42)
+        true_x, true_m = 2.5, 0.8
+        mc, ca = _make_1d_scenario(true_x, true_m)
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        pf = ParticleFilter(
+            n_particles=500,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            jitter_std=0.05,
+            rng=rng,
+            resampling="residual",
+        )
+
+        for t in range(30):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            pf.update(Observation(rates=noisy, time=float(t)))
+
+        est = pf.estimate()
+        assert abs(est["mean"][0] - true_x) < 1.0
+        assert abs(est["mean"][1] - true_m) < 0.3
+
+    def test_invalid_resampling_raises(self) -> None:
+        """Unknown resampling method should raise ValueError."""
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 2))
+
+        with pytest.raises(ValueError, match="Unknown resampling method"):
+            ParticleFilter(
+                n_particles=50,
+                prior_sampler=prior_sampler,
+                forward_model=lambda p: np.array([1.0]),
+                noise_std=0.01,
+                resampling="bogus",
+            )
+
+    # --- Adaptive jitter ---
+
+    def test_adaptive_jitter_converges(self) -> None:
+        """Adaptive jitter should still converge near the true parameters."""
+        rng = np.random.default_rng(42)
+        true_x, true_m = 2.5, 0.8
+        mc, ca = _make_1d_scenario(true_x, true_m)
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        pf = ParticleFilter(
+            n_particles=500,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            jitter_std=0.5,
+            rng=rng,
+            adaptive_jitter=True,
+        )
+
+        for t in range(30):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            pf.update(Observation(rates=noisy, time=float(t)))
+
+        est = pf.estimate()
+        assert abs(est["mean"][0] - true_x) < 1.0
+        assert abs(est["mean"][1] - true_m) < 0.3
+
+    def test_adaptive_jitter_scales_with_spread(self) -> None:
+        """Wider prior should produce wider jitter with adaptive_jitter."""
+        _, ca = _make_1d_scenario()
+        forward = _make_forward_model(ca)
+
+        # Narrow prior
+        def narrow_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-0.1, 0.1, n)
+            m = rng.uniform(0.49, 0.51, n)
+            return np.column_stack([x, m])
+
+        # Wide prior
+        def wide_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-100, 100, n)
+            m = rng.uniform(0.01, 10.0, n)
+            return np.column_stack([x, m])
+
+        rng1 = np.random.default_rng(0)
+        pf_narrow = ParticleFilter(
+            n_particles=500,
+            prior_sampler=narrow_sampler,
+            forward_model=forward,
+            noise_std=0.01,
+            jitter_std=1.0,
+            adaptive_jitter=True,
+            resample_threshold=1.0,  # force resample
+            rng=rng1,
+        )
+
+        rng2 = np.random.default_rng(0)
+        pf_wide = ParticleFilter(
+            n_particles=500,
+            prior_sampler=wide_sampler,
+            forward_model=forward,
+            noise_std=0.01,
+            jitter_std=1.0,
+            adaptive_jitter=True,
+            resample_threshold=1.0,
+            rng=rng2,
+        )
+
+        narrow_std = pf_narrow.estimate()["std"]
+        wide_std = pf_wide.estimate()["std"]
+        # The wide prior should have larger spread
+        assert np.all(wide_std > narrow_std)
+
+    # --- Convergence diagnostics ---
+
+    def test_converged_false_initially(self) -> None:
+        """Filter should not be converged with 0-1 observations."""
+        rng = np.random.default_rng(0)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 2))
+
+        _, ca = _make_1d_scenario()
+        forward = _make_forward_model(ca)
+
+        pf = ParticleFilter(
+            n_particles=100,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.01,
+            rng=rng,
+        )
+
+        info = pf.converged()
+        assert not info["converged"]
+        assert not info["estimates_stable"]
+
+    def test_converged_true_after_many_observations(self) -> None:
+        """Filter should converge after enough observations with generous thresholds."""
+        rng = np.random.default_rng(42)
+        true_x, true_m = 2.5, 0.8
+        mc, ca = _make_1d_scenario(true_x, true_m)
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        pf = ParticleFilter(
+            n_particles=500,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            jitter_std=0.05,
+            rng=rng,
+        )
+
+        for t in range(50):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            pf.update(Observation(rates=noisy, time=float(t)))
+
+        info = pf.converged(std_threshold=1.0, stability_threshold=0.5)
+        assert info["converged"]
+        assert info["estimates_stable"]
+        assert np.all(info["per_param_converged"])
+
+    def test_convergence_info_structure(self) -> None:
+        """ConvergenceInfo should have correct keys, types, and shapes."""
+        rng = np.random.default_rng(0)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 3))
+
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=prior_sampler,
+            forward_model=lambda p: np.array([1.0]),
+            noise_std=0.01,
+            rng=rng,
+        )
+
+        info = pf.converged()
+        assert isinstance(info, dict)
+        assert set(info.keys()) == set(ConvergenceInfo.__annotations__)
+        assert isinstance(info["converged"], bool)
+        assert isinstance(info["estimates_stable"], bool)
+        assert isinstance(info["ess"], float)
+        assert info["per_param_std"].shape == (3,)
+        assert info["per_param_converged"].shape == (3,)
+
+    def test_estimates_stable_requires_window(self) -> None:
+        """estimates_stable should be False when history < window."""
+        rng = np.random.default_rng(0)
+        _, ca = _make_1d_scenario()
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 2))
+
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.01,
+            rng=rng,
+        )
+
+        # Add 5 observations, but check with window=10
+        for t in range(5):
+            obs = Observation(rates=np.array([0.9, 0.95, 0.99]), time=float(t))
+            pf.update(obs)
+
+        info = pf.converged(window=10)
+        assert not info["estimates_stable"]

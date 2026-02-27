@@ -1,6 +1,6 @@
 """Gravitational time dilation simulation and inference library."""
 
-from clocks.inference import Estimate, ParticleFilter
+from clocks.inference import ConvergenceInfo, Estimate, ParticleFilter
 from clocks.noise import (
     add_clock_noise,
     log_likelihood_gaussian,
@@ -32,6 +32,7 @@ from clocks.viz import (
 
 __all__ = [
     "ClockArray",
+    "ConvergenceInfo",
     "Estimate",
     "MassConfig",
     "Observation",
