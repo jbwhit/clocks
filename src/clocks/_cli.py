@@ -26,3 +26,11 @@ def demo_2d() -> None:
 
 def demo_multi_mass() -> None:
     _run_script("demo_multi_mass.py")
+
+
+def demo_model_comparison() -> None:
+    _run_script("demo_model_comparison.py")
+
+
+def demo_density() -> None:
+    _run_script("demo_density.py")

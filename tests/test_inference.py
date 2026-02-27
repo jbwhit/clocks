@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from clocks.inference import ConvergenceInfo, ParticleFilter
+from clocks.inference import ConvergenceInfo, ModelComparison, ParticleFilter
 from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates, clock_rates_batch
 from clocks.types import ClockArray, MassConfig, Observation
@@ -491,3 +491,204 @@ class TestParticleFilter:
 
         info = pf.converged(window=10)
         assert not info["estimates_stable"]
+
+    # --- Log-evidence ---
+
+    def test_log_evidence_starts_at_zero(self) -> None:
+        """Log-evidence should be 0.0 before any updates."""
+        rng = np.random.default_rng(0)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 2))
+
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=prior_sampler,
+            forward_model=lambda p: np.array([1.0]),
+            noise_std=0.01,
+            rng=rng,
+        )
+        assert pf.log_evidence == 0.0
+
+    def test_log_evidence_tracked(self) -> None:
+        """Log-evidence should be a finite negative float after updates."""
+        rng = np.random.default_rng(42)
+        true_x, true_m = 2.5, 0.8
+        mc, ca = _make_1d_scenario(true_x, true_m)
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        pf = ParticleFilter(
+            n_particles=200,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            rng=rng,
+        )
+
+        for t in range(10):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            pf.update(Observation(rates=noisy, time=float(t)))
+
+        assert np.isfinite(pf.log_evidence)
+        assert pf.log_evidence < 0
+
+    def test_log_evidence_accumulates(self) -> None:
+        """Log-evidence magnitude should increase with more observations."""
+        rng = np.random.default_rng(42)
+        true_x, true_m = 2.5, 0.8
+        mc, ca = _make_1d_scenario(true_x, true_m)
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        pf = ParticleFilter(
+            n_particles=200,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            rng=rng,
+        )
+
+        for t in range(5):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            pf.update(Observation(rates=noisy, time=float(t)))
+        early_evidence = pf.log_evidence
+
+        for t in range(5, 15):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            pf.update(Observation(rates=noisy, time=float(t)))
+        late_evidence = pf.log_evidence
+
+        # More observations → more accumulated evidence (larger magnitude)
+        assert abs(late_evidence) > abs(early_evidence)
+
+
+class TestModelComparison:
+    def _make_clock_array(self) -> ClockArray:
+        return ClockArray(
+            positions=np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]]),
+            track_offset=1.0,
+        )
+
+    def test_model_comparison_selects_true_k(self) -> None:
+        """K=2 ground truth should be favored after enough observations."""
+        rng = np.random.default_rng(42)
+        ca = self._make_clock_array()
+        mc = MassConfig(
+            positions=np.array([[-2.0], [3.0]]),
+            masses=np.array([0.6, 0.4]),
+        )
+        true_rates = clock_rates(mc, ca)
+
+        comp = ModelComparison(
+            clock_array=ca,
+            noise_std=0.005,
+            n_dims=1,
+            k_max=3,
+            n_particles=1500,
+            jitter_std=0.02,
+            rng=rng,
+        )
+
+        for t in range(40):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            comp.update(Observation(rates=noisy, time=float(t)))
+
+        result = comp.evidence()
+        map_k = max(result["posterior"], key=lambda x: result["posterior"][x])
+        assert map_k == 2, f"Expected MAP K=2, got K={map_k}: {result['posterior']}"
+
+    def test_model_comparison_estimate_returns_map(self) -> None:
+        """estimate() with no k should use the MAP model."""
+        rng = np.random.default_rng(42)
+        ca = self._make_clock_array()
+        mc = MassConfig(
+            positions=np.array([[2.0]]),
+            masses=np.array([0.5]),
+        )
+        true_rates = clock_rates(mc, ca)
+
+        comp = ModelComparison(
+            clock_array=ca,
+            noise_std=0.005,
+            n_dims=1,
+            k_max=2,
+            n_particles=500,
+            jitter_std=0.02,
+            rng=rng,
+        )
+
+        for t in range(20):
+            noisy = add_clock_noise(true_rates, noise_std=0.005, rng=rng)
+            comp.update(Observation(rates=noisy, time=float(t)))
+
+        est = comp.estimate()
+        assert "mean" in est
+        assert "std" in est
+        assert "ess" in est
+
+    def test_model_comparison_evidence_structure(self) -> None:
+        """Evidence result should have correct keys and posteriors sum to 1."""
+        rng = np.random.default_rng(0)
+        ca = self._make_clock_array()
+
+        comp = ModelComparison(
+            clock_array=ca,
+            noise_std=0.01,
+            n_dims=1,
+            k_max=3,
+            n_particles=100,
+            rng=rng,
+        )
+
+        # Need at least one observation
+        obs = Observation(rates=np.array([0.98, 0.95, 0.90, 0.95, 0.98]), time=0.0)
+        comp.update(obs)
+
+        result = comp.evidence()
+        assert set(result["log_evidence"].keys()) == {1, 2, 3}
+        assert set(result["posterior"].keys()) == {1, 2, 3}
+        np.testing.assert_allclose(sum(result["posterior"].values()), 1.0, atol=1e-10)
+
+    def test_model_comparison_invalid_k_raises(self) -> None:
+        """estimate(k=5) should raise ValueError."""
+        rng = np.random.default_rng(0)
+        ca = self._make_clock_array()
+        comp = ModelComparison(
+            clock_array=ca, noise_std=0.01, k_max=3, n_particles=50, rng=rng
+        )
+        with pytest.raises(ValueError, match="No filter for K=5"):
+            comp.estimate(k=5)
+
+    def test_model_comparison_constraint_enforced(self) -> None:
+        """K=2 particles should have x1 <= x2 after updates."""
+        rng = np.random.default_rng(42)
+        ca = self._make_clock_array()
+
+        comp = ModelComparison(
+            clock_array=ca,
+            noise_std=0.01,
+            n_dims=1,
+            k_max=2,
+            n_particles=200,
+            rng=rng,
+        )
+
+        obs = Observation(rates=np.array([0.98, 0.95, 0.90, 0.95, 0.98]), time=0.0)
+        comp.update(obs)
+
+        # Check K=2 filter: positions x1 <= x2
+        particles = comp.filters[2].state.particles
+        x1 = particles[:, 0]  # first position (dim 0)
+        x2 = particles[:, 1]  # second position (dim 0)
+        assert np.all(x1 <= x2 + 1e-10), "Ordering constraint not enforced"

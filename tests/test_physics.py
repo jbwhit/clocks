@@ -6,6 +6,8 @@ from clocks.physics import (
     clock_rates,
     clock_rates_batch,
     clock_rates_batch_multi,
+    clock_rates_density_gaussian,
+    clock_rates_density_gaussian_batch,
     compute_distances,
     gravitational_potential,
     time_dilation_factor,
@@ -286,3 +288,101 @@ class TestClockRatesBatchMulti:
         )
         result = clock_rates_batch_multi(mass_positions, masses, ca)
         assert result.shape == (4, 3)
+
+
+class TestGaussianDensity:
+    def _make_clock_array(self) -> ClockArray:
+        return ClockArray(
+            positions=np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]]),
+            track_offset=1.0,
+        )
+
+    def test_zero_amplitude_gives_rate_one(self) -> None:
+        """Zero amplitude (no mass) should give rate 1.0 everywhere."""
+        ca = self._make_clock_array()
+        params = np.array([0.0, 1.0, 0.0])
+        rates = clock_rates_density_gaussian(params, ca)
+        np.testing.assert_allclose(rates, 1.0, atol=1e-10)
+
+    def test_density_rates_below_one(self) -> None:
+        """Nonzero mass density should produce rates below 1."""
+        ca = self._make_clock_array()
+        params = np.array([0.0, 2.0, 0.3])
+        rates = clock_rates_density_gaussian(params, ca)
+        assert np.all(rates < 1.0)
+
+    def test_density_closer_clock_slower(self) -> None:
+        """Clock nearer to the density center should tick slower."""
+        ca = ClockArray(
+            positions=np.array([[0.0], [5.0]]),
+            track_offset=1.0,
+        )
+        params = np.array([0.0, 2.0, 0.3])
+        rates = clock_rates_density_gaussian(params, ca)
+        assert rates[0] < rates[1]
+
+    def test_density_symmetry(self) -> None:
+        """Equidistant clocks should have equal rates."""
+        ca = ClockArray(
+            positions=np.array([[-3.0], [3.0]]),
+            track_offset=1.0,
+        )
+        params = np.array([0.0, 2.0, 0.3])
+        rates = clock_rates_density_gaussian(params, ca)
+        np.testing.assert_allclose(rates[0], rates[1], atol=1e-10)
+
+    def test_narrow_density_approximates_point_mass(self) -> None:
+        """Very narrow Gaussian should approximate a point mass."""
+        ca = ClockArray(
+            positions=np.array([[-5.0], [0.0], [5.0]]),
+            track_offset=1.0,
+        )
+        # Narrow Gaussian: sigma=0.01, total mass ≈ A * sigma * sqrt(2*pi)
+        sigma = 0.01
+        total_mass = 0.5
+        amplitude = total_mass / (sigma * np.sqrt(2 * np.pi))
+        params = np.array([2.0, sigma, amplitude])
+
+        density_rates = clock_rates_density_gaussian(params, ca)
+
+        # Compare with point mass of same total mass at same location
+        mc = MassConfig(positions=np.array([[2.0]]), masses=np.array([total_mass]))
+        point_rates = clock_rates(mc, ca)
+
+        np.testing.assert_allclose(density_rates, point_rates, atol=1e-3)
+
+    def test_density_batch_matches_scalar(self) -> None:
+        """Batch version should match scalar within numerical tolerance."""
+        ca = self._make_clock_array()
+        params_batch = np.array(
+            [
+                [0.0, 2.0, 0.3],
+                [1.5, 1.0, 0.5],
+                [-2.0, 3.0, 0.1],
+            ]
+        )
+
+        batch_result = clock_rates_density_gaussian_batch(params_batch, ca)
+
+        for i in range(len(params_batch)):
+            scalar_result = clock_rates_density_gaussian(params_batch[i], ca)
+            np.testing.assert_allclose(
+                batch_result[i],
+                scalar_result,
+                atol=1e-4,
+                err_msg=f"Mismatch for particle {i}",
+            )
+
+    def test_density_batch_shape(self) -> None:
+        """Batch output should have correct shape."""
+        ca = self._make_clock_array()
+        params_batch = np.array(
+            [
+                [0.0, 1.0, 0.2],
+                [1.0, 2.0, 0.3],
+                [-1.0, 0.5, 0.4],
+                [2.0, 3.0, 0.1],
+            ]
+        )
+        result = clock_rates_density_gaussian_batch(params_batch, ca)
+        assert result.shape == (4, 5)

@@ -144,3 +144,81 @@ def clock_rates_batch_multi(
     rates = np.sqrt(np.maximum(argument, _EPS))
 
     return rates.T  # (n_particles, n_clocks)
+
+
+def clock_rates_density_gaussian(
+    params: NDArray[np.floating],
+    clock_array: ClockArray,
+    integration_limit: float = 10.0,
+) -> NDArray[np.floating]:
+    """Forward model for a Gaussian mass density profile (1D).
+
+    params: [mu, sigma, amplitude] — center, width, and peak density
+    Returns: (n_clocks,) array of time dilation factors.
+    """
+    from scipy.integrate import quad
+
+    mu, sigma, amplitude = params[0], params[1], params[2]
+    h = clock_array.track_offset
+    positions = clock_array.positions[:, 0]  # 1D only
+
+    lo = mu - integration_limit * sigma
+    hi = mu + integration_limit * sigma
+
+    potential = np.empty(len(positions))
+    for i, x_c in enumerate(positions):
+
+        def integrand(x: float, xc: float = x_c) -> float:
+            density = amplitude * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+            r = np.sqrt((x - xc) ** 2 + h**2)
+            return -density / r
+
+        potential[i], _ = quad(integrand, lo, hi)
+
+    return time_dilation_factor(potential)
+
+
+def clock_rates_density_gaussian_batch(
+    params_batch: NDArray[np.floating],
+    clock_array: ClockArray,
+    integration_limit: float = 10.0,
+    n_quad: int = 200,
+) -> NDArray[np.floating]:
+    """Batch forward model for Gaussian density (vectorized via trapezoid rule).
+
+    params_batch: (n_particles, 3) — each row is [mu, sigma, amplitude]
+    Returns: (n_particles, n_clocks) array of time dilation factors.
+    """
+    n_particles = params_batch.shape[0]
+    mu = params_batch[:, 0]  # (n_particles,)
+    sigma = params_batch[:, 1]  # (n_particles,)
+    amplitude = params_batch[:, 2]  # (n_particles,)
+    h = clock_array.track_offset
+    positions = clock_array.positions[:, 0]  # (n_clocks,)
+
+    # Per-particle bounds: mu ± limit*sigma
+    lo = mu - integration_limit * sigma  # (n_particles,)
+    hi = mu + integration_limit * sigma  # (n_particles,)
+
+    # Map to common [0, 1] grid, then scale per particle
+    t = np.linspace(0, 1, n_quad)  # (n_quad,)
+    # x_grid: (n_particles, n_quad)
+    x_grid = lo[:, np.newaxis] + (hi - lo)[:, np.newaxis] * t[np.newaxis, :]
+
+    # Density at grid points: (n_particles, n_quad)
+    z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
+    density = amplitude[:, np.newaxis] * np.exp(-0.5 * z**2)
+
+    # For each clock, compute potential via trapezoid
+    n_clocks = len(positions)
+    potential = np.empty((n_particles, n_clocks))
+
+    for c in range(n_clocks):
+        # distance: (n_particles, n_quad)
+        r = np.sqrt((x_grid - positions[c]) ** 2 + h**2)
+        integrand = -density / r  # (n_particles, n_quad)
+        potential[:, c] = np.trapezoid(integrand, x_grid, axis=1)
+
+    # Time dilation for each particle's potential
+    argument = 1.0 + 2.0 * potential
+    return np.sqrt(np.maximum(argument, _EPS))

@@ -7,7 +7,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from clocks.noise import log_likelihood_gaussian, log_likelihood_gaussian_batch
-from clocks.types import Observation, ParticleState
+from clocks.physics import clock_rates, clock_rates_batch, clock_rates_batch_multi
+from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
 
@@ -85,6 +86,7 @@ class ParticleFilter:
         self.resampling = resampling
         self.adaptive_jitter = adaptive_jitter
         self.rng = rng or np.random.default_rng()
+        self.log_evidence: float = 0.0
 
         particles = prior_sampler(self.rng, n_particles)
         weights = np.ones(n_particles) / n_particles
@@ -124,8 +126,10 @@ class ParticleFilter:
                 log_weights[i] += ll
 
         # Normalize weights (log-sum-exp for numerical stability)
-        log_weights -= np.max(log_weights)
+        max_lw = np.max(log_weights)
+        log_weights -= max_lw
         weights = np.exp(log_weights)
+        self.log_evidence += max_lw + np.log(weights.sum()) - np.log(self.n_particles)
         weights /= weights.sum()
 
         # Resample if effective sample size is too low
@@ -251,3 +255,170 @@ class ParticleFilter:
             "ess": ess,
             "estimates_stable": estimates_stable,
         }
+
+
+class ModelComparisonResult(TypedDict):
+    """Return type for ModelComparison.evidence()."""
+
+    log_evidence: dict[int, float]
+    posterior: dict[int, float]
+
+
+class ModelComparison:
+    """Bayesian model comparison over number of point masses.
+
+    Runs parallel particle filters for K=1..k_max and compares
+    accumulated log-evidence to infer the most likely number of masses.
+    """
+
+    def __init__(
+        self,
+        clock_array: ClockArray,
+        noise_std: float,
+        n_dims: int = 1,
+        k_max: int = 3,
+        n_particles: int = 1000,
+        jitter_std: float = 0.02,
+        position_range: tuple[float, float] = (-8.0, 8.0),
+        mass_range: tuple[float, float] = (0.1, 2.0),
+        rng: np.random.Generator | None = None,
+        resampling: str = "systematic",
+        adaptive_jitter: bool = False,
+    ) -> None:
+        self.clock_array = clock_array
+        self.noise_std = noise_std
+        self.n_dims = n_dims
+        self.k_max = k_max
+        self.rng = rng or np.random.default_rng()
+
+        self.filters: dict[int, ParticleFilter] = {}
+        for k in range(1, k_max + 1):
+            self.filters[k] = ParticleFilter(
+                n_particles=n_particles,
+                prior_sampler=self._make_prior_sampler(k, position_range, mass_range),
+                forward_model=self._make_forward_model(k),
+                noise_std=noise_std,
+                jitter_std=jitter_std,
+                rng=np.random.default_rng(self.rng.integers(2**63)),
+                forward_model_batch=self._make_forward_model_batch(k),
+                constraint_fn=self._make_constraint_fn(k) if k > 1 else None,
+                resampling=resampling,
+                adaptive_jitter=adaptive_jitter,
+            )
+
+    def _make_prior_sampler(
+        self,
+        k: int,
+        position_range: tuple[float, float],
+        mass_range: tuple[float, float],
+    ) -> Callable[[np.random.Generator, int], NDArray[np.floating]]:
+        """Create prior sampler for K masses in n_dims dimensions."""
+        n_dims = self.n_dims
+
+        def sampler(rng: np.random.Generator, n: int) -> NDArray[np.floating]:
+            # Positions: (n, K*n_dims)
+            positions = rng.uniform(
+                position_range[0], position_range[1], (n, k * n_dims)
+            )
+            # Enforce ordering on dim-0 for K>1
+            if k > 1:
+                pos_reshaped = positions.reshape(n, k, n_dims)
+                sort_idx = np.argsort(pos_reshaped[:, :, 0], axis=1)
+                for i in range(n_dims):
+                    col = pos_reshaped[:, :, i]
+                    pos_reshaped[:, :, i] = np.take_along_axis(col, sort_idx, axis=1)
+                positions = pos_reshaped.reshape(n, k * n_dims)
+            # Masses: (n, K)
+            masses = rng.uniform(mass_range[0], mass_range[1], (n, k))
+            return np.column_stack([positions, masses])
+
+        return sampler
+
+    def _make_forward_model(
+        self, k: int
+    ) -> Callable[[NDArray[np.floating]], NDArray[np.floating]]:
+        """Create scalar forward model for K masses."""
+        n_dims = self.n_dims
+        ca = self.clock_array
+
+        def forward(params: NDArray[np.floating]) -> NDArray[np.floating]:
+            positions = params[: k * n_dims].reshape(k, n_dims)
+            masses = params[k * n_dims :]
+            mc = MassConfig(positions=positions, masses=masses)
+            return clock_rates(mc, ca)
+
+        return forward
+
+    def _make_forward_model_batch(
+        self, k: int
+    ) -> Callable[[NDArray[np.floating]], NDArray[np.floating]]:
+        """Create batch forward model for K masses."""
+        n_dims = self.n_dims
+        ca = self.clock_array
+
+        if k == 1:
+
+            def batch_single(
+                particles: NDArray[np.floating],
+            ) -> NDArray[np.floating]:
+                return clock_rates_batch(
+                    particles[:, :n_dims], particles[:, n_dims], ca
+                )
+
+            return batch_single
+
+        def batch_multi(particles: NDArray[np.floating]) -> NDArray[np.floating]:
+            pos = particles[:, : k * n_dims].reshape(-1, k, n_dims)
+            masses = particles[:, k * n_dims :]
+            return clock_rates_batch_multi(pos, masses, ca)
+
+        return batch_multi
+
+    def _make_constraint_fn(
+        self, k: int
+    ) -> Callable[[NDArray[np.floating]], NDArray[np.floating]]:
+        """Create ordering constraint for K>1 masses (sort by first spatial dim)."""
+        n_dims = self.n_dims
+
+        def constraint(particles: NDArray[np.floating]) -> NDArray[np.floating]:
+            n = particles.shape[0]
+            pos = particles[:, : k * n_dims].reshape(n, k, n_dims)
+            masses = particles[:, k * n_dims :].reshape(n, k)
+            sort_idx = np.argsort(pos[:, :, 0], axis=1)
+            for i in range(n_dims):
+                col = pos[:, :, i]
+                pos[:, :, i] = np.take_along_axis(col, sort_idx, axis=1)
+            masses = np.take_along_axis(masses, sort_idx, axis=1)
+            particles[:, : k * n_dims] = pos.reshape(n, k * n_dims)
+            particles[:, k * n_dims :] = masses
+            return particles
+
+        return constraint
+
+    def update(self, observation: Observation) -> None:
+        """Feed one observation to all filters."""
+        for pf in self.filters.values():
+            pf.update(observation)
+
+    def evidence(self) -> ModelComparisonResult:
+        """Per-K log-evidence and posterior probabilities (uniform prior over K)."""
+        log_ev = {k: pf.log_evidence for k, pf in self.filters.items()}
+
+        # Compute posterior via logsumexp + normalize
+        ks = sorted(log_ev)
+        log_vals = np.array([log_ev[k] for k in ks])
+        max_log = np.max(log_vals)
+        log_norm = max_log + np.log(np.sum(np.exp(log_vals - max_log)))
+        posterior = {k: float(np.exp(log_ev[k] - log_norm)) for k in ks}
+
+        return {"log_evidence": log_ev, "posterior": posterior}
+
+    def estimate(self, k: int | None = None) -> Estimate:
+        """Weighted mean/std for a specific K, or the MAP model if k is None."""
+        if k is None:
+            result = self.evidence()
+            k = max(result["posterior"], key=lambda x: result["posterior"][x])
+        if k not in self.filters:
+            msg = f"No filter for K={k}, available: {sorted(self.filters)}"
+            raise ValueError(msg)
+        return self.filters[k].estimate()

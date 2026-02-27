@@ -1,6 +1,12 @@
 """Gravitational time dilation simulation and inference library."""
 
-from clocks.inference import ConvergenceInfo, Estimate, ParticleFilter
+from clocks.inference import (
+    ConvergenceInfo,
+    Estimate,
+    ModelComparison,
+    ModelComparisonResult,
+    ParticleFilter,
+)
 from clocks.noise import (
     add_clock_noise,
     log_likelihood_gaussian,
@@ -10,6 +16,8 @@ from clocks.physics import (
     clock_rates,
     clock_rates_batch,
     clock_rates_batch_multi,
+    clock_rates_density_gaussian,
+    clock_rates_density_gaussian_batch,
     compute_distances,
     gravitational_potential,
     time_dilation_factor,
@@ -35,6 +43,8 @@ __all__ = [
     "ConvergenceInfo",
     "Estimate",
     "MassConfig",
+    "ModelComparison",
+    "ModelComparisonResult",
     "Observation",
     "ParticleFilter",
     "ParticleState",
@@ -45,6 +55,8 @@ __all__ = [
     "clock_rates",
     "clock_rates_batch",
     "clock_rates_batch_multi",
+    "clock_rates_density_gaussian",
+    "clock_rates_density_gaussian_batch",
     "compute_distances",
     "create_inference_dashboard",
     "gravitational_potential",
