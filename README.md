@@ -28,7 +28,7 @@ uv sync
 uv run demo-1d    # → output/demo_1d.gif
 ```
 
-![1D inference demo](output/demo_1d.gif)
+![1D inference demo](assets/demo_1d.gif)
 
 **2D** — 8 clocks on a plane, infer (x, y, M):
 
@@ -36,7 +36,7 @@ uv run demo-1d    # → output/demo_1d.gif
 uv run demo-2d    # → output/demo_2d.gif
 ```
 
-![2D inference demo](output/demo_2d.gif)
+![2D inference demo](assets/demo_2d.gif)
 
 Each produces an animated GIF showing a 2×2 dashboard: physical setup, particle cloud converging on the true parameters, observed clock rates, and convergence history with uncertainty bands.
 
@@ -46,7 +46,7 @@ Each produces an animated GIF showing a 2×2 dashboard: physical setup, particle
 uv run demo-model-comparison    # → output/demo_model_comparison.gif
 ```
 
-![Model comparison demo](output/demo_model_comparison.gif)
+![Model comparison demo](assets/demo_model_comparison.gif)
 
 Runs parallel particle filters for K=1..3 masses and tracks posterior probabilities. The correct model (K=2) is identified within a few observations.
 
