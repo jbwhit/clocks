@@ -17,7 +17,7 @@ from clocks.viz import animate_inference_multi_1d
 
 # --- Configuration ---
 TRUE_X1 = -2.0
-TRUE_X2 = 3.0
+TRUE_X2 = 4.5
 TRUE_M1 = 0.6
 TRUE_M2 = 0.4
 CLOCK_POSITIONS = [-6.0, -3.0, 0.0, 3.0, 6.0]

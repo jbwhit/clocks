@@ -315,7 +315,7 @@ def clock_array_multi_1d() -> ClockArray:
 @pytest.fixture()
 def mass_config_multi_1d() -> MassConfig:
     return MassConfig(
-        positions=np.array([[-2.0], [3.0]]),
+        positions=np.array([[-2.0], [4.5]]),
         masses=np.array([0.6, 0.4]),
     )
 
@@ -342,7 +342,7 @@ class TestPlotParticleCloudMulti1d:
     def test_runs_with_true(self, particle_state_multi_1d: ParticleState) -> None:
         fig, ax = plt.subplots()
         plot_particle_cloud_multi_1d(
-            ax, particle_state_multi_1d, true_params=np.array([-2.0, 3.0])
+            ax, particle_state_multi_1d, true_params=np.array([-2.0, 4.5])
         )
         legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
         assert "True" in legend_texts
