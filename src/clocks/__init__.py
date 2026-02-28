@@ -27,6 +27,7 @@ from clocks.viz import (
     animate_inference,
     animate_inference_2d,
     animate_inference_multi_1d,
+    animate_inference_multi_2d,
     animate_model_comparison,
     create_inference_dashboard,
     plot_clock_rates,
@@ -37,6 +38,7 @@ from clocks.viz import (
     plot_particle_cloud,
     plot_particle_cloud_2d,
     plot_particle_cloud_multi_1d,
+    plot_particle_cloud_multi_2d,
 )
 
 __all__ = [
@@ -53,6 +55,7 @@ __all__ = [
     "animate_inference",
     "animate_inference_2d",
     "animate_inference_multi_1d",
+    "animate_inference_multi_2d",
     "animate_model_comparison",
     "clock_rates",
     "clock_rates_batch",
@@ -72,5 +75,6 @@ __all__ = [
     "plot_particle_cloud",
     "plot_particle_cloud_2d",
     "plot_particle_cloud_multi_1d",
+    "plot_particle_cloud_multi_2d",
     "time_dilation_factor",
 ]

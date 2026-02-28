@@ -15,6 +15,7 @@ from clocks.viz import (
     animate_inference,
     animate_inference_2d,
     animate_inference_multi_1d,
+    animate_inference_multi_2d,
     animate_model_comparison,
     create_inference_dashboard,
     plot_clock_rates,
@@ -25,6 +26,7 @@ from clocks.viz import (
     plot_particle_cloud,
     plot_particle_cloud_2d,
     plot_particle_cloud_multi_1d,
+    plot_particle_cloud_multi_2d,
 )
 
 matplotlib.use("Agg")
@@ -375,6 +377,117 @@ class TestAnimateInferenceMulti1d:
         animate_inference_multi_1d(
             clock_array=clock_array_multi_1d,
             mass_config=mass_config_multi_1d,
+            observations=obs,
+            pf=pf,
+            output_path=out,
+        )
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+
+# -- Multi-mass (2 masses in 2D) --
+
+
+@pytest.fixture()
+def clock_array_multi_2d() -> ClockArray:
+    return ClockArray(
+        positions=np.array(
+            [
+                [-4.0, 0.0],
+                [-2.0, 3.0],
+                [1.0, 4.0],
+                [4.0, 2.0],
+                [5.0, -1.0],
+                [2.0, -4.0],
+            ]
+        ),
+        track_offset=3.0,
+    )
+
+
+@pytest.fixture()
+def mass_config_multi_2d() -> MassConfig:
+    return MassConfig(
+        positions=np.array([[-3.0, 2.0], [4.0, -1.0]]),
+        masses=np.array([0.6, 0.4]),
+    )
+
+
+@pytest.fixture()
+def particle_state_multi_2d() -> ParticleState:
+    rng = np.random.default_rng(0)
+    x1 = rng.uniform(-5, 5, 100)
+    y1 = rng.uniform(-5, 5, 100)
+    x2 = rng.uniform(-5, 5, 100)
+    y2 = rng.uniform(-5, 5, 100)
+    m1 = rng.uniform(0.1, 2, 100)
+    m2 = rng.uniform(0.1, 2, 100)
+    particles = np.column_stack([x1, y1, x2, y2, m1, m2])
+    # enforce x1 < x2
+    swap = particles[:, 0] > particles[:, 2]
+    particles[swap, 0], particles[swap, 2] = (
+        particles[swap, 2].copy(),
+        particles[swap, 0].copy(),
+    )
+    particles[swap, 1], particles[swap, 3] = (
+        particles[swap, 3].copy(),
+        particles[swap, 1].copy(),
+    )
+    particles[swap, 4], particles[swap, 5] = (
+        particles[swap, 5].copy(),
+        particles[swap, 4].copy(),
+    )
+    weights = np.ones(100) / 100
+    return ParticleState(particles=particles, weights=weights, observations_seen=5)
+
+
+class TestPlotParticleCloudMulti2d:
+    def test_runs_without_true(self, particle_state_multi_2d: ParticleState) -> None:
+        fig, ax = plt.subplots()
+        plot_particle_cloud_multi_2d(ax, particle_state_multi_2d)
+        assert "n_obs=5" in ax.get_title()
+        plt.close(fig)
+
+    def test_runs_with_true(self, particle_state_multi_2d: ParticleState) -> None:
+        fig, ax = plt.subplots()
+        plot_particle_cloud_multi_2d(
+            ax, particle_state_multi_2d, true_params=np.array([-3.0, 2.0])
+        )
+        legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
+        assert "True" in legend_texts
+        plt.close(fig)
+
+
+class TestAnimateInferenceMulti2d:
+    def test_produces_gif(
+        self,
+        clock_array_multi_2d: ClockArray,
+        mass_config_multi_2d: MassConfig,
+        tmp_path: Path,
+    ) -> None:
+        def prior(rng: np.random.Generator, n: int) -> np.ndarray:
+            x1 = rng.uniform(-5, 5, n)
+            y1 = rng.uniform(-5, 5, n)
+            x2 = rng.uniform(-5, 5, n)
+            y2 = rng.uniform(-5, 5, n)
+            m1 = rng.uniform(0.1, 2, n)
+            m2 = rng.uniform(0.1, 2, n)
+            return np.column_stack([x1, y1, x2, y2, m1, m2])
+
+        def fwd(params: np.ndarray) -> np.ndarray:
+            mc = MassConfig(
+                positions=np.array([[params[0], params[1]], [params[2], params[3]]]),
+                masses=np.array([params[4], params[5]]),
+            )
+            return clock_rates(mc, clock_array_multi_2d)
+
+        pf, obs = _make_pf_and_obs(
+            clock_array_multi_2d, mass_config_multi_2d, prior, fwd, n_obs=3
+        )
+        out = tmp_path / "test_multi_2d.gif"
+        animate_inference_multi_2d(
+            clock_array=clock_array_multi_2d,
+            mass_config=mass_config_multi_2d,
             observations=obs,
             pf=pf,
             output_path=out,

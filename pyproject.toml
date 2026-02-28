@@ -9,6 +9,7 @@ dependencies = ["numpy>=2.0", "scipy>=1.14", "matplotlib>=3.9"]
 demo-1d = "clocks._cli:demo_1d"
 demo-2d = "clocks._cli:demo_2d"
 demo-multi-mass = "clocks._cli:demo_multi_mass"
+demo-multi-mass-2d = "clocks._cli:demo_multi_mass_2d"
 demo-model-comparison = "clocks._cli:demo_model_comparison"
 demo-density = "clocks._cli:demo_density"
 

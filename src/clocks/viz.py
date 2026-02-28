@@ -20,6 +20,17 @@ _POSTERIOR_COLORS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purp
 _MULTI_COLORS = ["tab:blue", "tab:cyan", "tab:orange", "tab:red"]
 _MULTI_LABELS = ["x\u2081", "x\u2082", "M\u2081", "M\u2082"]
 
+# 6-param multi-mass 2D convergence plots: x1, y1, x2, y2, M1, M2
+_MULTI_2D_COLORS = [
+    "tab:blue",
+    "tab:cyan",
+    "tab:orange",
+    "tab:red",
+    "tab:green",
+    "tab:purple",
+]
+_MULTI_2D_LABELS = ["x\u2081", "y\u2081", "x\u2082", "y\u2082", "M\u2081", "M\u2082"]
+
 
 def plot_clock_setup(
     ax: Axes,
@@ -605,6 +616,155 @@ def animate_inference_multi_1d(
             _MULTI_COLORS,
             _MULTI_LABELS,
             legend_kwargs={"fontsize": 7, "ncol": 2},
+        )
+
+    anim = animation.FuncAnimation(
+        fig,
+        update,
+        frames=len(observations),
+        repeat=False,
+    )
+    _save_animation(anim, fig, output_path, fps)
+
+
+def plot_particle_cloud_multi_2d(
+    ax: Axes,
+    particle_state: ParticleState,
+    true_params: NDArray[np.floating] | None = None,
+) -> None:
+    """Scatter plot of mass 1 position (x1, y1) for multi-mass 2D particles.
+
+    Particles layout: [x1, y1, x2, y2, M1, M2].
+    Projects to columns 0 and 1 for the first mass position.
+    """
+    p = particle_state.particles
+    w = particle_state.weights
+
+    ax.scatter(p[:, 0], p[:, 1], c=w, cmap="viridis", s=5, alpha=0.6)
+    if true_params is not None:
+        ax.scatter(
+            true_params[0],
+            true_params[1],
+            marker="x",
+            s=100,
+            color="red",
+            linewidths=2,
+            label="True",
+        )
+        ax.legend(fontsize=8)
+
+    ax.set_xlabel("x\u2081")
+    ax.set_ylabel("y\u2081")
+    ax.set_title(f"Mass 1 Cloud (n_obs={particle_state.observations_seen})")
+
+
+def animate_inference_multi_2d(
+    clock_array: ClockArray,
+    mass_config: MassConfig,
+    observations: list[Observation],
+    pf: ParticleFilter,
+    output_path: Path,
+    fps: int = 4,
+    xylim: tuple[float, float] = (-8, 8),
+    mlim: tuple[float, float] = (0, 2),
+) -> None:
+    """Animate multi-mass 2D particle filter (2 masses on a plane) and save.
+
+    Particles have 6 columns: [x1, y1, x2, y2, M1, M2].
+    Dashboard: setup | mass-1 cloud | observed rates | 6-trace convergence.
+    """
+    true_params = np.array(
+        [
+            mass_config.positions[0, 0],
+            mass_config.positions[0, 1],
+            mass_config.positions[1, 0],
+            mass_config.positions[1, 1],
+            mass_config.masses[0],
+            mass_config.masses[1],
+        ]
+    )
+    true_rates = clock_rates(mass_config, clock_array)
+
+    fig, axes = create_inference_dashboard(figsize=(13, 10))
+
+    # Static: physical setup
+    plot_clock_setup_2d(axes["setup"], clock_array, mass_config)
+    axes["setup"].set_xlim(xylim)
+    axes["setup"].set_ylim(xylim)
+
+    # Track estimate history
+    means: list[NDArray] = []
+    stds: list[NDArray] = []
+
+    # Colorbar state for rates panel
+    rates_cbar: list = []
+
+    def update(frame: int) -> None:
+        obs = observations[frame]
+        pf.update(obs)
+        est = pf.estimate()
+        means.append(est["mean"])
+        stds.append(est["std"])
+
+        # Particles — mass 1 (x1, y1)
+        ax = axes["particles"]
+        ax.clear()
+        plot_particle_cloud_multi_2d(ax, pf.state, true_params[:2])
+        ax.set_xlim(xylim)
+        ax.set_ylim(xylim)
+        ax.set_aspect("equal")
+
+        # Rates — scatter colored by observed rate
+        ax = axes["rates"]
+        if rates_cbar:
+            rates_cbar[0].remove()
+            rates_cbar.clear()
+        ax.clear()
+        cx = clock_array.positions[:, 0]
+        cy = clock_array.positions[:, 1]
+        sc = ax.scatter(
+            cx,
+            cy,
+            c=obs.rates,
+            cmap="coolwarm",
+            s=120,
+            marker="s",
+            vmin=min(true_rates) - 0.002,
+            vmax=max(true_rates) + 0.002,
+            zorder=5,
+            edgecolors="black",
+            linewidths=0.5,
+        )
+        for i, (x, y, r) in enumerate(zip(cx, cy, obs.rates)):
+            ax.annotate(
+                f"{r:.4f}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, -14),
+                ha="center",
+                fontsize=7,
+            )
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_aspect("equal")
+        ax.set_xlim(xylim)
+        ax.set_ylim(xylim)
+        ax.set_title(f"Observed Rates (t={frame + 1})")
+        rates_cbar.append(plt.colorbar(sc, ax=ax, label="Rate", shrink=0.8))
+
+        # History — 6 traces
+        ax = axes["history"]
+        ax.clear()
+        steps = np.arange(1, len(means) + 1)
+        _plot_convergence(
+            ax,
+            steps,
+            np.array(means),
+            np.array(stds),
+            true_params,
+            _MULTI_2D_COLORS,
+            _MULTI_2D_LABELS,
+            legend_kwargs={"fontsize": 6, "ncol": 3},
         )
 
     anim = animation.FuncAnimation(
