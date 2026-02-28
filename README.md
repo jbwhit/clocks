@@ -40,13 +40,21 @@ uv run demo-2d    # → output/demo_2d.gif
 
 Each produces an animated GIF showing a 2×2 dashboard: physical setup, particle cloud converging on the true parameters, observed clock rates, and convergence history with uncertainty bands.
 
-**Multi-mass** — 5 clocks, infer 2 masses simultaneously (x₁, x₂, M₁, M₂):
+**Multi-mass (1D)** — 5 clocks, infer 2 masses simultaneously (x₁, x₂, M₁, M₂):
 
 ```bash
 uv run demo-multi-mass    # → output/demo_multi_mass.gif
 ```
 
 ![Multi-mass inference demo](assets/demo_multi_mass.gif)
+
+**Multi-mass (2D)** — 10 random clocks on a plane, infer 2 masses (x₁, y₁, x₂, y₂, M₁, M₂):
+
+```bash
+uv run demo-multi-mass-2d    # → output/demo_multi_mass_2d.gif
+```
+
+![Multi-mass 2D inference demo](assets/demo_multi_mass_2d.gif)
 
 **Model comparison** — 5 clocks, 2 hidden masses, infer K:
 
@@ -58,10 +66,16 @@ uv run demo-model-comparison    # → output/demo_model_comparison.gif
 
 Runs parallel particle filters for K=1..3 masses and tracks posterior probabilities. The correct model (K=2) is identified within a few observations.
 
+**Gaussian density** — 5 clocks, infer a continuous mass distribution (μ, σ, amplitude):
+
+```bash
+uv run demo-density    # text output only, no GIF
+```
+
 ## Run tests
 
 ```bash
-uv run pytest                # 81 tests
+uv run pytest                # 84 tests
 uv run ruff check src/ tests/ scripts/   # lint
 ```
 
@@ -73,11 +87,13 @@ src/clocks/
     physics.py     Forward model: mass config → clock tick rates
     noise.py       Gaussian noise model and log-likelihood
     inference.py   Particle filter (SMC with systematic resampling)
-    viz.py         Matplotlib plotting and animation (1D + 2D)
+    viz.py         Matplotlib plotting and animation
+    _cli.py        Entry points for demo scripts
 scripts/
     demo_1d.py               1D end-to-end demo
     demo_2d.py               2D end-to-end demo
     demo_multi_mass.py       Two masses in 1D
+    demo_multi_mass_2d.py    Two masses in 2D (random clocks)
     demo_model_comparison.py Bayesian model comparison (infer K)
     demo_density.py          Gaussian density forward model
 tests/
