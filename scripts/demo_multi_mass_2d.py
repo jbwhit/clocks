@@ -133,6 +133,12 @@ def main() -> None:
         masses = particles[:, 4:]  # (n, 2)
         return clock_rates_batch_multi(mass_pos, masses, clock_array)
 
+    def log_prior_fn(particles: np.ndarray) -> np.ndarray:
+        lp = np.zeros(particles.shape[0])
+        lp[np.any(particles[:, 4:] <= 0, axis=1)] = -np.inf  # masses > 0
+        lp[np.any((particles[:, :4] < -8) | (particles[:, :4] > 8), axis=1)] = -np.inf
+        return lp
+
     pf = ParticleFilter(
         n_particles=N_PARTICLES,
         prior_sampler=prior_sampler,
@@ -142,6 +148,8 @@ def main() -> None:
         rng=rng,
         forward_model_batch=forward_model_batch,
         constraint_fn=enforce_ordering,
+        jitter="covariance",
+        log_prior=log_prior_fn,
     )
 
     # Animate and save

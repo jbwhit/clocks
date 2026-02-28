@@ -5,12 +5,14 @@ from typing import TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.linalg import cholesky
 
 from clocks.noise import log_likelihood_gaussian, log_likelihood_gaussian_batch
 from clocks.physics import clock_rates, clock_rates_batch, clock_rates_batch_multi
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
+_JITTER_MODES = {"fixed", "covariance"}
 
 
 class Estimate(TypedDict):
@@ -51,6 +53,12 @@ class ParticleFilter:
     rng : Numpy random generator.
     forward_model_batch : Optional Callable(particles) → (n_particles, n_clocks).
         If provided, used instead of looping forward_model per particle.
+    jitter : Jitter mode after resampling. ``"fixed"`` uses isotropic Gaussian
+        noise; ``"covariance"`` draws from the weighted empirical covariance
+        so correlated parameters jitter along their joint structure.
+    log_prior : Optional Callable(particles) → (n_particles,) log-prior values.
+        Particles with ``-inf`` log-prior get zero weight.  Use this instead
+        of constraint clamping for boundary enforcement.
     """
 
     def __init__(
@@ -67,12 +75,19 @@ class ParticleFilter:
         constraint_fn: Callable[[NDArray[np.floating]], NDArray[np.floating]]
         | None = None,
         resampling: str = "systematic",
-        adaptive_jitter: bool = False,
+        jitter: str = "fixed",
+        log_prior: Callable[[NDArray[np.floating]], NDArray[np.floating]] | None = None,
     ) -> None:
         if resampling not in _RESAMPLING_METHODS:
             msg = (
                 f"Unknown resampling method {resampling!r},"
                 f" expected one of {sorted(_RESAMPLING_METHODS)}"
+            )
+            raise ValueError(msg)
+        if jitter not in _JITTER_MODES:
+            msg = (
+                f"Unknown jitter mode {jitter!r},"
+                f" expected one of {sorted(_JITTER_MODES)}"
             )
             raise ValueError(msg)
 
@@ -84,7 +99,8 @@ class ParticleFilter:
         self.jitter_std = jitter_std
         self.constraint_fn = constraint_fn
         self.resampling = resampling
-        self.adaptive_jitter = adaptive_jitter
+        self.jitter = jitter
+        self.log_prior = log_prior
         self.rng = rng or np.random.default_rng()
         self.log_evidence: float = 0.0
 
@@ -124,6 +140,10 @@ class ParticleFilter:
                     observation.rates, predicted, self.noise_std
                 )
                 log_weights[i] += ll
+
+        # Add log-prior (gives -inf weight to invalid particles)
+        if self.log_prior is not None:
+            log_weights += self.log_prior(particles)
 
         # Normalize weights (log-sum-exp for numerical stability)
         max_lw = np.max(log_weights)
@@ -190,13 +210,15 @@ class ParticleFilter:
 
         new_particles = particles[indices].copy()
 
-        if self.adaptive_jitter:
-            mean = np.average(particles, weights=weights, axis=0)
-            var = np.average((particles - mean) ** 2, weights=weights, axis=0)
-            jitter_scale = self.jitter_std * np.maximum(np.sqrt(var), 1e-10)
-            new_particles += (
-                self.rng.normal(0, 1, size=new_particles.shape) * jitter_scale
-            )
+        if self.jitter == "covariance":
+            cov = np.cov(particles.T, aweights=weights)
+            n_params = particles.shape[1]
+            if n_params == 1:
+                cov = cov.reshape(1, 1)
+            cov += 1e-10 * np.eye(n_params)
+            L = cholesky(cov, lower=True)
+            z = self.rng.normal(0, 1, size=new_particles.shape)
+            new_particles += self.jitter_std * (z @ L.T)
         else:
             new_particles += self.rng.normal(
                 0, self.jitter_std, size=new_particles.shape
@@ -283,12 +305,13 @@ class ModelComparison:
         mass_range: tuple[float, float] = (0.1, 2.0),
         rng: np.random.Generator | None = None,
         resampling: str = "systematic",
-        adaptive_jitter: bool = False,
+        jitter: str = "fixed",
     ) -> None:
         self.clock_array = clock_array
         self.noise_std = noise_std
         self.n_dims = n_dims
         self.k_max = k_max
+        self.position_range = position_range
         self.rng = rng or np.random.default_rng()
 
         self.filters: dict[int, ParticleFilter] = {}
@@ -303,7 +326,8 @@ class ModelComparison:
                 forward_model_batch=self._make_forward_model_batch(k),
                 constraint_fn=self._make_constraint_fn(k) if k > 1 else None,
                 resampling=resampling,
-                adaptive_jitter=adaptive_jitter,
+                jitter=jitter,
+                log_prior=self._make_log_prior(k, position_range, mass_range),
             )
 
     def _make_prior_sampler(
@@ -394,6 +418,32 @@ class ModelComparison:
             return particles
 
         return constraint
+
+    def _make_log_prior(
+        self,
+        k: int,
+        position_range: tuple[float, float],
+        mass_range: tuple[float, float],
+    ) -> Callable[[NDArray[np.floating]], NDArray[np.floating]]:
+        """Log-prior: -inf for negative masses or out-of-range positions."""
+        n_dims = self.n_dims
+
+        def log_prior(particles: NDArray[np.floating]) -> NDArray[np.floating]:
+            lp = np.zeros(particles.shape[0])
+            # Check positions
+            positions = particles[:, : k * n_dims]
+            out_of_range = np.any(
+                (positions < position_range[0]) | (positions > position_range[1]),
+                axis=1,
+            )
+            lp[out_of_range] = -np.inf
+            # Check masses
+            masses = particles[:, k * n_dims :]
+            invalid_mass = np.any(masses <= 0, axis=1)
+            lp[invalid_mass] = -np.inf
+            return lp
+
+        return log_prior
 
     def update(self, observation: Observation) -> None:
         """Feed one observation to all filters."""

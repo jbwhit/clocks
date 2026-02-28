@@ -62,11 +62,11 @@ def main() -> None:
     def forward_model_batch(particles: np.ndarray) -> np.ndarray:
         return clock_rates_density_gaussian_batch(particles, clock_array)
 
-    # Constraint: sigma > 0.1, amplitude > 0.01
-    def constraint_fn(particles: np.ndarray) -> np.ndarray:
-        particles[:, 1] = np.maximum(particles[:, 1], 0.1)
-        particles[:, 2] = np.maximum(particles[:, 2], 0.01)
-        return particles
+    def log_prior_fn(particles: np.ndarray) -> np.ndarray:
+        lp = np.zeros(particles.shape[0])
+        lp[particles[:, 1] < 0.1] = -np.inf  # sigma >= 0.1
+        lp[particles[:, 2] < 0.01] = -np.inf  # amplitude >= 0.01
+        return lp
 
     pf = ParticleFilter(
         n_particles=N_PARTICLES,
@@ -76,7 +76,8 @@ def main() -> None:
         jitter_std=JITTER_STD,
         rng=rng,
         forward_model_batch=forward_model_batch,
-        constraint_fn=constraint_fn,
+        jitter="covariance",
+        log_prior=log_prior_fn,
     )
 
     # Feed observations

@@ -309,10 +309,10 @@ class TestParticleFilter:
                 resampling="bogus",
             )
 
-    # --- Adaptive jitter ---
+    # --- Covariance jitter ---
 
-    def test_adaptive_jitter_converges(self) -> None:
-        """Adaptive jitter should still converge near the true parameters."""
+    def test_covariance_jitter_converges(self) -> None:
+        """Covariance jitter should still converge near the true parameters."""
         rng = np.random.default_rng(42)
         true_x, true_m = 2.5, 0.8
         mc, ca = _make_1d_scenario(true_x, true_m)
@@ -331,7 +331,7 @@ class TestParticleFilter:
             noise_std=0.005,
             jitter_std=0.5,
             rng=rng,
-            adaptive_jitter=True,
+            jitter="covariance",
         )
 
         for t in range(30):
@@ -342,8 +342,8 @@ class TestParticleFilter:
         assert abs(est["mean"][0] - true_x) < 1.0
         assert abs(est["mean"][1] - true_m) < 0.3
 
-    def test_adaptive_jitter_scales_with_spread(self) -> None:
-        """Wider prior should produce wider jitter with adaptive_jitter."""
+    def test_covariance_jitter_scales_with_spread(self) -> None:
+        """Wider prior should produce wider jitter with covariance jitter."""
         _, ca = _make_1d_scenario()
         forward = _make_forward_model(ca)
 
@@ -366,7 +366,7 @@ class TestParticleFilter:
             forward_model=forward,
             noise_std=0.01,
             jitter_std=1.0,
-            adaptive_jitter=True,
+            jitter="covariance",
             resample_threshold=1.0,  # force resample
             rng=rng1,
         )
@@ -378,7 +378,7 @@ class TestParticleFilter:
             forward_model=forward,
             noise_std=0.01,
             jitter_std=1.0,
-            adaptive_jitter=True,
+            jitter="covariance",
             resample_threshold=1.0,
             rng=rng2,
         )
@@ -387,6 +387,92 @@ class TestParticleFilter:
         wide_std = pf_wide.estimate()["std"]
         # The wide prior should have larger spread
         assert np.all(wide_std > narrow_std)
+
+    def test_invalid_jitter_raises(self) -> None:
+        """Unknown jitter mode should raise ValueError."""
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 2))
+
+        with pytest.raises(ValueError, match="Unknown jitter mode"):
+            ParticleFilter(
+                n_particles=50,
+                prior_sampler=prior_sampler,
+                forward_model=lambda p: np.array([1.0]),
+                noise_std=0.01,
+                jitter="bogus",
+            )
+
+    # --- Log-prior ---
+
+    def test_log_prior_zeroes_invalid_particles(self) -> None:
+        """Particles with -inf log_prior should get zero weight."""
+        _, ca = _make_1d_scenario()
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        # log_prior that kills negative-x particles
+        def log_prior(particles: np.ndarray) -> np.ndarray:
+            lp = np.zeros(particles.shape[0])
+            lp[particles[:, 0] < 0] = -np.inf
+            return lp
+
+        rng = np.random.default_rng(42)
+        pf = ParticleFilter(
+            n_particles=500,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            rng=rng,
+            log_prior=log_prior,
+        )
+
+        obs = Observation(rates=np.array([0.98, 0.95, 0.99]), time=0.0)
+        pf.update(obs)
+
+        # After update, all weight should be on non-negative-x particles
+        particles = pf.state.particles
+        weights = pf.state.weights
+        negative_weight = weights[particles[:, 0] < 0].sum()
+        assert negative_weight < 1e-10, (
+            f"Negative-x particles should have ~0 weight, got {negative_weight}"
+        )
+
+    def test_log_prior_called_each_update(self) -> None:
+        """log_prior should be called once per update."""
+        _, ca = _make_1d_scenario()
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return rng.uniform(-5, 5, (n, 2))
+
+        call_count = [0]
+
+        def counting_prior(particles: np.ndarray) -> np.ndarray:
+            call_count[0] += 1
+            return np.zeros(particles.shape[0])
+
+        rng = np.random.default_rng(0)
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.01,
+            rng=rng,
+            log_prior=counting_prior,
+        )
+
+        for t in range(5):
+            obs = Observation(rates=np.array([0.9, 0.95, 0.99]), time=float(t))
+            pf.update(obs)
+
+        assert call_count[0] == 5, (
+            f"log_prior should be called 5 times, got {call_count[0]}"
+        )
 
     # --- Convergence diagnostics ---
 

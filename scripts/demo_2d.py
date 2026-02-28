@@ -80,6 +80,12 @@ def main() -> None:
     def forward_model_batch(particles: np.ndarray) -> np.ndarray:
         return clock_rates_batch(particles[:, :2], particles[:, 2], clock_array)
 
+    def log_prior_fn(particles: np.ndarray) -> np.ndarray:
+        lp = np.zeros(particles.shape[0])
+        lp[particles[:, 2] <= 0] = -np.inf  # mass > 0
+        lp[np.any((particles[:, :2] < -8) | (particles[:, :2] > 8), axis=1)] = -np.inf
+        return lp
+
     pf = ParticleFilter(
         n_particles=N_PARTICLES,
         prior_sampler=prior_sampler,
@@ -88,6 +94,8 @@ def main() -> None:
         jitter_std=JITTER_STD,
         rng=rng,
         forward_model_batch=forward_model_batch,
+        jitter="covariance",
+        log_prior=log_prior_fn,
     )
 
     # Animate and save
