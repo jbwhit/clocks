@@ -1,6 +1,6 @@
 """Public end-to-end API for clocks simulation and inference."""
 
-from typing import cast, overload
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -37,18 +37,6 @@ def simulate(config: SimulationConfig) -> SimulationResult:
         noise=config.noise,
         seed=config.seed,
     )
-
-
-@overload
-def infer(
-    observations: list[Observation], config: InferenceConfig
-) -> InferenceResult: ...
-
-
-@overload
-def infer(
-    observations: list[Observation], config: InferenceConfig
-) -> ModelComparisonInferenceResult: ...
 
 
 def infer(
@@ -242,7 +230,6 @@ def _infer_model_comparison(
             _normalize_selected_posteriors(evidence["posterior"], candidate_models)
         )
 
-    evidence = model_comparison.evidence()
     posterior_by_model = _normalize_selected_posteriors(
         evidence["posterior"], candidate_models
     )
