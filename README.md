@@ -75,7 +75,7 @@ uv run demo-density    # text output only, no GIF
 ## Run tests
 
 ```bash
-uv run pytest                # 84 tests
+uv run pytest                # 87 tests
 uv run ruff check src/ tests/ scripts/   # lint
 ```
 
