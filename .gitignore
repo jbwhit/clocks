@@ -1,5 +1,6 @@
 # Gemini conversation (reference only, not part of project)
 gemini/
+.worktrees/
 
 # Python
 __pycache__/
