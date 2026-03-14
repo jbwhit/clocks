@@ -9,10 +9,10 @@ from pathlib import Path
 
 import numpy as np
 
+from clocks.api import infer, simulate
+from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.inference import ModelComparison
-from clocks.noise import add_clock_noise
-from clocks.physics import clock_rates
-from clocks.types import ClockArray, MassConfig, Observation
+from clocks.types import ClockArray, MassConfig
 from clocks.viz import animate_model_comparison
 
 # --- Configuration ---
@@ -31,9 +31,6 @@ SEED = 42
 
 
 def main() -> None:
-    rng = np.random.default_rng(SEED)
-
-    # Ground truth
     mass_config = MassConfig(
         positions=np.array([[TRUE_X1], [TRUE_X2]]),
         masses=np.array([TRUE_M1, TRUE_M2]),
@@ -42,61 +39,49 @@ def main() -> None:
         positions=np.array([[x] for x in CLOCK_POSITIONS]),
         track_offset=TRACK_OFFSET,
     )
-    true_rates = clock_rates(mass_config, clock_array)
+    sim_config = SimulationConfig(
+        clock_array=clock_array,
+        ground_truth=mass_config,
+        noise=NoiseConfig(observation_std=NOISE_STD),
+        n_observations=N_OBSERVATIONS,
+        seed=SEED,
+    )
+    infer_config = InferenceConfig(
+        clock_array=clock_array,
+        noise=NoiseConfig(observation_std=NOISE_STD),
+        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+        n_particles=N_PARTICLES,
+        n_masses=(1, 2, 3),
+        jitter_std=JITTER_STD,
+        seed=SEED,
+    )
+    simulation = simulate(sim_config)
+    result = infer(simulation.observations, infer_config)
 
     print(
         f"True model: K=2 masses at x=[{TRUE_X1}, {TRUE_X2}], M=[{TRUE_M1}, {TRUE_M2}]"
     )
-    print(f"True rates: {true_rates}")
+    print(f"True rates: {simulation.true_rates}")
     print()
 
-    mc = ModelComparison(
-        clock_array=clock_array,
-        noise_std=NOISE_STD,
-        n_dims=1,
-        k_max=K_MAX,
-        n_particles=N_PARTICLES,
-        jitter_std=JITTER_STD,
-        rng=rng,
-    )
-
-    # Feed observations
-    for t in range(N_OBSERVATIONS):
-        noisy = add_clock_noise(true_rates, NOISE_STD, rng)
-        obs = Observation(rates=noisy, time=float(t))
-        mc.update(obs)
-
-        # Print progress every 20 steps
-        if (t + 1) % 20 == 0:
-            result = mc.evidence()
-            print(f"After {t + 1} observations:")
-            for k in sorted(result["log_evidence"]):
-                print(
-                    f"  K={k}: log-evidence={result['log_evidence'][k]:.1f}"
-                    f"  posterior={result['posterior'][k]:.4f}"
-                )
+    for t, posterior in enumerate(result.history, start=1):
+        if t % 20 == 0:
+            print(f"After {t} observations:")
+            for k in sorted(posterior):
+                print(f"  K={k}: posterior={posterior[k]:.4f}")
             print()
 
-    # Final results
-    result = mc.evidence()
-    map_k = max(result["posterior"], key=lambda x: result["posterior"][x])
-    est = mc.estimate()
+    map_k = result.best_model
+    estimate = result.result_by_model[map_k]
 
     print(f"MAP model: K={map_k}")
-    print(f"Estimate: {est['mean']}")
-    print(f"Std:      {est['std']}")
-    print(f"ESS:      {est['ess']:.0f} / {N_PARTICLES}")
+    print(f"Estimate: {estimate.posterior_mean}")
+    print(f"Std:      {estimate.posterior_std}")
+    print(f"ESS:      {estimate.ess:.0f} / {N_PARTICLES}")
 
     # --- Animated GIF ---
     print("\nGenerating model comparison GIF...")
-    rng_gif = np.random.default_rng(SEED + 1)
-    observations = [
-        Observation(
-            rates=add_clock_noise(true_rates, NOISE_STD, rng_gif),
-            time=float(t),
-        )
-        for t in range(N_OBSERVATIONS)
-    ]
+    rng_gif = np.random.default_rng(SEED)
     mc_gif = ModelComparison(
         clock_array=clock_array,
         noise_std=NOISE_STD,
@@ -112,7 +97,7 @@ def main() -> None:
     animate_model_comparison(
         clock_array=clock_array,
         mass_config=mass_config,
-        observations=observations,
+        observations=simulation.observations,
         model_comparison=mc_gif,
         output_path=gif_path,
     )

@@ -162,3 +162,12 @@ def test_simulate_and_infer_preserves_simulation_output() -> None:
 
     assert result.simulation is not None
     assert result.simulation.ground_truth.masses.shape == (2,)
+
+
+def test_public_api_is_exported_from_package() -> None:
+    import clocks
+
+    assert clocks.infer is not None
+    assert clocks.simulate is not None
+    assert clocks.simulate_and_infer is not None
+    assert clocks.SimulationConfig is not None

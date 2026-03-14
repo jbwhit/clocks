@@ -1,5 +1,7 @@
 """Gravitational time dilation simulation and inference library."""
 
+from clocks.api import infer, simulate, simulate_and_infer
+from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.inference import (
     ConvergenceInfo,
     Estimate,
@@ -21,6 +23,12 @@ from clocks.physics import (
     compute_distances,
     gravitational_potential,
     time_dilation_factor,
+)
+from clocks.results import (
+    HistoryEntry,
+    InferenceResult,
+    ModelComparisonInferenceResult,
+    SimulationResult,
 )
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 from clocks.viz import (
@@ -45,12 +53,20 @@ __all__ = [
     "ClockArray",
     "ConvergenceInfo",
     "Estimate",
+    "HistoryEntry",
+    "InferenceConfig",
+    "InferenceResult",
     "MassConfig",
     "ModelComparison",
+    "ModelComparisonInferenceResult",
     "ModelComparisonResult",
+    "NoiseConfig",
     "Observation",
     "ParticleFilter",
     "ParticleState",
+    "PriorConfig",
+    "SimulationConfig",
+    "SimulationResult",
     "add_clock_noise",
     "animate_inference",
     "animate_inference_2d",
@@ -65,6 +81,7 @@ __all__ = [
     "compute_distances",
     "create_inference_dashboard",
     "gravitational_potential",
+    "infer",
     "log_likelihood_gaussian",
     "log_likelihood_gaussian_batch",
     "plot_clock_rates",
@@ -76,5 +93,7 @@ __all__ = [
     "plot_particle_cloud_2d",
     "plot_particle_cloud_multi_1d",
     "plot_particle_cloud_multi_2d",
+    "simulate",
+    "simulate_and_infer",
     "time_dilation_factor",
 ]

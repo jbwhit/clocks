@@ -20,6 +20,61 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
+## Use as a library
+
+The package now exposes stable end-to-end entry points for simulation and inference:
+
+```python
+import numpy as np
+
+from clocks import (
+    ClockArray,
+    InferenceConfig,
+    MassConfig,
+    NoiseConfig,
+    PriorConfig,
+    SimulationConfig,
+    infer,
+    simulate,
+)
+
+clock_array = ClockArray(
+    positions=np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]]),
+    track_offset=1.0,
+)
+ground_truth = MassConfig(
+    positions=np.array([[-2.0], [3.0]]),
+    masses=np.array([0.6, 0.4]),
+)
+
+simulation = simulate(
+    SimulationConfig(
+        clock_array=clock_array,
+        ground_truth=ground_truth,
+        noise=NoiseConfig(observation_std=0.005),
+        n_observations=40,
+        seed=42,
+    )
+)
+
+result = infer(
+    simulation.observations,
+    InferenceConfig(
+        clock_array=clock_array,
+        noise=NoiseConfig(observation_std=0.005),
+        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+        n_particles=1500,
+        n_masses=(1, 2, 3),
+        seed=42,
+    ),
+)
+
+print(result.best_model)
+print(result.posterior_by_model)
+```
+
+For fixed-K inference, pass an integer to `n_masses` instead of a tuple.
+
 ## Run the demos
 
 **1D** — 3 clocks on a line, infer (x, M):
