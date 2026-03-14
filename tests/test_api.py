@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from clocks.api import infer, simulate
+from clocks.api import infer, simulate, simulate_and_infer
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.results import SimulationResult
 from clocks.types import ClockArray, MassConfig, Observation
@@ -23,6 +23,13 @@ def _make_ground_truth() -> MassConfig:
     )
 
 
+def _make_model_comparison_ground_truth() -> MassConfig:
+    return MassConfig(
+        positions=np.array([[-2.0], [3.0]]),
+        masses=np.array([0.6, 0.4]),
+    )
+
+
 def _make_noise() -> NoiseConfig:
     return NoiseConfig(observation_std=0.005)
 
@@ -32,11 +39,13 @@ def _make_prior() -> PriorConfig:
 
 
 def _make_simulation_config(
-    n_observations: int = 5, seed: int = 42
+    n_observations: int = 5,
+    seed: int = 42,
+    ground_truth: MassConfig | None = None,
 ) -> SimulationConfig:
     return SimulationConfig(
         clock_array=_make_clock_array(),
-        ground_truth=_make_ground_truth(),
+        ground_truth=ground_truth or _make_ground_truth(),
         noise=_make_noise(),
         n_observations=n_observations,
         seed=seed,
@@ -124,3 +133,32 @@ def test_infer_multi_mass_returns_summary_history() -> None:
     assert result.posterior_mean.shape == (4,)
     assert result.posterior_std.shape == (4,)
     assert len(result.history) == len(simulation.observations)
+
+
+def test_infer_model_comparison_returns_model_probabilities() -> None:
+    simulation = simulate(
+        _make_simulation_config(
+            n_observations=40,
+            seed=42,
+            ground_truth=_make_model_comparison_ground_truth(),
+        )
+    )
+
+    result = infer(
+        simulation.observations,
+        _make_inference_config(n_masses=(1, 2, 3), n_particles=1500, seed=42),
+    )
+
+    assert set(result.posterior_by_model) == {1, 2, 3}
+    assert result.best_model == 2
+    assert len(result.history) == len(simulation.observations)
+
+
+def test_simulate_and_infer_preserves_simulation_output() -> None:
+    result = simulate_and_infer(
+        _make_simulation_config(n_observations=6, seed=99),
+        _make_inference_config(n_masses=2, seed=99),
+    )
+
+    assert result.simulation is not None
+    assert result.simulation.ground_truth.masses.shape == (2,)

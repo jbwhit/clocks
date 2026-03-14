@@ -4,7 +4,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from clocks.config import InferenceConfig, SimulationConfig
-from clocks.inference import ParticleFilter
+from clocks.inference import ModelComparison, ParticleFilter
 from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates, clock_rates_batch, clock_rates_batch_multi
 from clocks.results import (
@@ -42,7 +42,7 @@ def infer(
 ) -> InferenceResult | ModelComparisonInferenceResult:
     """Run inference against a list of observations."""
     if isinstance(config.n_masses, tuple):
-        raise NotImplementedError("model comparison is implemented in a later task")
+        return _infer_model_comparison(observations, config)
 
     particle_filter = _build_particle_filter(config)
     for observation in observations:
@@ -55,7 +55,9 @@ def simulate_and_infer(
     inference_config: InferenceConfig,
 ) -> InferenceResult | ModelComparisonInferenceResult:
     """Generate synthetic data and immediately run inference over it."""
-    raise NotImplementedError("simulate_and_infer() is implemented in a later task")
+    simulation = simulate(simulation_config)
+    result = infer(simulation.observations, inference_config)
+    return result.with_simulation(simulation)
 
 
 def _build_particle_filter(config: InferenceConfig) -> ParticleFilter:
@@ -195,3 +197,59 @@ def _inference_result_from_particle_filter(
         history=history,
         particle_state=particle_filter.state,
     )
+
+
+def _infer_model_comparison(
+    observations: list[Observation], config: InferenceConfig
+) -> ModelComparisonInferenceResult:
+    assert isinstance(config.n_masses, tuple)
+    candidate_models = tuple(sorted(set(config.n_masses)))
+    model_comparison = ModelComparison(
+        clock_array=config.clock_array,
+        noise_std=config.noise.observation_std,
+        n_dims=config.clock_array.positions.shape[1],
+        k_max=max(candidate_models),
+        n_particles=config.n_particles,
+        jitter_std=config.jitter_std,
+        position_range=config.prior.position_range,
+        mass_range=config.prior.mass_range,
+        rng=np.random.default_rng(config.seed),
+        resampling=config.resampling,
+        jitter=config.jitter,
+    )
+
+    history: list[dict[int, float]] = []
+    for observation in observations:
+        model_comparison.update(observation)
+        evidence = model_comparison.evidence()
+        history.append(
+            _normalize_selected_posteriors(evidence["posterior"], candidate_models)
+        )
+
+    evidence = model_comparison.evidence()
+    posterior_by_model = _normalize_selected_posteriors(
+        evidence["posterior"], candidate_models
+    )
+    best_model = max(posterior_by_model, key=posterior_by_model.__getitem__)
+    result_by_model = {
+        k: _inference_result_from_particle_filter(model_comparison.filters[k])
+        for k in candidate_models
+    }
+    log_evidence_by_model = {k: evidence["log_evidence"][k] for k in candidate_models}
+
+    return ModelComparisonInferenceResult(
+        posterior_by_model=posterior_by_model,
+        log_evidence_by_model=log_evidence_by_model,
+        best_model=best_model,
+        result_by_model=result_by_model,
+        history=history,
+    )
+
+
+def _normalize_selected_posteriors(
+    posterior: dict[int, float],
+    candidate_models: tuple[int, ...],
+) -> dict[int, float]:
+    selected = {k: posterior[k] for k in candidate_models}
+    total = sum(selected.values())
+    return {k: value / total for k, value in selected.items()}
