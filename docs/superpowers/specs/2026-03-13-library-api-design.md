@@ -39,18 +39,26 @@ Right now, the practical path for users is to inspect demos and assemble the wor
 
 ## Recommended Approach
 
-Add a thin public API layer with two entry modes:
+Add a thin public API layer with a small, unified workflow surface:
 
-- `infer_from_observations(...)`
-- `simulate_and_infer(...)`
+- `infer(...)`
+- `simulate(...)`
+- `simulate_and_infer(...)` as an optional convenience wrapper
 
-Both entry points share the same underlying config normalization, orchestration, and result shaping. This keeps the public story simple while avoiding duplicate implementations.
+`infer(...)` should be the main entry point for all inference against already
+materialized observations. `simulate(...)` should be the standalone synthetic
+data generator. `simulate_and_infer(...)` should exist only to simplify common
+benchmark and notebook workflows.
+
+These entry points should share the same underlying config normalization,
+orchestration, and result shaping. This keeps the public story simple while
+avoiding duplicate implementations.
 
 The first release should remain batch-oriented. It should be designed so a future stateful `InferenceSession` can reuse the same configs and result types, but that session API should not be introduced yet.
 
 ## Alternatives Considered
 
-### 1. Batch API plus shared public types
+### 1. Unified batch API plus shared public types
 
 Recommended.
 
@@ -93,13 +101,14 @@ Cons:
 
 ## Public API Shape
 
-The public layer should expose two top-level workflow families:
+The public layer should expose one primary inference entry point and one
+primary simulation entry point.
 
-### Observation-driven
+### Inference
 
 For callers who already have clock observations:
 
-- `infer_from_observations(...)`
+- `infer(...)`
 
 This should support:
 
@@ -107,18 +116,31 @@ This should support:
 - fixed-K multi-mass inference
 - model comparison across candidate values of `K`
 
-### Simulation-driven
+### Simulation
 
 For callers doing synthetic experiments:
 
-- `simulate_and_infer(...)`
+- `simulate(...)`
 
 This should:
 
 - accept simulation inputs describing clocks, true mass configuration, noise, and observation count
 - generate observations using the existing forward model
+- return a `SimulationResult` that includes both the generated observations and
+  the explicit ground-truth mass configuration
+
+### Convenience wrapper
+
+For common end-to-end synthetic benchmarks:
+
+- `simulate_and_infer(...)`
+
+This should:
+
+- call `simulate(...)`
 - run the same inference/model-comparison workflows as the observation-driven path
-- return the same result family, optionally with generated observations attached
+- return the same inference result family, with simulation output attached or
+  otherwise easily accessible
 
 ## Proposed Module Layout
 
@@ -175,7 +197,7 @@ Candidate result types:
 - `InferenceResult`
 - `MultiMassInferenceResult`
 - `ModelComparisonResult`
-- `SimulationRun`
+- `SimulationResult`
 
 For model comparison specifically, results should include:
 
@@ -191,12 +213,18 @@ Results should also provide convenience exporters such as:
 
 The primary API should not force callers to depend on internal particle-state layouts.
 
+Plotting should not be a required method on result objects in the first version.
+If notebook ergonomics need improvement, add plotting helpers that accept the
+public result types, likely in `clocks.viz` or a small public plotting module.
+That keeps result objects focused on stable data contracts instead of coupling
+them immediately to Matplotlib-facing APIs.
+
 ## Execution Flow
 
-Both public entry modes should converge on one orchestration path:
+All public workflows should converge on one orchestration path:
 
 1. validate and normalize config objects
-2. construct or accept observations
+2. construct observations via `simulate(...)` or accept them via `infer(...)`
 3. dispatch to fixed-K inference or model comparison
 4. collect histories and summaries from the underlying filter runs
 5. map internal outputs into stable public result objects
@@ -228,8 +256,9 @@ Tests should validate public behavior, not internal implementation details.
 
 Required coverage:
 
-- `infer_from_observations(...)` returns stable result objects for single-mass, multi-mass, and model-comparison workflows
-- `simulate_and_infer(...)` generates observations and returns the same result family
+- `infer(...)` returns stable result objects for single-mass, multi-mass, and model-comparison workflows
+- `simulate(...)` generates observations and returns explicit ground truth alongside them
+- `simulate_and_infer(...)` returns the same inference result family while preserving access to simulation outputs
 - controlled synthetic cases recover the correct model in model-comparison tests
 - result exporters produce serialization-friendly structures
 - invalid config combinations fail with clear public-facing errors
@@ -243,6 +272,7 @@ Initial rollout should be additive:
 - keep current CLI scripts and demos working
 - refactor demo orchestration to use the new public API where it reduces duplication
 - document the new library entry points in the README with short embedding examples
+- keep plotting integration additive by adapting `clocks.viz` to public result objects rather than embedding plotting methods into the first release of those objects
 
 This avoids breaking current users while making the package usable as a library.
 
