@@ -164,6 +164,68 @@ def test_simulate_and_infer_preserves_simulation_output() -> None:
     assert result.simulation.ground_truth.masses.shape == (2,)
 
 
+def test_inference_result_to_dict_includes_particle_state_and_simulation() -> None:
+    result = simulate_and_infer(
+        _make_simulation_config(n_observations=6, seed=99),
+        _make_inference_config(n_masses=2, seed=99),
+    )
+
+    payload = result.to_dict()
+
+    assert "particle_state" in payload
+    assert payload["particle_state"]["observations_seen"] == 6
+    assert payload["simulation"]["ground_truth"]["masses"] == [0.6, 0.4]
+
+
+def test_model_comparison_result_to_dict_includes_nested_results() -> None:
+    result = simulate_and_infer(
+        _make_simulation_config(
+            n_observations=40,
+            seed=42,
+            ground_truth=_make_model_comparison_ground_truth(),
+        ),
+        _make_inference_config(n_masses=(1, 2, 3), n_particles=1500, seed=42),
+    )
+
+    payload = result.to_dict()
+
+    assert payload["best_model"] == 2
+    assert set(payload["result_by_model"]) == {1, 2, 3}
+    assert "simulation" in payload
+
+
+def test_noise_config_rejects_nonpositive_std() -> None:
+    with pytest.raises(ValueError, match="observation_std must be > 0"):
+        NoiseConfig(observation_std=0.0)
+
+
+def test_prior_config_rejects_invalid_position_range() -> None:
+    with pytest.raises(ValueError, match="position_range must be increasing"):
+        PriorConfig(position_range=(2.0, -2.0), mass_range=(0.1, 2.0))
+
+
+def test_inference_config_rejects_nonpositive_n_masses() -> None:
+    with pytest.raises(ValueError, match="n_masses must be > 0"):
+        InferenceConfig(
+            clock_array=_make_clock_array(),
+            noise=_make_noise(),
+            prior=_make_prior(),
+            n_particles=100,
+            n_masses=0,
+        )
+
+
+def test_inference_config_rejects_empty_candidate_models() -> None:
+    with pytest.raises(ValueError, match="n_masses candidates must not be empty"):
+        InferenceConfig(
+            clock_array=_make_clock_array(),
+            noise=_make_noise(),
+            prior=_make_prior(),
+            n_particles=100,
+            n_masses=(),
+        )
+
+
 def test_public_api_is_exported_from_package() -> None:
     import clocks
 

@@ -9,10 +9,12 @@ from pathlib import Path
 
 import numpy as np
 
-from clocks.api import infer, simulate
+from clocks.api import (
+    _build_particle_filter,
+    _inference_result_from_particle_filter,
+    simulate,
+)
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
-from clocks.inference import ParticleFilter
-from clocks.physics import clock_rates, clock_rates_batch_multi
 from clocks.types import ClockArray, MassConfig
 from clocks.viz import animate_inference_multi_1d
 
@@ -31,23 +33,7 @@ SEED = 42
 OUTPUT_PATH = Path("output/demo_multi_mass.gif")
 
 
-def enforce_ordering(particles: np.ndarray) -> np.ndarray:
-    """Swap x1/x2 and M1/M2 when x1 > x2 to break label-switching symmetry."""
-    swap = particles[:, 0] > particles[:, 1]
-    particles[swap, 0], particles[swap, 1] = (
-        particles[swap, 1].copy(),
-        particles[swap, 0].copy(),
-    )
-    particles[swap, 2], particles[swap, 3] = (
-        particles[swap, 3].copy(),
-        particles[swap, 2].copy(),
-    )
-    return particles
-
-
 def main() -> None:
-    rng = np.random.default_rng(SEED)
-
     mass_config = MassConfig(
         positions=np.array([[TRUE_X1], [TRUE_X2]]),
         masses=np.array([TRUE_M1, TRUE_M2]),
@@ -74,51 +60,10 @@ def main() -> None:
         seed=SEED,
     )
     simulation = simulate(sim_config)
-    result = infer(simulation.observations, infer_config)
+    pf = _build_particle_filter(infer_config)
 
     print(f"True masses: x1={TRUE_X1}, x2={TRUE_X2}, M1={TRUE_M1}, M2={TRUE_M2}")
     print(f"True rates: {simulation.true_rates}")
-
-    # Prior: sample x pair and sort so x1 < x2
-    def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
-        x = rng.uniform(-8, 8, (n, 2))
-        x.sort(axis=1)  # enforce x1 < x2
-        m1 = rng.uniform(0.1, 2.0, n)
-        m2 = rng.uniform(0.1, 2.0, n)
-        return np.column_stack([x[:, 0], x[:, 1], m1, m2])
-
-    # Forward models
-    def forward_model(params: np.ndarray) -> np.ndarray:
-        mc = MassConfig(
-            positions=np.array([[params[0]], [params[1]]]),
-            masses=np.array([params[2], params[3]]),
-        )
-        return clock_rates(mc, clock_array)
-
-    def forward_model_batch(particles: np.ndarray) -> np.ndarray:
-        # particles: (n, 4) → [x1, x2, M1, M2]
-        mass_pos = particles[:, :2, np.newaxis]  # (n, 2, 1)
-        masses = particles[:, 2:]  # (n, 2)
-        return clock_rates_batch_multi(mass_pos, masses, clock_array)
-
-    def log_prior_fn(particles: np.ndarray) -> np.ndarray:
-        lp = np.zeros(particles.shape[0])
-        lp[np.any(particles[:, 2:] <= 0, axis=1)] = -np.inf  # masses > 0
-        lp[np.any((particles[:, :2] < -8) | (particles[:, :2] > 8), axis=1)] = -np.inf
-        return lp
-
-    pf = ParticleFilter(
-        n_particles=N_PARTICLES,
-        prior_sampler=prior_sampler,
-        forward_model=forward_model,
-        noise_std=NOISE_STD,
-        jitter_std=JITTER_STD,
-        rng=rng,
-        forward_model_batch=forward_model_batch,
-        constraint_fn=enforce_ordering,
-        jitter="covariance",
-        log_prior=log_prior_fn,
-    )
 
     # Animate and save
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +76,7 @@ def main() -> None:
         output_path=OUTPUT_PATH,
         fps=4,
     )
+    result = _inference_result_from_particle_filter(pf)
 
     print(f"\nFinal estimate after {N_OBSERVATIONS} observations:")
     print(

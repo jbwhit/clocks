@@ -299,6 +299,7 @@ class ModelComparison:
         noise_std: float,
         n_dims: int = 1,
         k_max: int = 3,
+        k_values: tuple[int, ...] | None = None,
         n_particles: int = 1000,
         jitter_std: float = 0.02,
         position_range: tuple[float, float] = (-8.0, 8.0),
@@ -310,12 +311,20 @@ class ModelComparison:
         self.clock_array = clock_array
         self.noise_std = noise_std
         self.n_dims = n_dims
-        self.k_max = k_max
+        if k_values is None:
+            self.k_values = tuple(range(1, k_max + 1))
+        else:
+            if not k_values:
+                raise ValueError("k_values must not be empty")
+            if any(k <= 0 for k in k_values):
+                raise ValueError("k_values must all be > 0")
+            self.k_values = tuple(sorted(set(k_values)))
+        self.k_max = max(self.k_values)
         self.position_range = position_range
         self.rng = rng or np.random.default_rng()
 
         self.filters: dict[int, ParticleFilter] = {}
-        for k in range(1, k_max + 1):
+        for k in self.k_values:
             self.filters[k] = ParticleFilter(
                 n_particles=n_particles,
                 prior_sampler=self._make_prior_sampler(k, position_range, mass_range),

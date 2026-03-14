@@ -1,5 +1,7 @@
 """Public end-to-end API for clocks simulation and inference."""
 
+from typing import cast, overload
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -37,6 +39,18 @@ def simulate(config: SimulationConfig) -> SimulationResult:
     )
 
 
+@overload
+def infer(
+    observations: list[Observation], config: InferenceConfig
+) -> InferenceResult: ...
+
+
+@overload
+def infer(
+    observations: list[Observation], config: InferenceConfig
+) -> ModelComparisonInferenceResult: ...
+
+
 def infer(
     observations: list[Observation], config: InferenceConfig
 ) -> InferenceResult | ModelComparisonInferenceResult:
@@ -61,8 +75,9 @@ def simulate_and_infer(
 
 
 def _build_particle_filter(config: InferenceConfig) -> ParticleFilter:
-    n_masses = config.n_masses
-    assert isinstance(n_masses, int)
+    if isinstance(config.n_masses, tuple):
+        raise TypeError("expected int for n_masses in fixed-K mode")
+    n_masses = cast(int, config.n_masses)
     n_dims = config.clock_array.positions.shape[1]
     rng = np.random.default_rng(config.seed)
 
@@ -202,13 +217,14 @@ def _inference_result_from_particle_filter(
 def _infer_model_comparison(
     observations: list[Observation], config: InferenceConfig
 ) -> ModelComparisonInferenceResult:
-    assert isinstance(config.n_masses, tuple)
+    if not isinstance(config.n_masses, tuple):
+        raise TypeError("expected tuple for n_masses in model-comparison mode")
     candidate_models = tuple(sorted(set(config.n_masses)))
     model_comparison = ModelComparison(
         clock_array=config.clock_array,
         noise_std=config.noise.observation_std,
         n_dims=config.clock_array.positions.shape[1],
-        k_max=max(candidate_models),
+        k_values=candidate_models,
         n_particles=config.n_particles,
         jitter_std=config.jitter_std,
         position_range=config.prior.position_range,
