@@ -778,3 +778,25 @@ class TestModelComparison:
         x1 = particles[:, 0]  # first position (dim 0)
         x2 = particles[:, 1]  # second position (dim 0)
         assert np.all(x1 <= x2 + 1e-10), "Ordering constraint not enforced"
+
+    def test_model_comparison_accepts_explicit_k_values(self) -> None:
+        """Explicit k_values should only build and report the requested models."""
+        rng = np.random.default_rng(0)
+        ca = self._make_clock_array()
+
+        comp = ModelComparison(
+            clock_array=ca,
+            noise_std=0.01,
+            n_dims=1,
+            n_particles=100,
+            rng=rng,
+            k_values=(2, 3),
+        )
+
+        obs = Observation(rates=np.array([0.98, 0.95, 0.90, 0.95, 0.98]), time=0.0)
+        comp.update(obs)
+
+        result = comp.evidence()
+        assert set(comp.filters) == {2, 3}
+        assert set(result["log_evidence"]) == {2, 3}
+        assert set(result["posterior"]) == {2, 3}
