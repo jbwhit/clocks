@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from clocks.api import simulate
+from clocks.api import infer, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.results import SimulationResult
 from clocks.types import ClockArray, MassConfig, Observation
@@ -39,6 +39,22 @@ def _make_simulation_config(
         ground_truth=_make_ground_truth(),
         noise=_make_noise(),
         n_observations=n_observations,
+        seed=seed,
+    )
+
+
+def _make_inference_config(
+    n_masses: int | tuple[int, ...] = 2,
+    n_particles: int = 400,
+    seed: int = 42,
+) -> InferenceConfig:
+    return InferenceConfig(
+        clock_array=_make_clock_array(),
+        noise=_make_noise(),
+        prior=_make_prior(),
+        n_particles=n_particles,
+        n_masses=n_masses,
+        jitter_std=0.02,
         seed=seed,
     )
 
@@ -95,3 +111,16 @@ def test_simulate_returns_observations_and_ground_truth() -> None:
     assert len(result.observations) == 5
     assert result.ground_truth.masses.shape == (2,)
     assert result.observations[0].rates.shape == (5,)
+
+
+def test_infer_multi_mass_returns_summary_history() -> None:
+    simulation = simulate(_make_simulation_config(n_observations=8, seed=123))
+
+    result = infer(
+        simulation.observations,
+        _make_inference_config(n_masses=2, seed=123),
+    )
+
+    assert result.posterior_mean.shape == (4,)
+    assert result.posterior_std.shape == (4,)
+    assert len(result.history) == len(simulation.observations)
