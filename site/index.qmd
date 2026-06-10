@@ -1,0 +1,69 @@
+---
+title: "GPS in Reverse"
+subtitle: "Finding hidden masses with an array of ticking clocks"
+---
+
+GPS only works because general relativity is wired into it. The satellite
+clocks sit higher in Earth's gravitational well than yours, so they tick
+*fast* — by about 45 microseconds a day — while their orbital speed slows
+them down by about 7. The net drift, roughly 38 microseconds a day, sounds
+like nothing; uncorrected, it would smear your position by kilometers within
+hours. Engineers treat this as a nuisance to be subtracted away.
+
+But flip the logic around. If gravity changes how fast a clock ticks, then a
+clock's tick rate is a *measurement of gravity*. Scatter clocks through a
+region of space, watch which ones run slow, and you can infer where the
+hidden mass is and how heavy it is — a gravity detector built from nothing
+but timekeeping. This site builds that detector: a forward model from
+general relativity, a particle filter for the inverse problem, and a series
+of increasingly hard detection puzzles.
+
+![A particle filter localizing a hidden mass on a plane from clock rates alone. Clockwise from top left: the physical setup, the cloud of surviving hypotheses, the convergence of the estimates, and the observed tick rates.](assets/demo_2d.gif)
+
+Here is the whole round trip — simulate noisy clock readings near a hidden
+mass, then recover it:
+
+```{python}
+#| code-fold: true
+import numpy as np
+from clocks import (
+    ClockArray, InferenceConfig, MassConfig, NoiseConfig,
+    PriorConfig, SimulationConfig, infer, simulate,
+)
+
+clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
+truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.8]))
+sim = simulate(SimulationConfig(
+    clock_array=clock_array, ground_truth=truth,
+    noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
+))
+result = infer(sim.observations, InferenceConfig(
+    clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+    n_particles=400, n_masses=1, seed=42,
+))
+x, m = result.posterior_mean
+sx, sm = result.posterior_std
+print(f"Hidden mass: x = {x:.2f} ± {sx:.2f} (true 2.5)")
+print(f"             M = {m:.2f} ± {sm:.2f} (true 0.8)")
+```
+
+## Read the idea in seven pages
+
+1. [Clocks as Gravimeters](story/clocks-as-gravimeters.qmd) — time dilation
+   is measured, not theoretical, and a precise clock is a gravity sensor.
+2. [One Clock Is Not Enough](story/one-clock-is-not-enough.qmd) — the
+   mass–distance degeneracy, and how an array breaks it.
+3. [The Search in One Dimension](story/the-search-in-one-dimension.qmd) —
+   meet the particle filter, the detective of this story.
+4. [Into the Plane](story/into-the-plane.qmd) — the same code, one dimension
+   up.
+5. [Two Hidden Masses](story/two-hidden-masses.qmd) — label switching and
+   what honesty about degeneracies looks like.
+6. [How Many Masses?](story/how-many-masses.qmd) — Bayesian model comparison
+   as automatic Occam's razor.
+7. [Beyond Point Masses](story/beyond-point-masses.qmd) — inferring a
+   continuous mass distribution.
+
+Or jump to [Getting Started](reproduce/getting-started.qmd) to run
+everything yourself.
