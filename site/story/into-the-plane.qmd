@@ -63,6 +63,7 @@ ax.set_xlabel("x")
 ax.set_ylabel("y")
 ax.set_aspect("equal")
 ax.legend(fontsize=8)
+plt.close(fig)
 fig
 ```
 

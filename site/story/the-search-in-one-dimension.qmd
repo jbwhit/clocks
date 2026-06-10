@@ -12,8 +12,9 @@ rates. Here is the full search, animated:
 
 ## Meet the detective
 
-The inference engine is a **particle filter**: a cloud of a thousand
-hypotheses, each one a guess at $(x, M)$. Every time a new observation
+The inference engine is a **particle filter**: a cloud of hypotheses —
+one thousand of them in the animation above — each one a guess at
+$(x, M)$. Every time a new observation
 arrives, each hypothesis is reweighted by how well it predicts the observed
 rates; hypotheses that keep predicting badly wither, and resampling
 multiplies the ones that survive. The cloud *is* the posterior — its spread
@@ -62,6 +63,7 @@ for j, (label, true_val, color) in enumerate(
 ax.set_xlabel("observation #")
 ax.set_ylabel("parameter value")
 ax.legend()
+plt.close(fig)
 fig
 ```
 

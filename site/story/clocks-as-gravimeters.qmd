@@ -70,6 +70,7 @@ for mass in (0.2, 0.5, 1.0):
 ax.set_xlabel("distance from mass")
 ax.set_ylabel(r"tick rate $d\tau/dt$")
 ax.legend()
+plt.close(fig)
 fig
 ```
 

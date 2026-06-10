@@ -38,6 +38,7 @@ for sigma, color in [(0.5, "steelblue"), (2.0, "lightcoral")]:
 ax.set_xlabel("clock position")
 ax.set_ylabel("tick rate")
 ax.legend()
+plt.close(fig)
 fig
 ```
 

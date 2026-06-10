@@ -30,11 +30,12 @@ crisp. Sorting is a pragmatic fix, not a principled one, and we say so.
 
 ## Superposition is the enemy
 
-Why is this hard at all? Because summed potentials hide their parts:
+Why is this hard at all? Because summed potentials hide their parts — and
+the clocks only see the tick rates the summed potential produces:
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "The combined potential of the two demo masses, against a single mass of the combined weight placed between them. At the five clock positions (dots), the curves nearly agree — the filter must live off the small residuals."
+#| fig-cap: "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them. At the five clock positions (dots), the curves nearly agree — the filter must live off the small residuals."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
@@ -61,6 +62,7 @@ for config, label, color in [
 ax.set_xlabel("position")
 ax.set_ylabel("tick rate")
 ax.legend()
+plt.close(fig)
 fig
 ```
 

@@ -56,6 +56,9 @@ result = infer(sim.observations, InferenceConfig(
     n_particles=400, n_masses=(1, 2, 3), seed=42,
 ))
 
+print(f"Posterior over K: { {k: round(v, 3) for k, v in result.posterior_by_model.items()} }")
+print(f"Best model: K = {result.best_model}")
+
 fig, ax = plt.subplots()
 steps = np.arange(1, len(result.history) + 1)
 for k in sorted(result.posterior_by_model):
@@ -64,10 +67,8 @@ ax.set_xlabel("observation #")
 ax.set_ylabel("posterior probability")
 ax.set_ylim(-0.05, 1.05)
 ax.legend()
+plt.close(fig)
 fig
-
-print(f"Posterior over K: { {k: round(v, 3) for k, v in result.posterior_by_model.items()} }")
-print(f"Best model: K = {result.best_model}")
 ```
 
 ::: {.callout-note title="Evidence is a flow, not a snapshot"}

@@ -29,9 +29,15 @@ $\sigma = 0.005$ the raw likelihoods underflow immediately.
 A few sharp observations leave most particles with negligible weight. The
 **effective sample size** $\mathrm{ESS} = 1/\sum_i w_i^2$ measures the
 collapse; when it drops below `resample_threshold · N`, the filter redraws
-$N$ particles in proportion to weight (systematic resampling by default;
-stratified and residual variants are available) and perturbs the clones
-with jitter so they don't sit on top of each other. Two jitter modes:
+$N$ particles in proportion to weight and perturbs the clones with jitter
+so they don't sit on top of each other. Three resampling schemes are
+available: **systematic** (the default) walks one evenly-spaced comb with
+a single random offset through the cumulative weights, giving minimal
+variance; **stratified** draws one uniform sample per equal-probability
+stratum, trading a little variance for independence between strata;
+**residual** deterministically copies each particle
+$\lfloor N w_i \rfloor$ times and only randomizes the remainder. Two
+jitter modes:
 
 - **fixed** — isotropic Gaussian noise with absolute scale `jitter_std`.
 - **covariance** — noise shaped by the weighted empirical covariance of the
@@ -87,6 +93,7 @@ ax.axhline(0.5 * pf.n_particles, ls="--", color="gray", label="resample threshol
 ax.set_xlabel("observation #")
 ax.set_ylabel("effective sample size")
 ax.legend()
+plt.close(fig)
 fig
 ```
 

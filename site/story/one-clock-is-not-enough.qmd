@@ -54,6 +54,7 @@ for config, label, color in [
 ax.set_xlabel("clock position")
 ax.set_ylabel("tick rate")
 ax.legend()
+plt.close(fig)
 fig
 ```
 
