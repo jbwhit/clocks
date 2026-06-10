@@ -52,7 +52,6 @@ def main() -> None:
         n_particles=N_PARTICLES,
         n_masses=2,
         jitter_std=JITTER_STD,
-        jitter="covariance",
         seed=SEED,
     )
     simulation = simulate(sim_config)

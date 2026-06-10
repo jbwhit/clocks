@@ -5,15 +5,21 @@ Uses a standard ParticleFilter with the density forward model to infer
 the parameters from noisy clock observations.
 """
 
+from pathlib import Path
+
+import matplotlib
 import numpy as np
 
-from clocks.inference import ParticleFilter
-from clocks.noise import add_clock_noise
-from clocks.physics import (
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+
+from clocks.inference import ParticleFilter  # noqa: E402
+from clocks.noise import add_clock_noise  # noqa: E402
+from clocks.physics import (  # noqa: E402
     clock_rates_density_gaussian,
     clock_rates_density_gaussian_batch,
 )
-from clocks.types import ClockArray, Observation
+from clocks.types import ClockArray, Observation  # noqa: E402
 
 # --- Configuration ---
 TRUE_MU = 1.5
@@ -26,6 +32,7 @@ NOISE_STD = 0.005
 N_PARTICLES = 2000
 JITTER_STD = 0.02
 SEED = 42
+OUTPUT_PATH = Path("output/demo_density.png")
 
 
 def _fmt(label: str, est: dict, idx: int, true_val: float) -> str:
@@ -76,7 +83,6 @@ def main() -> None:
         jitter_std=JITTER_STD,
         rng=rng,
         forward_model_batch=forward_model_batch,
-        jitter="covariance",
         log_prior=log_prior_fn,
     )
 
@@ -102,6 +108,76 @@ def main() -> None:
     print(_fmt("sigma", est, 1, TRUE_SIGMA))
     print(_fmt("A    ", est, 2, TRUE_AMPLITUDE))
     print(f"  ESS   = {est['ess']:.0f} / {N_PARTICLES}")
+
+    # --- Static summary figure ---
+    fig, (ax_density, ax_rates, ax_conv) = plt.subplots(1, 3, figsize=(15, 4))
+
+    # Panel 1: true vs inferred density profile
+    xs = np.linspace(-8, 8, 400)
+    true_density = TRUE_AMPLITUDE * np.exp(-0.5 * ((xs - TRUE_MU) / TRUE_SIGMA) ** 2)
+    mu_hat, sigma_hat, amp_hat = est["mean"]
+    est_density = amp_hat * np.exp(-0.5 * ((xs - mu_hat) / sigma_hat) ** 2)
+    ax_density.plot(xs, true_density, color="lightcoral", label="True")
+    ax_density.plot(xs, est_density, color="steelblue", ls="--", label="Inferred")
+    ax_density.set_xlabel("x")
+    ax_density.set_ylabel("mass density")
+    ax_density.set_title("Density profile")
+    ax_density.legend()
+
+    # Panel 2: true vs final predicted clock rates
+    predicted = clock_rates_density_gaussian(est["mean"], clock_array)
+    positions = clock_array.positions[:, 0]
+    ax_rates.plot(positions, true_rates, "o-", color="lightcoral", label="True")
+    ax_rates.plot(positions, predicted, "s--", color="steelblue", label="Inferred")
+    ax_rates.set_xlabel("clock position")
+    ax_rates.set_ylabel("tick rate")
+    ax_rates.set_title("Clock rates")
+    ax_rates.legend()
+
+    # Panel 3: convergence of the three parameters
+    history = pf.history[1:]
+    means = np.array(
+        [np.average(s.particles, weights=s.weights, axis=0) for s in history]
+    )
+    stds = np.array(
+        [
+            np.sqrt(
+                np.average(
+                    (s.particles - np.average(s.particles, weights=s.weights, axis=0))
+                    ** 2,
+                    weights=s.weights,
+                    axis=0,
+                )
+            )
+            for s in history
+        ]
+    )
+    steps = np.arange(1, len(history) + 1)
+    for j, (label, truth, color) in enumerate(
+        [
+            ("mu", TRUE_MU, "tab:blue"),
+            ("sigma", TRUE_SIGMA, "tab:green"),
+            ("A", TRUE_AMPLITUDE, "tab:orange"),
+        ]
+    ):
+        ax_conv.plot(steps, means[:, j], color=color, label=f"{label} est")
+        ax_conv.fill_between(
+            steps,
+            means[:, j] - stds[:, j],
+            means[:, j] + stds[:, j],
+            alpha=0.15,
+            color=color,
+        )
+        ax_conv.axhline(truth, color=color, ls="--", alpha=0.5)
+    ax_conv.set_xlabel("Observation #")
+    ax_conv.set_title("Convergence")
+    ax_conv.legend(fontsize=8)
+
+    fig.tight_layout()
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(OUTPUT_PATH, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
