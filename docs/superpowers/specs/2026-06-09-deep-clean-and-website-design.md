@@ -121,7 +121,8 @@ also absorbs the pending `[options]` block, see Phase 3).
 
 **Concrete file deliverables** (mirroring blackholes): `site/_quarto.yml`,
 `site/custom.scss`, `site/custom-dark.scss`, `site/styles.css`,
-`site/includes/fonts.html`, `site/assets/favicon.ico`, the demo animations plus the
+`site/includes/fonts.html`, `site/assets/favicon.png` (a generated PNG favicon —
+Quarto accepts PNG, avoiding an ICO conversion dependency), the demo animations plus the
 Phase 2 density figure copied to `site/assets/` (`demo_1d.gif`, `demo_2d.gif`,
 `demo_multi_mass.gif`, `demo_multi_mass_2d.gif`, `demo_model_comparison.gif`,
 `demo_density.png`), `.github/workflows/site.yml`, and the 12 pages:

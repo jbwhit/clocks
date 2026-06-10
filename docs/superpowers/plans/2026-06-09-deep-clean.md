@@ -1218,7 +1218,7 @@ tests/
 
 3. After the "Use as a library" code block (after the "For fixed-K inference..." line), add:
 
-```markdown
+````markdown
 To drive the filter observation-by-observation (e.g. for custom animation),
 build the same filter `infer` uses internally:
 
@@ -1230,7 +1230,7 @@ for obs in simulation.observations:
     pf.update(obs)
 print(pf.estimate())
 ```
-```
+````
 
 4. In the "Gaussian density" demo section, replace `# text output only, no GIF` with `# → output/demo_density.png` and add the image embed below the command block:
 
