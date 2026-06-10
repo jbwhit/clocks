@@ -233,8 +233,6 @@ Add inside `class TestParticleFilter` (reuse the prior-sampler/forward-model pat
 
 ```python
 def test_update_raises_when_all_particles_have_zero_weight(self) -> None:
-    clock_array = ClockArray(positions=np.array([[0.0]]), track_offset=1.0)
-
     pf = ParticleFilter(
         n_particles=10,
         prior_sampler=lambda rng, n: rng.uniform(-1, 1, (n, 1)),
@@ -1077,7 +1075,19 @@ git commit -m "Port demo_multi_mass_2d to the public API"
 
 - [ ] **Step 1: Add the figure**
 
-Keep the script's existing filter wiring (custom density forward model — per spec it does NOT move to `build_particle_filter`). After the final estimate, add a 3-panel static figure. Add imports `from pathlib import Path` and `import matplotlib` / `matplotlib.use("Agg")` before `import matplotlib.pyplot as plt`, and define `OUTPUT_PATH = Path("output/demo_density.png")` with the other constants. Append to `main()` after the final-estimate print:
+Keep the script's existing filter wiring (custom density forward model — per spec it does NOT move to `build_particle_filter`). After the final estimate, add a 3-panel static figure. Use this lint-clean import pattern at the top of the script (ruff's `I001` sorts plain imports, and the pyplot import must follow the backend call):
+
+```python
+from pathlib import Path
+
+import matplotlib
+import numpy as np
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+```
+
+and define `OUTPUT_PATH = Path("output/demo_density.png")` with the other constants. Append to `main()` after the final-estimate print:
 
 ```python
     # --- Static summary figure ---
