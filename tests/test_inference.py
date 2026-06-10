@@ -659,6 +659,39 @@ class TestParticleFilter:
         # More observations → more accumulated evidence (larger magnitude)
         assert abs(late_evidence) > abs(early_evidence)
 
+    def test_covariance_jitter_survives_weight_collapse(self) -> None:
+        """ESS≈1 must not crash covariance jitter (np.cov dof underflow).
+
+        With a razor-thin likelihood one particle takes all the weight,
+        making the weighted covariance undefined; the filter must fall
+        back to isotropic jitter instead of feeding inf/NaN to cholesky.
+        """
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            return np.column_stack(
+                [np.linspace(-1.0, 1.0, n), np.linspace(0.5, 1.5, n)]
+            )
+
+        def forward(params: np.ndarray) -> np.ndarray:
+            return params.copy()
+
+        pf = ParticleFilter(
+            n_particles=20,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=1e-6,
+            resample_threshold=1.0,
+            jitter="covariance",
+            jitter_std=0.05,
+            rng=np.random.default_rng(0),
+        )
+        target = prior_sampler(np.random.default_rng(0), 20)[7]
+
+        state = pf.update(Observation(rates=target, time=0.0))
+
+        assert np.all(np.isfinite(state.particles))
+        assert state.particles.std(axis=0).min() > 0
+
     def test_update_raises_when_all_particles_have_zero_weight(self) -> None:
         pf = ParticleFilter(
             n_particles=10,

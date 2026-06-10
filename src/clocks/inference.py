@@ -222,7 +222,11 @@ class ParticleFilter:
 
         new_particles = particles[indices].copy()
 
-        if self.jitter == "covariance":
+        # The weighted covariance needs at least ~2 effective samples;
+        # below that np.cov's normalization (1 - sum(w^2)) underflows to
+        # inf/NaN. Fall back to isotropic jitter to restore diversity.
+        ess = 1.0 / np.sum(weights**2)
+        if self.jitter == "covariance" and ess >= 2.0:
             cov = np.cov(particles.T, aweights=weights)
             n_params = particles.shape[1]
             if n_params == 1:
