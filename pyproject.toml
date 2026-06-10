@@ -10,6 +10,7 @@ dependencies = ["numpy>=2.0", "scipy>=1.14", "matplotlib>=3.9"]
 
 [project.urls]
 Repository = "https://github.com/jbwhit/clocks"
+Documentation = "https://jbwhit.github.io/clocks/"
 
 [project.scripts]
 demo-1d = "clocks._cli:demo_1d"
