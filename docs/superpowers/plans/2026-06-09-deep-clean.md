@@ -4,6 +4,8 @@
 
 **Goal:** Land all correctness fixes, consolidate the animation code, port the demos to the public API, and finish repo hygiene, per `docs/superpowers/specs/2026-06-09-deep-clean-and-website-design.md` Phases 1–3.
 
+**Review provenance:** Reviewed together with the website plan by Codex xhigh (5 rounds → sound: 6 findings applied in `4765810`, 4 in `db2b82c`, 3 in `4fcaeb5`, 1 in `30d85ac`; round 5 → no findings, SOUND ENOUGH TO IMPLEMENT).
+
 **Architecture:** Small sequential commits, TDD where behavior changes. The viz consolidation extracts one private dashboard-animation driver and splits `viz.py` into private `_panels.py` (static plotting primitives) + `_animate.py` (animators) behind an unchanged `clocks.viz` facade. Public API gains exactly one name: `build_particle_filter`.
 
 **Tech Stack:** Python 3.12, numpy/scipy/matplotlib, uv, pytest, ruff. Run everything with `uv run`. The repo pre-commit hook runs ruff format/lint automatically.
