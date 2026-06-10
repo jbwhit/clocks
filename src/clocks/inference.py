@@ -126,8 +126,10 @@ class ParticleFilter:
         particles = self._state.particles
         weights = self._state.weights.copy()
 
-        # Reweight each particle by its likelihood
-        log_weights = np.log(weights)
+        # Reweight each particle by its likelihood.
+        # log(0) → -inf is intended: a zero-weight particle stays dead.
+        with np.errstate(divide="ignore"):
+            log_weights = np.log(weights)
         if self.forward_model_batch is not None:
             predicted_batch = self.forward_model_batch(particles)
             log_weights += log_likelihood_gaussian_batch(
