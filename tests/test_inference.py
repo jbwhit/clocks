@@ -5,9 +5,10 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 from numpy.typing import NDArray
+from scipy.special import logsumexp
 
 from clocks.inference import ConvergenceInfo, ModelComparison, ParticleFilter
-from clocks.noise import add_clock_noise
+from clocks.noise import add_clock_noise, log_likelihood_gaussian
 from clocks.physics import clock_rates, clock_rates_batch
 from clocks.types import ClockArray, MassConfig, Observation
 
@@ -657,6 +658,49 @@ class TestParticleFilter:
 
         # More observations → more accumulated evidence (larger magnitude)
         assert abs(late_evidence) > abs(early_evidence)
+
+    def test_log_evidence_matches_direct_computation(self) -> None:
+        """Each update's log-evidence increment is log(sum(prev_w * L))."""
+        mc, ca = _make_1d_scenario()
+        true_rates = clock_rates(mc, ca)
+        forward = _make_forward_model(ca)
+
+        def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
+            x = rng.uniform(-8, 8, n)
+            m = rng.uniform(0.1, 2.0, n)
+            return np.column_stack([x, m])
+
+        # resample_threshold=0 → never resample → previous weights stay
+        # NONUNIFORM after the first update, which is the case the bias
+        # claim is about.
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=prior_sampler,
+            forward_model=forward,
+            noise_std=0.005,
+            resample_threshold=0.0,
+            rng=np.random.default_rng(1),
+        )
+
+        obs_rng = np.random.default_rng(0)
+        expected = 0.0
+        for t in range(3):
+            obs = Observation(
+                rates=add_clock_noise(true_rates, 0.005, obs_rng), time=float(t)
+            )
+            prev_weights = pf.state.weights.copy()
+            # log(0) → -inf is intended for fully underflowed weights
+            with np.errstate(divide="ignore"):
+                log_prev = np.log(prev_weights)
+            log_w = log_prev + np.array(
+                [
+                    log_likelihood_gaussian(obs.rates, forward(p), 0.005)
+                    for p in pf.state.particles
+                ]
+            )
+            expected += logsumexp(log_w)
+            pf.update(obs)
+            assert pf.log_evidence == pytest.approx(expected, rel=1e-9)
 
 
 class TestModelComparison:

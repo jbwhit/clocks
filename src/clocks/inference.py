@@ -149,7 +149,7 @@ class ParticleFilter:
         max_lw = np.max(log_weights)
         log_weights -= max_lw
         weights = np.exp(log_weights)
-        self.log_evidence += max_lw + np.log(weights.sum()) - np.log(self.n_particles)
+        self.log_evidence += max_lw + np.log(weights.sum())
         weights /= weights.sum()
 
         # Resample if effective sample size is too low
