@@ -49,7 +49,11 @@ class ParticleFilter:
     forward_model : Callable(params) → (n_clocks,) predicted rates for one particle.
     noise_std : Observation noise standard deviation.
     resample_threshold : Resample when ESS / n_particles drops below this.
-    jitter_std : Std of Gaussian jitter applied after resampling.
+    jitter_std : Scale of the post-resampling jitter. With ``jitter="fixed"``
+        this is an absolute standard deviation applied isotropically; with
+        ``jitter="covariance"`` it scales the Cholesky factor of the weighted
+        empirical covariance, so 0.02 means "2% of the cloud's own spread
+        along its correlation structure".
     rng : Numpy random generator.
     forward_model_batch : Optional Callable(particles) → (n_particles, n_clocks).
         If provided, used instead of looping forward_model per particle.

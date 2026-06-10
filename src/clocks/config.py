@@ -32,7 +32,12 @@ class PriorConfig:
 
 @dataclass(frozen=True)
 class InferenceConfig:
-    """Top-level config for end-to-end inference."""
+    """Top-level config for end-to-end inference.
+
+    ``jitter_std`` scales the post-resampling jitter: an absolute standard
+    deviation when ``jitter="fixed"``, or a fraction of the particle cloud's
+    weighted covariance when ``jitter="covariance"``.
+    """
 
     clock_array: ClockArray
     noise: NoiseConfig
