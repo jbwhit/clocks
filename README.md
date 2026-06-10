@@ -2,6 +2,8 @@
 
 Gravitational time dilation simulation and inference library.
 
+**Website:** [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/) — the full story, from GPS corrections to Bayesian model comparison.
+
 Place atomic clocks near a hidden mass — they tick slower in the gravitational well. A particle filter (Sequential Monte Carlo) watches the noisy tick rates and infers the mass's position and magnitude, acting like a relativistic GPS.
 
 ## How it works

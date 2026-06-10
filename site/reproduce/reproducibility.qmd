@@ -1,0 +1,41 @@
+---
+title: "Reproducibility"
+---
+
+## Seeds everywhere
+
+Every demo and every executed cell on this site fixes its RNG seed.
+`SimulationConfig.seed` and `InferenceConfig.seed` thread a single
+generator through observation noise and the particle filter respectively,
+so a given configuration produces the same observations, the same particle
+trajectories, and the same posterior every time. Rerun any page's code with
+the seeds shown and you will get the numbers printed on the page.
+
+## Tests
+
+The full suite — `uv run pytest` — covers the forward model's physical
+invariants, the particle filter (convergence, resampling variants, the
+evidence-vs-direct-computation identity, weight-collapse handling), the
+noise model, the public API surface, and every animator. See
+[`tests/`](https://github.com/jbwhit/clocks/tree/main/tests) for the
+current inventory; the README deliberately does not quote a test count,
+because hardcoded counts go stale.
+
+## CI
+
+Two workflows run on GitHub Actions:
+
+- [`ci.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/ci.yml)
+  runs tests and lint on every push.
+- [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
+  re-renders and redeploys this site on every push to `main`, so every
+  executed-cell figure you see regenerated from source at deploy time. The
+  demo GIFs and the density PNG are the exception: they are pre-rendered,
+  committed assets, reproducible on your machine via the
+  `uv run demo-*` commands.
+
+## Locked dependencies
+
+`uv.lock` is committed; CI installs with `--frozen`. The environment that
+rendered this page is the environment the lockfile describes, down to the
+patch version.

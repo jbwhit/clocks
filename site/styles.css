@@ -1,0 +1,24 @@
+/* Additional CSS overrides */
+
+div.description {
+  padding-left: 2px;
+  padding-top: 5px;
+  font-style: italic;
+  font-size: 135%;
+  opacity: 70%;
+}
+
+/* dual_render figure swap — show the variant matching the active theme */
+[data-bs-theme="dark"] .figure-light,
+.quarto-dark .figure-light {
+  display: none;
+}
+[data-bs-theme="light"] .figure-dark,
+.quarto-light .figure-dark {
+  display: none;
+}
+.figure-light svg,
+.figure-dark svg {
+  max-width: 100%;
+  height: auto;
+}

@@ -1,0 +1,64 @@
+---
+title: "Units and Scales"
+---
+
+## G = c = 1, and what that buys
+
+The simulation sets $G = c = 1$. One choice of units removes two constants
+from every equation: the potential is $\Phi = -M/r$ with no $G$, the tick
+rate is $\sqrt{1 + 2\Phi}$ with no $c^2$, and positions, masses, and times
+become pure numbers. Nothing physical is lost — only bookkeeping.
+
+## What M = 0.8 means
+
+In these units a mass $M$ has Schwarzschild radius $r_s = 2M$. The demos
+place clocks within a handful of Schwarzschild radii of the hidden mass —
+*deliberately deep* in the relativistic regime, so that tick-rate
+differences are visible against 0.5% observation noise. The cell below
+computes the actual numbers for the 1D demo's geometry:
+
+```{python}
+#| code-fold: true
+import numpy as np
+from clocks import ClockArray, MassConfig, clock_rates
+from clocks.physics import compute_distances
+
+mass = 0.8
+truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([mass]))
+clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
+
+distances = compute_distances(
+    clock_array.positions, truth.positions, clock_array.track_offset
+)[:, 0]
+rates = clock_rates(truth, clock_array)
+r_s = 2 * mass
+
+print(f"Schwarzschild radius of M = {mass}: r_s = {r_s}")
+for i, (r, rate) in enumerate(zip(distances, rates)):
+    print(f"  clock {i}: r = {r:5.2f}  (r/r_s = {r / r_s:4.2f})  rate = {rate:.4f}")
+```
+
+Read those `r/r_s` values: this is strong-field territory. A real
+observer at these separations would have larger worries than clock
+calibration.
+
+## Scaling to reality
+
+At Earth's surface, $2\Phi/c^2 \approx 1.4 \times 10^{-9}$ — the dip the
+demos paint in percent is, for real planetary fields, parts per billion.
+Detecting *anomalies* (a buried density contrast, not the whole planet)
+means resolving fractional rate differences around $10^{-18}$ to
+$10^{-17}$, which is exactly why the
+[gravimeters page](../story/clocks-as-gravimeters.qmd) leads with optical
+lattice clocks: that is the instrument class where this stops being a toy.
+
+The honest summary: the simulation compresses the dynamic range so the
+inference story is visible to the eye. It does not change the math — the
+forward model, the degeneracies, and the filter are the same at
+$10^{-1}$ and $10^{-18}$; only the noise budget moves.
+
+::: {.callout-note title="Convention"}
+Every number on this site is in simulation units unless it is explicitly
+tied to a real experiment (GPS microseconds, Skytree meters, lattice-clock
+fractions).
+:::
