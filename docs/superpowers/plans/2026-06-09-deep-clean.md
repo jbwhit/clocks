@@ -905,6 +905,7 @@ def main() -> None:
             n_particles=N_PARTICLES,
             n_masses=1,
             jitter_std=JITTER_STD,
+            jitter="covariance",
             seed=SEED,
         )
     )
@@ -970,6 +971,7 @@ Same transformation as Task 9 (full pattern shown there). Keep this script's own
             n_particles=N_PARTICLES,
             n_masses=1,
             jitter_std=JITTER_STD,
+            jitter="covariance",
             seed=SEED,
         )
     )
@@ -1033,6 +1035,7 @@ def main() -> None:
             n_particles=N_PARTICLES,
             n_masses=2,
             jitter_std=JITTER_STD,
+            jitter="covariance",
             seed=SEED,
         )
     )
