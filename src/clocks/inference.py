@@ -153,6 +153,12 @@ class ParticleFilter:
 
         # Normalize weights (log-sum-exp for numerical stability)
         max_lw = np.max(log_weights)
+        if not np.isfinite(max_lw):
+            raise RuntimeError(
+                "All particles have zero weight (every log-weight is -inf); "
+                "the prior or forward model is inconsistent with the "
+                "observations"
+            )
         log_weights -= max_lw
         weights = np.exp(log_weights)
         self.log_evidence += max_lw + np.log(weights.sum())

@@ -659,6 +659,20 @@ class TestParticleFilter:
         # More observations → more accumulated evidence (larger magnitude)
         assert abs(late_evidence) > abs(early_evidence)
 
+    def test_update_raises_when_all_particles_have_zero_weight(self) -> None:
+        pf = ParticleFilter(
+            n_particles=10,
+            prior_sampler=lambda rng, n: rng.uniform(-1, 1, (n, 1)),
+            forward_model=lambda params: np.array([1.0]),
+            noise_std=0.01,
+            log_prior=lambda particles: np.full(particles.shape[0], -np.inf),
+            rng=np.random.default_rng(0),
+        )
+        obs = Observation(rates=np.array([1.0]), time=0.0)
+
+        with pytest.raises(RuntimeError, match="zero weight"):
+            pf.update(obs)
+
     def test_log_evidence_matches_direct_computation(self) -> None:
         """Each update's log-evidence increment is log(sum(prev_w * L))."""
         mc, ca = _make_1d_scenario()
