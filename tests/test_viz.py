@@ -531,3 +531,36 @@ class TestAnimateModelComparison:
         )
         assert out.exists()
         assert out.stat().st_size > 0
+
+    def test_produces_gif_with_sparse_k_values(
+        self,
+        clock_array_multi_1d: ClockArray,
+        mass_config_multi_1d: MassConfig,
+        tmp_path: Path,
+    ) -> None:
+        rng = np.random.default_rng(0)
+        true_rates = clock_rates(mass_config_multi_1d, clock_array_multi_1d)
+        observations = [
+            Observation(rates=add_clock_noise(true_rates, 0.005, rng), time=float(t))
+            for t in range(2)
+        ]
+        mc = ModelComparison(
+            clock_array=clock_array_multi_1d,
+            noise_std=0.005,
+            n_dims=1,
+            k_values=(2, 3),
+            n_particles=20,
+            jitter_std=0.02,
+            rng=np.random.default_rng(1),
+        )
+        out = tmp_path / "test_model_comparison_sparse.gif"
+
+        animate_model_comparison(
+            clock_array=clock_array_multi_1d,
+            mass_config=mass_config_multi_1d,
+            observations=observations,
+            model_comparison=mc,
+            output_path=out,
+        )
+
+        assert out.exists()

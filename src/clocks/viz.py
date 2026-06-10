@@ -791,8 +791,7 @@ def animate_model_comparison(
     Right panel: horizontal bars of posterior probability for each K.
     """
     true_rates = clock_rates(mass_config, clock_array)
-    k_max = model_comparison.k_max
-    k_values = list(range(1, k_max + 1))
+    k_values = sorted(model_comparison.filters)
     n_obs = len(observations)
 
     fig, (ax_rates, ax_post) = plt.subplots(1, 2, figsize=figsize)
