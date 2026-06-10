@@ -49,7 +49,11 @@ class ParticleFilter:
     forward_model : Callable(params) → (n_clocks,) predicted rates for one particle.
     noise_std : Observation noise standard deviation.
     resample_threshold : Resample when ESS / n_particles drops below this.
-    jitter_std : Std of Gaussian jitter applied after resampling.
+    jitter_std : Scale of the post-resampling jitter. With ``jitter="fixed"``
+        this is an absolute standard deviation applied isotropically; with
+        ``jitter="covariance"`` it scales the Cholesky factor of the weighted
+        empirical covariance, so 0.02 means "2% of the cloud's own spread
+        along its correlation structure".
     rng : Numpy random generator.
     forward_model_batch : Optional Callable(particles) → (n_particles, n_clocks).
         If provided, used instead of looping forward_model per particle.
@@ -126,8 +130,10 @@ class ParticleFilter:
         particles = self._state.particles
         weights = self._state.weights.copy()
 
-        # Reweight each particle by its likelihood
-        log_weights = np.log(weights)
+        # Reweight each particle by its likelihood.
+        # log(0) → -inf is intended: a zero-weight particle stays dead.
+        with np.errstate(divide="ignore"):
+            log_weights = np.log(weights)
         if self.forward_model_batch is not None:
             predicted_batch = self.forward_model_batch(particles)
             log_weights += log_likelihood_gaussian_batch(
@@ -147,9 +153,15 @@ class ParticleFilter:
 
         # Normalize weights (log-sum-exp for numerical stability)
         max_lw = np.max(log_weights)
+        if not np.isfinite(max_lw):
+            raise RuntimeError(
+                "All particles have zero weight (every log-weight is -inf); "
+                "the prior or forward model is inconsistent with the "
+                "observations"
+            )
         log_weights -= max_lw
         weights = np.exp(log_weights)
-        self.log_evidence += max_lw + np.log(weights.sum()) - np.log(self.n_particles)
+        self.log_evidence += max_lw + np.log(weights.sum())
         weights /= weights.sum()
 
         # Resample if effective sample size is too low
@@ -210,7 +222,11 @@ class ParticleFilter:
 
         new_particles = particles[indices].copy()
 
-        if self.jitter == "covariance":
+        # The weighted covariance needs at least ~2 effective samples;
+        # below that np.cov's normalization (1 - sum(w^2)) underflows to
+        # inf/NaN. Fall back to isotropic jitter to restore diversity.
+        ess = 1.0 / np.sum(weights**2)
+        if self.jitter == "covariance" and ess >= 2.0:
             cov = np.cov(particles.T, aweights=weights)
             n_params = particles.shape[1]
             if n_params == 1:

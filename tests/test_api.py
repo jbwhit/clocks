@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from clocks.api import infer, simulate, simulate_and_infer
+from clocks.api import build_particle_filter, infer, simulate, simulate_and_infer
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.results import SimulationResult
 from clocks.types import ClockArray, MassConfig, Observation
@@ -135,6 +135,26 @@ def test_infer_multi_mass_returns_summary_history() -> None:
     assert len(result.history) == len(simulation.observations)
 
 
+def test_build_particle_filter_is_public_and_runs() -> None:
+    simulation = simulate(_make_simulation_config(n_observations=3, seed=7))
+    pf = build_particle_filter(_make_inference_config(n_masses=2, seed=7))
+
+    assert pf.n_particles == _make_inference_config(n_masses=2).n_particles
+    for obs in simulation.observations:
+        pf.update(obs)
+    assert pf.state.observations_seen == 3
+
+    with pytest.raises(TypeError, match="fixed-K"):
+        build_particle_filter(_make_inference_config(n_masses=(1, 2)))
+
+
+def test_infer_rejects_empty_observations() -> None:
+    for n_masses in (1, (1, 2)):
+        config = _make_inference_config(n_masses=n_masses)
+        with pytest.raises(ValueError, match="observations must not be empty"):
+            infer([], config)
+
+
 def test_infer_model_comparison_returns_model_probabilities() -> None:
     simulation = simulate(
         _make_simulation_config(
@@ -229,6 +249,7 @@ def test_inference_config_rejects_empty_candidate_models() -> None:
 def test_public_api_is_exported_from_package() -> None:
     import clocks
 
+    assert clocks.build_particle_filter is not None
     assert clocks.infer is not None
     assert clocks.simulate is not None
     assert clocks.simulate_and_infer is not None

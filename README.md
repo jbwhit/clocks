@@ -75,6 +75,18 @@ print(result.posterior_by_model)
 
 For fixed-K inference, pass an integer to `n_masses` instead of a tuple.
 
+To drive the filter observation-by-observation (e.g. for custom animation),
+build the same filter `infer` uses internally:
+
+```python
+from clocks import build_particle_filter
+
+pf = build_particle_filter(config)   # fixed-K InferenceConfig
+for obs in simulation.observations:
+    pf.update(obs)
+print(pf.estimate())
+```
+
 ## Run the demos
 
 **1D** — 3 clocks on a line, infer (x, M):
@@ -124,13 +136,15 @@ Runs parallel particle filters for K=1..3 masses and tracks posterior probabilit
 **Gaussian density** — 5 clocks, infer a continuous mass distribution (μ, σ, amplitude):
 
 ```bash
-uv run demo-density    # text output only, no GIF
+uv run demo-density    # → output/demo_density.png
 ```
+
+![Gaussian density demo](assets/demo_density.png)
 
 ## Run tests
 
 ```bash
-uv run pytest                # 87 tests
+uv run pytest
 uv run ruff check src/ tests/ scripts/   # lint
 ```
 
@@ -139,10 +153,13 @@ uv run ruff check src/ tests/ scripts/   # lint
 ```
 src/clocks/
     types.py       Data structures (MassConfig, ClockArray, Observation, ParticleState)
+    config.py      Public config dataclasses (SimulationConfig, InferenceConfig, ...)
+    results.py     Public result dataclasses (SimulationResult, InferenceResult, ...)
+    api.py         End-to-end entry points (simulate, infer, build_particle_filter)
     physics.py     Forward model: mass config → clock tick rates
     noise.py       Gaussian noise model and log-likelihood
     inference.py   Particle filter (SMC with systematic resampling)
-    viz.py         Matplotlib plotting and animation
+    viz.py         Plotting and animation facade (_panels.py, _animate.py)
     _cli.py        Entry points for demo scripts
 scripts/
     demo_1d.py               1D end-to-end demo
@@ -152,5 +169,5 @@ scripts/
     demo_model_comparison.py Bayesian model comparison (infer K)
     demo_density.py          Gaussian density forward model
 tests/
-    test_physics.py, test_inference.py, test_noise.py, test_viz.py
+    test_api.py, test_physics.py, test_inference.py, test_noise.py, test_viz.py
 ```
