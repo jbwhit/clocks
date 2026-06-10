@@ -1,0 +1,70 @@
+---
+title: "One Clock Is Not Enough"
+---
+
+## The degeneracy
+
+A single clock measures a single number: the potential at its own location,
+$\Phi = -M/r$. Every combination of mass and distance with the same ratio
+produces *exactly* the same reading. A small mass nearby is
+indistinguishable from a heavy mass far away — the clock simply cannot tell
+you which world it lives in.
+
+```{python}
+#| code-fold: true
+import numpy as np
+from clocks import ClockArray, MassConfig, clock_rates
+
+clock = ClockArray(positions=np.array([[0.0]]))
+near_light = MassConfig(positions=np.array([[2.0]]), masses=np.array([0.4]))
+far_heavy = MassConfig(positions=np.array([[4.0]]), masses=np.array([0.8]))
+print(f"near light mass: rate = {clock_rates(near_light, clock)[0]:.6f}")
+print(f"far heavy mass:  rate = {clock_rates(far_heavy, clock)[0]:.6f}")
+```
+
+Two visibly different universes, one identical clock reading. This is the
+same **mass–distance degeneracy** that haunted the 19th-century hunt for
+Neptune: a perturbation in Uranus's orbit could be explained by a lighter
+planet nearby or a heavier one farther out, and only more geometry — more
+independent measurements — could split the difference.
+
+## Breaking it with geometry
+
+Each additional clock at a different position samples the potential
+somewhere else. One clock pins down $M/r$; several clocks pin down how the
+field *falls off*, and the falloff is what separates distance from mass.
+Triangulation, by time dilation.
+
+```{python}
+#| code-fold: true
+#| fig-cap: "Across a 5-clock array the two configurations are no longer twins: the nearby light mass produces a sharper, more localized dip in tick rates than the distant heavy one."
+import matplotlib.pyplot as plt
+
+positions = np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]])
+array5 = ClockArray(positions=positions, track_offset=1.0)
+fig, ax = plt.subplots()
+for config, label, color in [
+    (near_light, "near light mass (x=2, M=0.4)", "steelblue"),
+    (far_heavy, "far heavy mass (x=4, M=0.8)", "lightcoral"),
+]:
+    ax.plot(
+        positions[:, 0], clock_rates(config, array5), "o-",
+        label=label, color=color,
+    )
+ax.set_xlabel("clock position")
+ax.set_ylabel("tick rate")
+ax.legend()
+fig
+```
+
+The single shared reading at $x = 0$ is still there — but the four other
+clocks disagree, and the disagreement carries the information.
+
+::: {.callout-note title="The noise floor"}
+With observation noise $\sigma$, the array can only distinguish
+configurations whose rate profiles differ by more than roughly $\sigma$.
+That is why every demo on this site feeds the filter *many* noisy
+observations rather than one perfect one: each new reading shrinks the set
+of worlds consistent with the data. How to do that shrinking honestly is
+the subject of the [next page](the-search-in-one-dimension.qmd).
+:::
