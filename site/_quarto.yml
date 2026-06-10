@@ -1,0 +1,72 @@
+project:
+  type: website
+  output-dir: _output
+  render:
+    - "*.qmd"
+    - "story/*.qmd"
+    - "method/*.qmd"
+    - "reproduce/*.qmd"
+
+website:
+  title: "GPS in Reverse"
+  repo-url: https://github.com/jbwhit/clocks
+  repo-subdir: site
+  repo-actions: [issue, source]
+  favicon: assets/favicon.png
+  page-navigation: true
+  search: true
+
+  sidebar:
+    style: floating
+    contents:
+      - section: "Part 1 — The Story"
+        contents:
+          - text: "Clocks as Gravimeters"
+            href: story/clocks-as-gravimeters.qmd
+          - text: "One Clock Is Not Enough"
+            href: story/one-clock-is-not-enough.qmd
+          - text: "The Search in One Dimension"
+            href: story/the-search-in-one-dimension.qmd
+          - text: "Into the Plane"
+            href: story/into-the-plane.qmd
+          - text: "Two Hidden Masses"
+            href: story/two-hidden-masses.qmd
+          - text: "How Many Masses?"
+            href: story/how-many-masses.qmd
+          - text: "Beyond Point Masses"
+            href: story/beyond-point-masses.qmd
+      - section: "Part 2 — Under the Hood"
+        contents:
+          - text: "The Particle Filter"
+            href: method/the-particle-filter.qmd
+          - text: "Units and Scales"
+            href: method/units-and-scales.qmd
+      - section: "Part 3 — Reproduce"
+        contents:
+          - text: "Getting Started"
+            href: reproduce/getting-started.qmd
+          - text: "Reproducibility"
+            href: reproduce/reproducibility.qmd
+
+  page-footer:
+    left: "&copy; Jonathan Whitmore"
+
+format:
+  html:
+    theme:
+      light: [custom.scss]
+      dark: [custom-dark.scss]
+    highlight-style:
+      light: gruvbox-light
+      dark: gruvbox-dark
+    css: styles.css
+    toc: true
+    code-fold: true
+    code-copy: true
+    include-in-header: includes/fonts.html
+
+execute:
+  cache: false  # mirror blackholes: all cells are fast; every build fully recomputes
+  warning: false
+
+jupyter: python3
