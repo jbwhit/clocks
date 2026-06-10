@@ -43,6 +43,8 @@ def infer(
     observations: list[Observation], config: InferenceConfig
 ) -> InferenceResult | ModelComparisonInferenceResult:
     """Run inference against a list of observations."""
+    if not observations:
+        raise ValueError("observations must not be empty")
     if isinstance(config.n_masses, tuple):
         return _infer_model_comparison(observations, config)
 

@@ -135,6 +135,13 @@ def test_infer_multi_mass_returns_summary_history() -> None:
     assert len(result.history) == len(simulation.observations)
 
 
+def test_infer_rejects_empty_observations() -> None:
+    for n_masses in (1, (1, 2)):
+        config = _make_inference_config(n_masses=n_masses)
+        with pytest.raises(ValueError, match="observations must not be empty"):
+            infer([], config)
+
+
 def test_infer_model_comparison_returns_model_probabilities() -> None:
     simulation = simulate(
         _make_simulation_config(
