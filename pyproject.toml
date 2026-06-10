@@ -20,7 +20,12 @@ demo-model-comparison = "clocks._cli:demo_model_comparison"
 demo-density = "clocks._cli:demo_density"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.8"]
+dev = [
+    "jupyter>=1.1.1",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.8",
+]
 
 [build-system]
 requires = ["hatchling"]
