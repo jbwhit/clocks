@@ -1,5 +1,6 @@
 """Visualization and animation helpers for gravitational time dilation demos."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -279,6 +280,87 @@ def create_inference_dashboard(
     return fig, axes
 
 
+def _animate_filter_dashboard(
+    fig: Figure,
+    axes: dict[str, Axes],
+    pf: ParticleFilter,
+    observations: list[Observation],
+    output_path: Path,
+    fps: int,
+    render_particles: Callable[[Axes, ParticleState], None],
+    render_rates: Callable[[Axes, Observation, int], None],
+    render_history: Callable[[Axes, NDArray[np.floating], NDArray[np.floating]], None],
+) -> None:
+    """Drive a particle filter through observations on the 2x2 dashboard.
+
+    Render callables own their panel completely, including ``ax.clear()``
+    and any artist lifecycle (e.g. colorbars).
+    """
+    means: list[NDArray[np.floating]] = []
+    stds: list[NDArray[np.floating]] = []
+
+    def update(frame: int) -> None:
+        obs = observations[frame]
+        pf.update(obs)
+        est = pf.estimate()
+        means.append(est["mean"])
+        stds.append(est["std"])
+        render_particles(axes["particles"], pf.state)
+        render_rates(axes["rates"], obs, frame)
+        render_history(axes["history"], np.array(means), np.array(stds))
+
+    anim = animation.FuncAnimation(fig, update, frames=len(observations), repeat=False)
+    _save_animation(anim, fig, output_path, fps)
+
+
+def _make_rates_renderer_2d(
+    clock_array: ClockArray,
+    true_rates: NDArray[np.floating],
+    xylim: tuple[float, float],
+) -> Callable[[Axes, Observation, int], None]:
+    """Per-frame renderer for the 2D observed-rates panel (owns its colorbar)."""
+    cbar_state: list = []
+
+    def render(ax: Axes, obs: Observation, frame: int) -> None:
+        if cbar_state:
+            cbar_state[0].remove()
+            cbar_state.clear()
+        ax.clear()
+        cx = clock_array.positions[:, 0]
+        cy = clock_array.positions[:, 1]
+        sc = ax.scatter(
+            cx,
+            cy,
+            c=obs.rates,
+            cmap="coolwarm",
+            s=120,
+            marker="s",
+            vmin=min(true_rates) - 0.002,
+            vmax=max(true_rates) + 0.002,
+            zorder=5,
+            edgecolors="black",
+            linewidths=0.5,
+        )
+        for x, y, r in zip(cx, cy, obs.rates):
+            ax.annotate(
+                f"{r:.4f}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, -14),
+                ha="center",
+                fontsize=7,
+            )
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_aspect("equal")
+        ax.set_xlim(xylim)
+        ax.set_ylim(xylim)
+        ax.set_title(f"Observed Rates (t={frame + 1})")
+        cbar_state.append(plt.colorbar(sc, ax=ax, label="Rate", shrink=0.8))
+
+    return render
+
+
 def animate_inference(
     clock_array: ClockArray,
     mass_config: MassConfig,
@@ -302,58 +384,48 @@ def animate_inference(
     true_rates = clock_rates(mass_config, clock_array)
 
     fig, axes = create_inference_dashboard()
-
-    # Static: physical setup
     plot_clock_setup(axes["setup"], clock_array, mass_config)
     axes["setup"].set_xlim(xlim)
 
-    # Track estimate history for the history panel
-    means: list[NDArray] = []
-    stds: list[NDArray] = []
-
-    def update(frame: int) -> None:
-        obs = observations[frame]
-        pf.update(obs)
-        est = pf.estimate()
-        means.append(est["mean"])
-        stds.append(est["std"])
-
-        # Particles
-        ax = axes["particles"]
+    def render_particles(ax: Axes, state: ParticleState) -> None:
         ax.clear()
-        plot_particle_cloud(ax, pf.state, true_params)
+        plot_particle_cloud(ax, state, true_params)
         ax.set_xlim(xlim)
         ax.set_ylim(mlim)
 
-        # Rates
-        ax = axes["rates"]
+    def render_rates(ax: Axes, obs: Observation, frame: int) -> None:
         ax.clear()
         plot_clock_rates(ax, true_rates, clock_array, label="True", color="lightcoral")
         plot_clock_rates(
             ax, obs.rates, clock_array, label="Observed", color="steelblue"
         )
 
-        # History
-        ax = axes["history"]
+    def render_history(
+        ax: Axes, means: NDArray[np.floating], stds: NDArray[np.floating]
+    ) -> None:
         ax.clear()
         steps = np.arange(1, len(means) + 1)
         _plot_convergence(
             ax,
             steps,
-            np.array(means),
-            np.array(stds),
+            means,
+            stds,
             true_params,
             ["tab:blue", "tab:orange"],
             ["x", "M"],
         )
 
-    anim = animation.FuncAnimation(
+    _animate_filter_dashboard(
         fig,
-        update,
-        frames=len(observations),
-        repeat=False,
+        axes,
+        pf,
+        observations,
+        output_path,
+        fps,
+        render_particles,
+        render_rates,
+        render_history,
     )
-    _save_animation(anim, fig, output_path, fps)
 
 
 def _save_animation(
@@ -426,94 +498,45 @@ def animate_inference_2d(
     true_rates = clock_rates(mass_config, clock_array)
 
     fig, axes = create_inference_dashboard(figsize=(13, 10))
-
-    # Static: physical setup
     plot_clock_setup_2d(axes["setup"], clock_array, mass_config)
     axes["setup"].set_xlim(xylim)
     axes["setup"].set_ylim(xylim)
 
-    # Track estimate history
-    means: list[NDArray] = []
-    stds: list[NDArray] = []
-
-    # Colorbar state for rates panel
-    rates_cbar: list = []
-
-    def update(frame: int) -> None:
-        obs = observations[frame]
-        pf.update(obs)
-        est = pf.estimate()
-        means.append(est["mean"])
-        stds.append(est["std"])
-
-        # Particles — x,y scatter
-        ax = axes["particles"]
+    def render_particles(ax: Axes, state: ParticleState) -> None:
         ax.clear()
-        plot_particle_cloud_2d(ax, pf.state, true_params[:2])
+        plot_particle_cloud_2d(ax, state, true_params[:2])
         ax.set_xlim(xylim)
         ax.set_ylim(xylim)
         ax.set_aspect("equal")
 
-        # Rates — scatter colored by observed rate
-        ax = axes["rates"]
-        # Remove old colorbar if it exists
-        if rates_cbar:
-            rates_cbar[0].remove()
-            rates_cbar.clear()
-        ax.clear()
-        cx = clock_array.positions[:, 0]
-        cy = clock_array.positions[:, 1]
-        sc = ax.scatter(
-            cx,
-            cy,
-            c=obs.rates,
-            cmap="coolwarm",
-            s=120,
-            marker="s",
-            vmin=min(true_rates) - 0.002,
-            vmax=max(true_rates) + 0.002,
-            zorder=5,
-            edgecolors="black",
-            linewidths=0.5,
-        )
-        for i, (x, y, r) in enumerate(zip(cx, cy, obs.rates)):
-            ax.annotate(
-                f"{r:.4f}",
-                (x, y),
-                textcoords="offset points",
-                xytext=(0, -14),
-                ha="center",
-                fontsize=7,
-            )
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_aspect("equal")
-        ax.set_xlim(xylim)
-        ax.set_ylim(xylim)
-        ax.set_title(f"Observed Rates (t={frame + 1})")
-        rates_cbar.append(plt.colorbar(sc, ax=ax, label="Rate", shrink=0.8))
+    render_rates = _make_rates_renderer_2d(clock_array, true_rates, xylim)
 
-        # History — convergence of x, y, M
-        ax = axes["history"]
+    def render_history(
+        ax: Axes, means: NDArray[np.floating], stds: NDArray[np.floating]
+    ) -> None:
         ax.clear()
         steps = np.arange(1, len(means) + 1)
         _plot_convergence(
             ax,
             steps,
-            np.array(means),
-            np.array(stds),
+            means,
+            stds,
             true_params,
             ["tab:blue", "tab:green", "tab:orange"],
             ["x", "y", "M"],
         )
 
-    anim = animation.FuncAnimation(
+    _animate_filter_dashboard(
         fig,
-        update,
-        frames=len(observations),
-        repeat=False,
+        axes,
+        pf,
+        observations,
+        output_path,
+        fps,
+        render_particles,
+        render_rates,
+        render_history,
     )
-    _save_animation(anim, fig, output_path, fps)
 
 
 def plot_particle_cloud_multi_1d(
@@ -572,59 +595,49 @@ def animate_inference_multi_1d(
     true_rates = clock_rates(mass_config, clock_array)
 
     fig, axes = create_inference_dashboard()
-
-    # Static: physical setup
     plot_clock_setup(axes["setup"], clock_array, mass_config)
     axes["setup"].set_xlim(xlim)
 
-    # Track estimate history
-    means: list[NDArray] = []
-    stds: list[NDArray] = []
-
-    def update(frame: int) -> None:
-        obs = observations[frame]
-        pf.update(obs)
-        est = pf.estimate()
-        means.append(est["mean"])
-        stds.append(est["std"])
-
-        # Particles — x1 vs x2
-        ax = axes["particles"]
+    def render_particles(ax: Axes, state: ParticleState) -> None:
         ax.clear()
-        plot_particle_cloud_multi_1d(ax, pf.state, true_params[:2])
+        plot_particle_cloud_multi_1d(ax, state, true_params[:2])
         ax.set_xlim(xlim)
         ax.set_ylim(xlim)
 
-        # Rates
-        ax = axes["rates"]
+    def render_rates(ax: Axes, obs: Observation, frame: int) -> None:
         ax.clear()
         plot_clock_rates(ax, true_rates, clock_array, label="True", color="lightcoral")
         plot_clock_rates(
             ax, obs.rates, clock_array, label="Observed", color="steelblue"
         )
 
-        # History — 4 traces
-        ax = axes["history"]
+    def render_history(
+        ax: Axes, means: NDArray[np.floating], stds: NDArray[np.floating]
+    ) -> None:
         ax.clear()
         steps = np.arange(1, len(means) + 1)
         _plot_convergence(
             ax,
             steps,
-            np.array(means),
-            np.array(stds),
+            means,
+            stds,
             true_params,
             _MULTI_COLORS,
             _MULTI_LABELS,
             legend_kwargs={"fontsize": 7, "ncol": 2},
         )
 
-    anim = animation.FuncAnimation(
+    _animate_filter_dashboard(
         fig,
-        update,
-        frames=len(observations),
-        repeat=False,
+        axes,
+        pf,
+        observations,
+        output_path,
+        fps,
+        render_particles,
+        render_rates,
+        render_history,
     )
-    _save_animation(anim, fig, output_path, fps)
 
 
 def plot_particle_cloud_multi_2d(
@@ -686,94 +699,46 @@ def animate_inference_multi_2d(
     true_rates = clock_rates(mass_config, clock_array)
 
     fig, axes = create_inference_dashboard(figsize=(13, 10))
-
-    # Static: physical setup
     plot_clock_setup_2d(axes["setup"], clock_array, mass_config)
     axes["setup"].set_xlim(xylim)
     axes["setup"].set_ylim(xylim)
 
-    # Track estimate history
-    means: list[NDArray] = []
-    stds: list[NDArray] = []
-
-    # Colorbar state for rates panel
-    rates_cbar: list = []
-
-    def update(frame: int) -> None:
-        obs = observations[frame]
-        pf.update(obs)
-        est = pf.estimate()
-        means.append(est["mean"])
-        stds.append(est["std"])
-
-        # Particles — mass 1 (x1, y1)
-        ax = axes["particles"]
+    def render_particles(ax: Axes, state: ParticleState) -> None:
         ax.clear()
-        plot_particle_cloud_multi_2d(ax, pf.state, true_params[:2])
+        plot_particle_cloud_multi_2d(ax, state, true_params[:2])
         ax.set_xlim(xylim)
         ax.set_ylim(xylim)
         ax.set_aspect("equal")
 
-        # Rates — scatter colored by observed rate
-        ax = axes["rates"]
-        if rates_cbar:
-            rates_cbar[0].remove()
-            rates_cbar.clear()
-        ax.clear()
-        cx = clock_array.positions[:, 0]
-        cy = clock_array.positions[:, 1]
-        sc = ax.scatter(
-            cx,
-            cy,
-            c=obs.rates,
-            cmap="coolwarm",
-            s=120,
-            marker="s",
-            vmin=min(true_rates) - 0.002,
-            vmax=max(true_rates) + 0.002,
-            zorder=5,
-            edgecolors="black",
-            linewidths=0.5,
-        )
-        for i, (x, y, r) in enumerate(zip(cx, cy, obs.rates)):
-            ax.annotate(
-                f"{r:.4f}",
-                (x, y),
-                textcoords="offset points",
-                xytext=(0, -14),
-                ha="center",
-                fontsize=7,
-            )
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_aspect("equal")
-        ax.set_xlim(xylim)
-        ax.set_ylim(xylim)
-        ax.set_title(f"Observed Rates (t={frame + 1})")
-        rates_cbar.append(plt.colorbar(sc, ax=ax, label="Rate", shrink=0.8))
+    render_rates = _make_rates_renderer_2d(clock_array, true_rates, xylim)
 
-        # History — 6 traces
-        ax = axes["history"]
+    def render_history(
+        ax: Axes, means: NDArray[np.floating], stds: NDArray[np.floating]
+    ) -> None:
         ax.clear()
         steps = np.arange(1, len(means) + 1)
         _plot_convergence(
             ax,
             steps,
-            np.array(means),
-            np.array(stds),
+            means,
+            stds,
             true_params,
             _MULTI_2D_COLORS,
             _MULTI_2D_LABELS,
             legend_kwargs={"fontsize": 6, "ncol": 3},
         )
 
-    anim = animation.FuncAnimation(
+    _animate_filter_dashboard(
         fig,
-        update,
-        frames=len(observations),
-        repeat=False,
+        axes,
+        pf,
+        observations,
+        output_path,
+        fps,
+        render_particles,
+        render_rates,
+        render_history,
     )
-    _save_animation(anim, fig, output_path, fps)
 
 
 def animate_model_comparison(
