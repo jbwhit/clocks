@@ -44,9 +44,10 @@ method is public on the filter itself).
 
 ## Phase 2 — viz consolidation and demo-script port
 
-All five `animate_*` functions duplicate the 2×2 dashboard scaffolding (drive filter →
-clear panels → redraw → `FuncAnimation` → save). Differences are only per-panel
-renderers and labels.
+The animation functions all duplicate the drive-filter → clear-panels → redraw →
+`FuncAnimation` → save lifecycle (the four fixed-K animators share the 2×2 dashboard;
+`animate_model_comparison` uses a 1×2 layout). Differences are per-panel renderers,
+layout, and labels.
 
 1. **Extract one private animation driver** owning the `FuncAnimation`/save lifecycle;
    it takes per-frame panel-renderer callables. The driver must be generic over figure
@@ -82,7 +83,8 @@ renderers and labels.
 
 1. **README refresh:** remove the hardcoded test count (stale twice already); add
    `api.py`, `config.py`, `results.py`, `test_api.py` to the project-structure
-   listing; document `build_particle_filter`; add a site link once live.
+   listing; document `build_particle_filter`. (Adding the site link to README and
+   `[project.urls]` is a Phase 4 step, after the site is live.)
 2. **LICENSE and package metadata:** add MIT `LICENSE`; complete PEP 621 metadata in
    `pyproject.toml` — `readme = "README.md"`, `license = "MIT"`, and `[project.urls]`
    with the repo and (once live) site URLs.
@@ -93,11 +95,12 @@ renderers and labels.
    - Commit `docs/superpowers/specs/2026-03-13-library-api-design-gemini-review.md`.
    - Add `.gemini/` to `.gitignore`.
 4. **CI:** `ci.yml` unchanged; the Pages deploy workflow arrives in Phase 4.
-5. **Lockfile:** the working tree carries an uncommitted `uv.lock` delta (an
-   `[options] exclude-newer` block injected by the user's global uv supply-chain
-   policy; it will reappear on every uv invocation). Commit it deliberately together
-   with the Phase 4 Jupyter dependency addition rather than letting it ride along in
-   an unrelated commit.
+5. **Lockfile (note only — resolved in Phase 4):** the working tree carries an
+   uncommitted `uv.lock` delta (an `[options] exclude-newer` block injected by the
+   user's global uv supply-chain policy; it will reappear on every uv invocation).
+   It is deliberately NOT part of the Phase 3 completion gate: it gets committed in
+   Phase 4 together with the Jupyter dependency addition, rather than riding along
+   in an unrelated commit.
 
 ## Phase 4 — Website
 
@@ -117,18 +120,34 @@ GitHub Actions".
 also absorbs the pending `[options]` block, see Phase 3).
 
 **Concrete file deliverables** (mirroring blackholes): `site/_quarto.yml`,
-`site/index.qmd`, the Part 1/2/3 pages below, `site/custom.scss`,
-`site/custom-dark.scss`, `site/styles.css`, `site/includes/fonts.html`,
-`site/assets/favicon.ico`, the five demo GIFs copied to `site/assets/`, and
-`.github/workflows/site.yml`. Render globs in `_quarto.yml` must cover every page
-directory used.
+`site/custom.scss`, `site/custom-dark.scss`, `site/styles.css`,
+`site/includes/fonts.html`, `site/assets/favicon.ico`, the demo animations plus the
+Phase 2 density figure copied to `site/assets/` (`demo_1d.gif`, `demo_2d.gif`,
+`demo_multi_mass.gif`, `demo_multi_mass_2d.gif`, `demo_model_comparison.gif`,
+`demo_density.png`), `.github/workflows/site.yml`, and the 12 pages:
+
+- `site/index.qmd`
+- `site/story/clocks-as-gravimeters.qmd`
+- `site/story/one-clock-is-not-enough.qmd`
+- `site/story/the-search-in-one-dimension.qmd`
+- `site/story/into-the-plane.qmd`
+- `site/story/two-hidden-masses.qmd`
+- `site/story/how-many-masses.qmd`
+- `site/story/beyond-point-masses.qmd`
+- `site/method/the-particle-filter.qmd`
+- `site/method/units-and-scales.qmd`
+- `site/reproduce/getting-started.qmd`
+- `site/reproduce/reproducibility.qmd`
+
+Render globs in `_quarto.yml` must cover `*.qmd`, `story/*.qmd`, `method/*.qmd`, and
+`reproduce/*.qmd`.
 
 **Figures policy:** pages import the `clocks` library and execute small fast cells at
 render time (forward-model curves, potential wells, posterior snapshots — sub-second).
-The five animated GIFs are pre-rendered assets copied into `site/assets/`, never
-regenerated at build.
+The five animated GIFs and the static density PNG are pre-rendered assets in
+`site/assets/`, never regenerated at build.
 
-**Pages** (~11 total):
+**Pages** (12 total):
 
 - `index.qmd` — hook: GPS satellites correct for general relativity to locate you;
   run that backwards and a clock array becomes a gravity detector. Hero GIF (2D demo)
