@@ -48,7 +48,7 @@ def infer(
     if isinstance(config.n_masses, tuple):
         return _infer_model_comparison(observations, config)
 
-    particle_filter = _build_particle_filter(config)
+    particle_filter = build_particle_filter(config)
     for observation in observations:
         particle_filter.update(observation)
     return _inference_result_from_particle_filter(particle_filter)
@@ -64,7 +64,12 @@ def simulate_and_infer(
     return result.with_simulation(simulation)
 
 
-def _build_particle_filter(config: InferenceConfig) -> ParticleFilter:
+def build_particle_filter(config: InferenceConfig) -> ParticleFilter:
+    """Construct the ParticleFilter that infer() would use for fixed-K config.
+
+    Use this when you need to drive the filter observation-by-observation
+    (e.g. for animation); ``infer()`` covers the run-to-completion case.
+    """
     if isinstance(config.n_masses, tuple):
         raise TypeError("expected int for n_masses in fixed-K mode")
     n_masses = cast(int, config.n_masses)

@@ -1,6 +1,6 @@
 """Gravitational time dilation simulation and inference library."""
 
-from clocks.api import infer, simulate, simulate_and_infer
+from clocks.api import build_particle_filter, infer, simulate, simulate_and_infer
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.inference import (
     ConvergenceInfo,
@@ -73,6 +73,7 @@ __all__ = [
     "animate_inference_multi_1d",
     "animate_inference_multi_2d",
     "animate_model_comparison",
+    "build_particle_filter",
     "clock_rates",
     "clock_rates_batch",
     "clock_rates_batch_multi",

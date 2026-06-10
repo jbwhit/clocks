@@ -9,11 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from clocks.api import (
-    _build_particle_filter,
-    _inference_result_from_particle_filter,
-    simulate,
-)
+from clocks.api import build_particle_filter, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.types import ClockArray, MassConfig
 from clocks.viz import animate_inference_multi_1d
@@ -60,7 +56,7 @@ def main() -> None:
         seed=SEED,
     )
     simulation = simulate(sim_config)
-    pf = _build_particle_filter(infer_config)
+    pf = build_particle_filter(infer_config)
 
     print(f"True masses: x1={TRUE_X1}, x2={TRUE_X2}, M1={TRUE_M1}, M2={TRUE_M2}")
     print(f"True rates: {simulation.true_rates}")
@@ -76,26 +72,16 @@ def main() -> None:
         output_path=OUTPUT_PATH,
         fps=4,
     )
-    result = _inference_result_from_particle_filter(pf)
+    est = pf.estimate()
 
     print(f"\nFinal estimate after {N_OBSERVATIONS} observations:")
-    print(
-        f"  x1 = {result.posterior_mean[0]:.3f} ± {result.posterior_std[0]:.3f}"
-        f"  (true: {TRUE_X1})"
-    )
-    print(
-        f"  x2 = {result.posterior_mean[1]:.3f} ± {result.posterior_std[1]:.3f}"
-        f"  (true: {TRUE_X2})"
-    )
-    print(
-        f"  M1 = {result.posterior_mean[2]:.3f} ± {result.posterior_std[2]:.3f}"
-        f"  (true: {TRUE_M1})"
-    )
-    print(
-        f"  M2 = {result.posterior_mean[3]:.3f} ± {result.posterior_std[3]:.3f}"
-        f"  (true: {TRUE_M2})"
-    )
-    print(f"  ESS = {result.ess:.0f} / {N_PARTICLES}")
+    labels = ["x1", "x2", "M1", "M2"]
+    truths = [TRUE_X1, TRUE_X2, TRUE_M1, TRUE_M2]
+    for i, (label, truth) in enumerate(zip(labels, truths)):
+        print(
+            f"  {label} = {est['mean'][i]:.3f} ± {est['std'][i]:.3f}  (true: {truth})"
+        )
+    print(f"  ESS = {est['ess']:.0f} / {N_PARTICLES}")
     print(f"\nSaved to {OUTPUT_PATH}")
 
 
