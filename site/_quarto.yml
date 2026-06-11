@@ -12,7 +12,7 @@ website:
   repo-url: https://github.com/jbwhit/clocks
   repo-subdir: site
   repo-actions: [issue, source]
-  favicon: assets/favicon.png
+  favicon: assets/favicon.ico
   page-navigation: true
   search: true
 
