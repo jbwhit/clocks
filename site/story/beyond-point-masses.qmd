@@ -49,8 +49,9 @@ true one disagree visibly — yet the center panel shows their clock rates
 matching almost perfectly. The center $\mu$ localizes well, but $\sigma$
 and $A$ trade off along a ridge: a wider, weaker profile and a narrower,
 denser one can produce nearly identical potentials at a handful of clock
-positions. This is the mass–distance degeneracy's
-[older sibling](one-clock-is-not-enough.qmd), reborn one level up. The
+positions. This is the
+[mass–distance degeneracy](one-clock-is-not-enough.qmd), reborn one level
+up. The
 library's covariance-shaped jitter mode exists for exactly this kind of
 correlated posterior — it lets the particle cloud slide *along* the ridge
 instead of scattering off it.

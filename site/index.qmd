@@ -5,7 +5,7 @@ subtitle: "Finding hidden masses with an array of ticking clocks"
 
 GPS only works because general relativity is wired into it. The satellite
 clocks sit higher in Earth's gravitational well than yours, so they tick
-*fast* — by about 45 microseconds a day — while their orbital speed slows
+*fast* (by about 45 microseconds a day) while their orbital speed slows
 them down by about 7. The net drift, roughly 38 microseconds a day, sounds
 like nothing; uncorrected, it would smear your position by kilometers within
 hours. Engineers treat this as a nuisance to be subtracted away.
@@ -13,7 +13,7 @@ hours. Engineers treat this as a nuisance to be subtracted away.
 But flip the logic around. If gravity changes how fast a clock ticks, then a
 clock's tick rate is a *measurement of gravity*. Scatter clocks through a
 region of space, watch which ones run slow, and you can infer where the
-hidden mass is and how heavy it is — a gravity detector built from nothing
+hidden mass is and how heavy it is, a gravity detector built from nothing
 but timekeeping. This site builds that detector: a forward model from
 general relativity, a particle filter for the inverse problem, and a series
 of increasingly hard detection puzzles.

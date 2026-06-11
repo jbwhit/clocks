@@ -58,8 +58,9 @@ plt.close(fig)
 fig
 ```
 
-The single shared reading at $x = 0$ is still there — but the four other
-clocks disagree, and the disagreement carries the information.
+With the clocks lifted off the track, even the $x = 0$ reading is no
+longer shared — and the other four clocks disagree more strongly. The
+disagreement carries the information.
 
 ::: {.callout-note title="The noise floor"}
 With observation noise $\sigma$, the array can only distinguish

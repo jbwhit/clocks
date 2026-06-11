@@ -9,19 +9,19 @@ potential sums $-M_j/r_{ij}$ over whatever coordinates you hand it; only
 the prior gains a column when the mass can hide in a plane instead of on a
 line. The interesting changes are *geometric*:
 
-- The eight clocks are placed **asymmetrically** around the plane. A
+- The eight clocks are scattered **asymmetrically** across the region. A
   perfectly symmetric ring would leave mirror-image mass positions
   indistinguishable; asymmetry is free information.
 - The clocks sit at a perpendicular offset (`track_offset=3.0`) from the
   mass plane. Without it, a hypothesis that drifts right on top of a clock
   could explain that clock's reading with an arbitrarily small mass — the
-  offset keeps the geometry honest.
+  offset keeps the geometry informative.
 
 ![The 2D search: 8 clocks, one hidden mass, three unknowns (x, y, M).](../assets/demo_2d.gif)
 
 ## The surviving hypotheses
 
-Run small and live, here is what the particle cloud looks like after 25
+Scaled down and executed on this page, here is what the particle cloud looks like after 25
 observations:
 
 ```{python}
