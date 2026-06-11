@@ -28,6 +28,13 @@ dev = [
     "ruff>=0.8",
 ]
 
+[tool.uv]
+# Supply-chain cooldown: ignore packages released in the last 7 days when
+# re-locking. Project-level so CI and contributors resolve the lockfile
+# identically to the machine that wrote it (a machine-local-only policy
+# makes `uv sync --locked` fail everywhere else).
+exclude-newer = "7 days"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
