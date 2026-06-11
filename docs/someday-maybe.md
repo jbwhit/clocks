@@ -15,6 +15,14 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
   Premature collapse onto non-fitting modes is the failure; a jitter that
   scales with the posterior std or anneals over observations would attack
   it directly, where a larger constant only buys a noise floor.
+  Sizing (2026-06): small-to-medium — ~50-100 lines (new jitter mode in
+  `_resample` + `InferenceConfig` plumbing) with validation via the
+  existing 36-run seed-scan harness. Likely design: anneal from
+  prior-scale jitter toward a floor over the first observations (pure
+  std-scaling alone re-creates the covariance-mode freeze; needs a floor).
+  Scope boundary: annealed/floored jitter only, acceptance >= 10/12 on the
+  multi-mass-2d scan; likelihood tempering and MCMC resample-move stay
+  out of scope (see the rejuvenation item above).
 - **Neural-net amortized inference.** Train a network on simulated
   (clock rates → mass parameters) pairs and compare its speed/accuracy
   against the particle filter.
