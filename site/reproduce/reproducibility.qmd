@@ -29,13 +29,14 @@ Two workflows run on GitHub Actions:
   runs tests and lint on every push.
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
   re-renders and redeploys this site on every push to `main`, so every
-  executed-cell figure you see regenerated from source at deploy time. The
+  executed-cell figure you see is regenerated from source at deploy time. The
   demo GIFs and the density PNG are the exception: they are pre-rendered,
   committed assets, reproducible on your machine via the
   `uv run demo-*` commands.
 
 ## Locked dependencies
 
-`uv.lock` is committed; CI installs with `--frozen`. The environment that
+`uv.lock` is committed; CI enforces it (`--locked` in ci.yml, `--frozen`
+in the site build). The environment that
 rendered this page is the environment the lockfile describes, down to the
 patch version.

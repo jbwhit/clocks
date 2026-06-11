@@ -18,7 +18,7 @@ $(x, M)$. Every time a new observation
 arrives, each hypothesis is reweighted by how well it predicts the observed
 rates; hypotheses that keep predicting badly wither, and resampling
 multiplies the ones that survive. The cloud *is* the posterior — its spread
-is the honest uncertainty. Mechanics, knobs, and failure modes live in
+is the calibrated uncertainty. Mechanics, knobs, and failure modes live in
 [The Particle Filter](../method/the-particle-filter.qmd).
 
 ## Watch it converge

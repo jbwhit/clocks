@@ -52,7 +52,7 @@ $10^{-17}$, which is exactly why the
 [gravimeters page](../story/clocks-as-gravimeters.qmd) leads with optical
 lattice clocks: that is the instrument class where this stops being a toy.
 
-The honest summary: the simulation compresses the dynamic range so the
+The plain summary: the simulation compresses the dynamic range so the
 inference story is visible to the eye. It does not change the math — the
 forward model, the degeneracies, and the filter are the same at
 $10^{-1}$ and $10^{-18}$; only the noise budget moves.

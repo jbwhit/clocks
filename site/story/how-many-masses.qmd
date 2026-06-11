@@ -24,13 +24,12 @@ spread that average across vast regions of configuration space the data
 rejects, and the dilution is the tax. Complexity isn't punished by rule;
 it is punished by arithmetic.
 
-One housekeeping note: the accumulated log-evidence in this library is the
-unbiased per-observation marginal likelihood,
-$\log \sum_i w_i L_i$ summed over observations — an earlier version carried
-a harmless-but-wrong constant offset, caught and fixed during the cleanup
-that preceded this site.
-
 ## Run it live
+
+(One geometric note: this scenario keeps the second mass at $x = 3.0$,
+directly atop a clock — the placement the previous page avoided for
+parameter estimation; it matters less for the how-many question, as the
+verdict shows.)
 
 ```{python}
 #| code-fold: true

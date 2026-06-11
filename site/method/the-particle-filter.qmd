@@ -3,7 +3,7 @@ title: "The Particle Filter"
 ---
 
 This page is for the reader who wants the machinery. The implementation is
-`clocks.inference.ParticleFilter` — about 300 lines, and everything below
+`clocks.inference.ParticleFilter` — a few hundred lines, and everything below
 maps onto it directly.
 
 ## State

@@ -75,8 +75,8 @@ fig
 ```
 
 ::: {.callout-note title="The whole game"}
-If you can measure tick rates precisely enough, every clock is a gravimeter
-and an array of clocks is a gravity camera. But a camera with one pixel
+That is the whole game: precise timekeeping is gravity sensing. But a
+camera with one pixel
 takes a poor picture — and that is exactly the obstacle the
 [next page](one-clock-is-not-enough.qmd) runs into.
 :::
