@@ -9,8 +9,9 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
   the post-resampling jitter, turning the filter into a rigorous SMC sampler
   that exactly preserves the posterior. Today's jitter slightly distorts it.
 - **Adaptive or annealed jitter.** The 6-parameter multi-mass 2D problem
-  recovers truth on only ~40% of seeds even at the best fixed jitter
-  (scan 2026-06: jitter_std 0.02/0.05/0.10 → 1/12, 5/12, 7/12 passes).
+  recovers truth on a minority of seeds under any tested fixed jitter
+  (scan 2026-06: jitter_std 0.02/0.05/0.10 → 1/12, 5/12, 7/12 passes; the
+  demo ships 0.05, the best tested was 0.10 at ~58%).
   Premature collapse onto non-fitting modes is the failure; a jitter that
   scales with the posterior std or anneals over observations would attack
   it directly, where a larger constant only buys a noise floor.
