@@ -20,64 +20,34 @@ from clocks import (
     build_particle_filter,
     simulate,
 )
+from clocks._scenarios import (
+    N_CLOCKS,
+    N_OBSERVATIONS,
+    N_PARTICLES,
+    NOISE_STD,
+    TRACK_OFFSET,
+    TRUE_MASSES,
+    TRUE_POSITIONS,
+    generate_random_clocks,
+)
 from clocks.viz import animate_inference_multi_2d
 
 # --- Configuration ---
-TRUE_X1, TRUE_Y1 = -3.0, 2.0
-TRUE_X2, TRUE_Y2 = 4.0, -1.0
-TRUE_M1 = 0.6
-TRUE_M2 = 0.4
-N_CLOCKS = 10
-TRACK_OFFSET = 3.0
-MIN_SEPARATION = 1.5
-N_OBSERVATIONS = 80
-NOISE_STD = 0.005
-N_PARTICLES = 4000
-JITTER_STD = 0.05
+JITTER_STD = 0.02  # floor for the annealed default; finalized by the scan
 SEED = 11
 OUTPUT_PATH = Path("output/demo_multi_mass_2d.gif")
-
-
-def generate_random_clocks(
-    n: int,
-    rng: np.random.Generator,
-    *,
-    bounds: tuple[float, float] = (-6.0, 6.0),
-    min_sep: float = MIN_SEPARATION,
-    exclude: list[tuple[float, float]] | None = None,
-) -> np.ndarray:
-    """Place n clocks on a 2D plane via rejection sampling.
-
-    Keeps clocks at least min_sep apart from each other and from
-    any positions listed in exclude (e.g. true mass locations).
-    """
-    placed: list[np.ndarray] = []
-    blocked = [np.array(p) for p in (exclude or [])]
-
-    while len(placed) < n:
-        candidate = rng.uniform(bounds[0], bounds[1], 2)
-        too_close = any(
-            np.linalg.norm(candidate - p) < min_sep for p in placed + blocked
-        )
-        if not too_close:
-            placed.append(candidate)
-
-    return np.array(placed)
 
 
 def main() -> None:
     rng = np.random.default_rng(SEED)
 
-    mass_config = MassConfig(
-        positions=np.array([[TRUE_X1, TRUE_Y1], [TRUE_X2, TRUE_Y2]]),
-        masses=np.array([TRUE_M1, TRUE_M2]),
-    )
+    mass_config = MassConfig(positions=TRUE_POSITIONS, masses=TRUE_MASSES)
 
     # Random clock placement
     clock_positions = generate_random_clocks(
         N_CLOCKS,
         rng,
-        exclude=[(TRUE_X1, TRUE_Y1), (TRUE_X2, TRUE_Y2)],
+        exclude=[tuple(p) for p in TRUE_POSITIONS],
     )
     clock_array = ClockArray(positions=clock_positions, track_offset=TRACK_OFFSET)
 
@@ -91,8 +61,9 @@ def main() -> None:
         )
     )
     print(
-        f"True masses: ({TRUE_X1},{TRUE_Y1}) M={TRUE_M1}, "
-        f"({TRUE_X2},{TRUE_Y2}) M={TRUE_M2}"
+        f"True masses: ({TRUE_POSITIONS[0][0]},{TRUE_POSITIONS[0][1]}) "
+        f"M={TRUE_MASSES[0]}, "
+        f"({TRUE_POSITIONS[1][0]},{TRUE_POSITIONS[1][1]}) M={TRUE_MASSES[1]}"
     )
     print(f"Clocks: {N_CLOCKS} randomly placed")
     print(f"True rates: {simulation.true_rates}")
@@ -123,7 +94,14 @@ def main() -> None:
     est = pf.estimate()
     print(f"\nFinal estimate after {N_OBSERVATIONS} observations:")
     labels = ["x1", "y1", "x2", "y2", "M1", "M2"]
-    truths = [TRUE_X1, TRUE_Y1, TRUE_X2, TRUE_Y2, TRUE_M1, TRUE_M2]
+    truths = [
+        TRUE_POSITIONS[0][0],
+        TRUE_POSITIONS[0][1],
+        TRUE_POSITIONS[1][0],
+        TRUE_POSITIONS[1][1],
+        TRUE_MASSES[0],
+        TRUE_MASSES[1],
+    ]
     for i, (label, truth) in enumerate(zip(labels, truths)):
         print(
             f"  {label} = {est['mean'][i]:.3f} ± {est['std'][i]:.3f}  (true: {truth})"
