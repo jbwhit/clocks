@@ -368,8 +368,11 @@ class ParticleFilter:
         # clone-collapsed cloud has a degenerate covariance even when
         # weight-ESS looks healthy, so also require state-collapsed ESS.
         ess = 1.0 / np.sum(weights**2)
-        ess_state = _state_collapsed_ess(particles, weights)
-        if self.jitter == "covariance" and ess >= 2.0 and ess_state >= 2.0:
+        if (
+            self.jitter == "covariance"
+            and ess >= 2.0
+            and _state_collapsed_ess(particles, weights) >= 2.0
+        ):
             cov = np.cov(particles.T, aweights=weights)
             n_params = particles.shape[1]
             if n_params == 1:
