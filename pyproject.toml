@@ -47,3 +47,7 @@ select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: long-running acceptance scans (run with `uv run pytest -m slow`)",
+]
