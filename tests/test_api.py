@@ -254,3 +254,104 @@ def test_public_api_is_exported_from_package() -> None:
     assert clocks.simulate is not None
     assert clocks.simulate_and_infer is not None
     assert clocks.SimulationConfig is not None
+
+
+class TestAnnealedDefaultsAPI:
+    def _config(self, **kwargs: object) -> InferenceConfig:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        defaults: dict = dict(
+            clock_array=ca,
+            noise=NoiseConfig(observation_std=0.01),
+            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+            n_particles=100,
+            n_masses=1,
+        )
+        defaults.update(kwargs)
+        return InferenceConfig(**defaults)
+
+    def test_inference_config_default_jitter_is_annealed(self) -> None:
+        assert self._config().jitter == "annealed"
+
+    def test_jitter_tau_plumbs_through_build(self) -> None:
+        pf = build_particle_filter(self._config(jitter_tau=7.0))
+        assert pf.jitter_tau == 7.0
+        assert pf.jitter == "annealed"
+
+    @pytest.mark.parametrize("bad_tau", [0.0, -1.0, float("nan"), float("inf")])
+    def test_invalid_jitter_tau_raises(self, bad_tau: float) -> None:
+        with pytest.raises(ValueError, match="jitter_tau"):
+            self._config(jitter_tau=bad_tau)
+
+    @pytest.mark.parametrize("bad_std", [-0.1, float("nan"), float("inf")])
+    def test_invalid_jitter_std_raises(self, bad_std: float) -> None:
+        with pytest.raises(ValueError, match="jitter_std"):
+            self._config(jitter_std=bad_std)
+
+
+class TestDefaultFlipRecovery:
+    """Numerical recovery at the new defaults (spec: default-flip regressions).
+
+    Single-mass 1D recovery and correct-K model comparison already exist;
+    these add the missing single-mass 2D and multi-mass 1D coverage.
+    """
+
+    def test_single_mass_2d_recovery(self) -> None:
+        rng = np.random.default_rng(3)
+        ca = ClockArray(positions=rng.uniform(-5.0, 5.0, (8, 2)), track_offset=3.0)
+        truth = MassConfig(positions=np.array([[1.5, -2.0]]), masses=np.array([0.5]))
+        sim = simulate(
+            SimulationConfig(
+                clock_array=ca,
+                ground_truth=truth,
+                noise=NoiseConfig(observation_std=0.005),
+                n_observations=60,
+                seed=3,
+            )
+        )
+        result = infer(
+            sim.observations,
+            InferenceConfig(
+                clock_array=ca,
+                noise=NoiseConfig(observation_std=0.005),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                n_particles=2000,
+                n_masses=1,
+                seed=3,
+            ),
+        )
+        error = np.abs(result.posterior_mean - np.array([1.5, -2.0, 0.5]))
+        assert np.all(error <= np.array([0.5, 0.5, 0.1]))
+
+    def test_multi_mass_1d_recovery(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-6.0, 6.0, 10).reshape(-1, 1),
+            track_offset=3.0,
+        )
+        truth = MassConfig(
+            positions=np.array([[-3.0], [4.5]]), masses=np.array([0.6, 0.4])
+        )
+        sim = simulate(
+            SimulationConfig(
+                clock_array=ca,
+                ground_truth=truth,
+                noise=NoiseConfig(observation_std=0.005),
+                n_observations=80,
+                seed=5,
+            )
+        )
+        result = infer(
+            sim.observations,
+            InferenceConfig(
+                clock_array=ca,
+                noise=NoiseConfig(observation_std=0.005),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                n_particles=4000,
+                n_masses=2,
+                seed=5,
+            ),
+        )
+        truth_vec = np.array([-3.0, 4.5, 0.6, 0.4])
+        error = np.abs(result.posterior_mean - truth_vec)
+        assert np.all(error <= np.array([0.5, 0.5, 0.1, 0.1]))

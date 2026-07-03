@@ -120,7 +120,7 @@ class ParticleFilter:
         constraint_fn: Callable[[NDArray[np.floating]], NDArray[np.floating]]
         | None = None,
         resampling: str = "systematic",
-        jitter: str = "fixed",
+        jitter: str = "annealed",
         jitter_tau: float = 15.0,
         log_prior: Callable[[NDArray[np.floating]], NDArray[np.floating]] | None = None,
     ) -> None:
@@ -394,7 +394,8 @@ class ModelComparison:
         mass_range: tuple[float, float] = (0.1, 2.0),
         rng: np.random.Generator | None = None,
         resampling: str = "systematic",
-        jitter: str = "fixed",
+        jitter: str = "annealed",
+        jitter_tau: float = 15.0,
     ) -> None:
         self.clock_array = clock_array
         self.noise_std = noise_std
@@ -424,6 +425,7 @@ class ModelComparison:
                 constraint_fn=self._make_constraint_fn(k) if k > 1 else None,
                 resampling=resampling,
                 jitter=jitter,
+                jitter_tau=jitter_tau,
                 log_prior=self._make_log_prior(k, position_range, mass_range),
             )
 

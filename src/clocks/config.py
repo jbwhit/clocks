@@ -1,5 +1,6 @@
 """Public configuration objects for the clocks library API."""
 
+import math
 from dataclasses import dataclass
 
 from clocks.types import ClockArray, MassConfig
@@ -35,8 +36,10 @@ class InferenceConfig:
     """Top-level config for end-to-end inference.
 
     ``jitter_std`` scales the post-resampling jitter: an absolute standard
-    deviation when ``jitter="fixed"``, or a fraction of the particle cloud's
-    weighted covariance when ``jitter="covariance"``.
+    deviation when ``jitter="fixed"``, a fraction of the particle cloud's
+    weighted covariance when ``jitter="covariance"``, or the floor (late-run
+    asymptote) when ``jitter="annealed"``. ``jitter_tau`` is the anneal time
+    constant, in observations, for the ``"annealed"`` schedule.
     """
 
     clock_array: ClockArray
@@ -46,7 +49,8 @@ class InferenceConfig:
     n_masses: int | tuple[int, ...]
     jitter_std: float = 0.02
     resampling: str = "systematic"
-    jitter: str = "fixed"
+    jitter: str = "annealed"
+    jitter_tau: float = 15.0
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -60,6 +64,14 @@ class InferenceConfig:
                 raise ValueError("n_masses candidates must not be empty")
             if any(k <= 0 for k in self.n_masses):
                 raise ValueError("n_masses candidates must all be > 0")
+        if not math.isfinite(self.jitter_std) or self.jitter_std < 0:
+            raise ValueError(
+                f"jitter_std must be finite and >= 0, got {self.jitter_std}"
+            )
+        if not math.isfinite(self.jitter_tau) or self.jitter_tau <= 0:
+            raise ValueError(
+                f"jitter_tau must be finite and > 0, got {self.jitter_tau}"
+            )
 
 
 @dataclass(frozen=True)

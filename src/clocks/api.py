@@ -87,6 +87,7 @@ def build_particle_filter(config: InferenceConfig) -> ParticleFilter:
         constraint_fn=_make_constraint_fn(n_masses, n_dims) if n_masses > 1 else None,
         resampling=config.resampling,
         jitter=config.jitter,
+        jitter_tau=config.jitter_tau,
         log_prior=_make_log_prior(config, n_masses, n_dims),
     )
 
@@ -227,6 +228,7 @@ def _infer_model_comparison(
         rng=np.random.default_rng(config.seed),
         resampling=config.resampling,
         jitter=config.jitter,
+        jitter_tau=config.jitter_tau,
     )
 
     history: list[dict[int, float]] = []

@@ -1056,3 +1056,28 @@ class TestAnnealedJitter:
         est = pf.estimate()
         assert abs(est["mean"][0] - 2.0) < 0.5
         assert abs(est["mean"][1] - 0.5) < 0.1
+
+
+class TestAnnealedDefaults:
+    def test_particle_filter_default_jitter_is_annealed(self) -> None:
+        pf = ParticleFilter(
+            n_particles=10,
+            prior_sampler=lambda r, n: r.uniform(-1, 1, (n, 1)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+        )
+        assert pf.jitter == "annealed"
+
+    def test_model_comparison_default_jitter_is_annealed(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        mc = ModelComparison(clock_array=ca, noise_std=0.01, k_max=2)
+        assert all(pf.jitter == "annealed" for pf in mc.filters.values())
+
+    def test_model_comparison_jitter_tau_plumbs_through(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        mc = ModelComparison(clock_array=ca, noise_std=0.01, k_max=2, jitter_tau=7.0)
+        assert all(pf.jitter_tau == 7.0 for pf in mc.filters.values())
