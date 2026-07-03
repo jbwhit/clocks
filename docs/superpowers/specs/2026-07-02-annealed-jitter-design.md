@@ -111,9 +111,13 @@ floor ≈ 0.02, to be replaced by the winning cell before merge.
 - Regenerate all five GIFs into `assets/` and `site/assets/`, keeping the
   committed artifacts reproducible by the current scripts (the repo's
   standing policy).
-- Site text: update the multi-mass-2D scan/honesty note (currently "at
-  best 7/12 seeds") with the new scan results, and any page describing the
-  jitter default or `jitter_std` semantics.
+- Site text (`site/method/the-particle-filter.qmd`): add an **annealed**
+  bullet to the jitter-modes list, state the new default, and rewrite the
+  particle-impoverishment failure note (which currently says the freeze
+  "motivated the demos shipping with fixed jitter") to describe the
+  annealed fix and the scan result. Check `site/story/two-hidden-masses.qmd`
+  and `into-the-plane.qmd` for stale jitter phrasing. (The "at best 7/12
+  seeds" scan numbers live in `docs/someday-maybe.md`, not on the site.)
 - `docs/someday-maybe.md`: mark the adaptive/annealed jitter item done
   with a pointer to the harness and the shipped defaults; the "existing
   36-run seed-scan harness" phrasing becomes true.
