@@ -7,7 +7,14 @@ rule that exactly reproduces the June baseline (verified by rerunning the
 36-run scan), tuning/holdout seed split added, post-jitter support-repair
 policy added, animation frame-0 double-processing fix pulled into scope,
 scenario module moved into the package, validation tightened, default-flip
-behavioral regressions and full-site re-render added. Pending round 2.
+behavioral regressions and full-site re-render added. Round 2 (NEEDS
+REVISION: 1 Critical, 5 Important, 1 Minor) applied: baseline re-measured
+post-repair instead of claiming exact reproduction, repair switched to
+one-shot reject-and-stay (retry loops bias boundaries) with
+post-constraint revalidation and a safety net, regressions restated as
+new tests, model-comparison fallback extended to tuple-mode infer() via a
+config sentinel, holdout burn rule and total tie-breaker and runtime
+estimate added. Pending round 3.
 **Goal:** Fix the multi-mass-2D premature-collapse failure (at best 7/12 seeds
 recover truth under tested fixed jitters) by annealing the post-resampling
 jitter from prior scale down to a floor, and make the annealed mode the
@@ -69,14 +76,28 @@ non-positive masses) enter the public state with uniform weight and are
 only killed by the next observation — and after the final observation
 there is no next one. Prior-scale annealed jitter makes this common
 instead of rare, so `_resample` gains a repair step (all jitter modes,
-when `log_prior` is provided): after jittering, particles with
-`log_prior = −inf` are re-jittered from their resampled parent, up to 10
-retries; any still-invalid particle falls back to its parent value
-unjittered (parents are always in support, since invalid particles carry
-zero weight into resampling and are never selected). `constraint_fn`
-still runs afterwards. The existing `log_prior` support definition
-(positions in range, mass > 0 — the mass upper bound deliberately
-unenforced) is unchanged, preserving baseline comparability.
+when `log_prior` is provided), using **one-shot reject-and-stay**, not
+retry-until-valid: retry loops sample from a parent-dependent truncated
+proposal that biases particles away from boundaries (measured: variance
+of a uniform[-1,1] cloud fell 0.333 → 0.304 under a 10-retry loop, and
+stayed 0.333 under reject-and-stay). Order of operations per resample:
+
+1. jitter all resampled particles once;
+2. apply `constraint_fn` (if any);
+3. evaluate `log_prior`; particles at −inf revert to their resampled
+   parent's value (post-constraint from the parent's own round);
+4. safety net: if any reverted particle is *still* invalid (possible only
+   when the parent itself was invalid — e.g. the left-sided
+   `searchsorted` selecting a zero-weight CDF plateau, or a
+   `constraint_fn` that maps valid particles out of support), replace it
+   with a uniform draw from the valid particles of this resample; raise
+   `RuntimeError` if none exist.
+
+The existing `log_prior` support definition (positions in range,
+mass > 0 — the mass upper bound deliberately unenforced) is unchanged.
+Note repair changes the RNG stream and particle trajectories for **all**
+modes, so pre-repair historical numbers are not reproducible by the new
+code (see §3).
 
 ### 2. API and plumbing
 
@@ -120,16 +141,25 @@ spec's status line and in the site text when chosen.
   floor ∈ {0.01, 0.02, 0.05}.
   Seed `s` drives clock placement, simulation noise, and filter rng
   together, exactly as the demo's single `SEED` does today. Includes a
-  fixed-jitter baseline mode to reproduce the June numbers.
+  fixed-jitter baseline mode to re-measure the post-repair baseline (see
+  below).
 - **Pass rule** (one seed): absolute posterior-mean error within 0.5 sim
-  units for every position component and within 0.1 for every mass. This
-  rule reproduces the June baseline **exactly** (verified 2026-07-02:
-  jitter_std 0.02/0.05/0.10 → 1/12, 5/12, 7/12), so before/after numbers
-  are directly comparable. An earlier draft used "truth within mean ± 3σ
-  plus posterior-std caps"; it was dropped because it cannot reproduce
-  the baseline (it scores 0.10 as 0/12 — every seed's mass std lands at
-  0.101–0.108, just over the cap) and because jitter directly inflates
-  `posterior_std`, making the rule self-referential.
+  units for every position component and within 0.1 for every mass.
+  Against the **pre-repair** code this rule reproduces the June scan
+  exactly (verified 2026-07-02: jitter_std 0.02/0.05/0.10 → 1/12, 5/12,
+  7/12), establishing it as the criterion the June scan implicitly used.
+  An earlier draft used "truth within mean ± 3σ plus posterior-std caps";
+  it was dropped because it cannot reproduce that scan (it scores 0.10 as
+  0/12 — every seed's mass std lands at 0.101–0.108, just over the cap)
+  and because jitter directly inflates `posterior_std`, making the rule
+  self-referential.
+- **Baseline.** The support-repair step (§1) changes RNG trajectories
+  for all jitter modes, so the shipped code will not reproduce the
+  historical numbers (a draft repair implementation measured 1/12, 4/12,
+  7/12). The fixed-jitter baseline the annealed mode is compared against
+  is therefore **re-measured post-repair** by the scan's fixed-jitter
+  mode (same rule, same seeds); the June numbers are cited as historical
+  provenance only, not as a reproduction target.
 - **Diagnostics** reported per run (not gating): 3σ coverage (is truth
   within mean ± 3·posterior_std per parameter), max posterior std, and
   predictive residual `max |rates(posterior_mean) − true_rates| /
@@ -138,9 +168,19 @@ spec's status line and in the site text when chosen.
   winning cell is then validated on fresh holdout seeds 100–111.
   Acceptance = ≥ 10/12 on the **holdout** seeds (selection on the same
   seeds that certify the winner would bias the estimate). Winner
-  selection on the tuning seeds: highest pass count, ties broken by
-  lowest median (over seeds) max-parameter absolute error, remaining
-  ties by smaller tau (less artificial diffusion).
+  selection on the tuning seeds is a total order: highest pass count,
+  then lowest median (over seeds) max-parameter absolute error, then
+  smaller tau (less artificial diffusion), then smaller floor —
+  equivalently, final ties resolve to the lexicographically smallest
+  (tau, floor), which is unique per cell.
+- **Holdout burn rule.** If the holdout gate fails and the design
+  changes in response (e.g. the hybrid fallback), seeds 100–111 are
+  burned: freeze the single new candidate on the tuning seeds and
+  certify it on fresh seeds 200–211 (and so on). Never re-certify on a
+  holdout set that has already informed a decision.
+- Expected runtime (recorded for planning): ~80 s serial for the full
+  180-run grid on an Apple-Silicon laptop, ~13 s with 8 workers; the
+  12-seed holdout run is ~5 s.
 - `tests/test_acceptance_multi_mass_2d.py` — `@pytest.mark.slow` test
   running the 12 **holdout** seeds at shipped defaults through the same
   runner function the script uses, asserting ≥ 10/12 passes. This is a
@@ -198,8 +238,10 @@ Fast unit tests (regular CI):
   negative `jitter_std`, raise `ValueError` (both `ParticleFilter` and
   `InferenceConfig`).
 - Post-jitter support repair: after a resample with large jitter and a
-  `log_prior`, every particle in the public state is in support; a
-  particle whose every retry fails falls back to its parent.
+  `log_prior`, every particle in the public state is in support;
+  rejected particles carry their parent's value (reject-and-stay); the
+  safety-net replacement path and its `RuntimeError` are exercised with
+  a pathological `constraint_fn`.
 - Animation: after generating an animation, the filter has seen exactly
   `len(observations)` observations (pins the frame-0 double-processing
   fix).
@@ -207,14 +249,21 @@ Fast unit tests (regular CI):
   and `ModelComparison`; `jitter_tau` plumbs through
   `build_particle_filter` and `ModelComparison`.
 - **Default-flip behavioral regressions** (the flip is otherwise only
-  validated on the multi-mass-2D problem): existing scenario tests
-  (single-mass 1D/2D recovery, multi-mass 1D, model comparison selecting
-  the true K) must pass under the new defaults with their thresholds
-  unchanged; add a model-comparison correct-K regression if none exists.
-  If model comparison degrades under annealed jitter (its evidence
+  validated on the multi-mass-2D problem). Today only single-mass-1D
+  numerical recovery is tested (the multi-mass API test checks shapes,
+  the viz tests check artifact creation), so add **new** numerical
+  recovery regressions: single-mass 2D, multi-mass 1D, and model
+  comparison selecting the true K — all at the new defaults, all
+  asserting parameter recovery, not shapes. The existing single-mass-1D
+  test must pass with thresholds unchanged.
+- If model comparison degrades under annealed jitter (its evidence
   accumulates through a K-dependent artificial transition), the recorded
-  fallback is `ModelComparison` keeping `jitter="fixed"` as its default
-  while the rest of the library flips.
+  fallback covers **both** entry points: `ModelComparison.__init__`
+  keeps `jitter="fixed"` as its default, and `InferenceConfig.jitter`
+  becomes a `str | None = None` sentinel resolved at build time —
+  `"annealed"` for fixed-K filters, `"fixed"` for the tuple-mode
+  model-comparison path — so `infer()` with `n_masses=(...)` is not
+  silently flipped while explicit user choices are still honored.
 - Existing tests audited for baked-in `"fixed"`-default assumptions and
   updated deliberately (not silently).
 
