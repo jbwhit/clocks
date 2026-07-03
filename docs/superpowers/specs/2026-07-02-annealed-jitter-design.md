@@ -1,7 +1,13 @@
 # Annealed Jitter for the Particle Filter
 
 **Date:** 2026-07-02
-**Status:** Draft — pending Codex xhigh review.
+**Status:** Draft — Codex xhigh round 1 (NEEDS REVISION: 3 Critical, 6
+Important, 3 Minor) applied: pass rule replaced with the absolute-error
+rule that exactly reproduces the June baseline (verified by rerunning the
+36-run scan), tuning/holdout seed split added, post-jitter support-repair
+policy added, animation frame-0 double-processing fix pulled into scope,
+scenario module moved into the package, validation tightened, default-flip
+behavioral regressions and full-site re-render added. Pending round 2.
 **Goal:** Fix the multi-mass-2D premature-collapse failure (at best 7/12 seeds
 recover truth under tested fixed jitters) by annealing the post-resampling
 jitter from prior scale down to a floor, and make the annealed mode the
@@ -52,37 +58,62 @@ sigma_t = floor + (init − floor) · exp(−t / tau)
   standard deviation" meaning; it is now the late-run asymptote.
 - `tau` — new knob `jitter_tau`, in units of observations; must be > 0.
 
-The jitter draw is per-parameter isotropic Gaussian (a vector of stds
-broadcast over particles), i.e. the `fixed` branch generalized to a
-scheduled vector scale. The `fixed` and `covariance` branches are
-unchanged.
+The jitter draw is an axis-aligned diagonal Gaussian (a vector of
+per-parameter stds broadcast over particles), i.e. the `fixed` branch
+generalized to a scheduled vector scale. The `fixed` and `covariance`
+branches are unchanged.
+
+**Post-jitter support policy.** Today `log_prior` is evaluated *before*
+resampling, so particles jittered out of support (out-of-range positions,
+non-positive masses) enter the public state with uniform weight and are
+only killed by the next observation — and after the final observation
+there is no next one. Prior-scale annealed jitter makes this common
+instead of rare, so `_resample` gains a repair step (all jitter modes,
+when `log_prior` is provided): after jittering, particles with
+`log_prior = −inf` are re-jittered from their resampled parent, up to 10
+retries; any still-invalid particle falls back to its parent value
+unjittered (parents are always in support, since invalid particles carry
+zero weight into resampling and are never selected). `constraint_fn`
+still runs afterwards. The existing `log_prior` support definition
+(positions in range, mass > 0 — the mass upper bound deliberately
+unenforced) is unchanged, preserving baseline comparability.
 
 ### 2. API and plumbing
 
 - `ParticleFilter.__init__`: accept `jitter="annealed"` (new **default**)
   and `jitter_tau: float` (default = the scan-selected value, see §3).
-  Validate `jitter_tau > 0` unconditionally (fail fast, regardless of
-  mode). Capture the
+  Validate unconditionally (fail fast, regardless of mode): `jitter_tau`
+  finite and > 0, `jitter_std` finite and ≥ 0 — NaN passes a naive `<= 0`
+  check, an infinite tau never decays, and a negative `jitter_std` makes
+  the annealed asymptote negative and blows up inside `rng.normal`.
+  Capture the
   clamped `init` vector after drawing the initial cloud.
 - `ParticleFilter._resample`: add the annealed branch computing `sigma_t`
   from the current state's `observations_seen`.
 - `InferenceConfig`: `jitter` default flips to `"annealed"`; new field
-  `jitter_tau: float` with the same default; `__post_init__` validates
-  `jitter_tau > 0`. Docstring updated: `jitter_std` is the floor in
-  annealed mode.
+  `jitter_tau: float` with the same default; `__post_init__` applies the
+  same finiteness/sign validation to `jitter_tau` and `jitter_std`
+  (currently unvalidated). Docstring updated: `jitter_std` is the floor
+  in annealed mode.
 - `build_particle_filter` and `ModelComparison.__init__` pass `jitter_tau`
   through. `ModelComparison`'s own `jitter` default flips to `"annealed"`.
 
 Defaults for `jitter_tau` (and the demo's `jitter_std` floor) are chosen
-empirically by the scan; the spec placeholder assumption is tau ≈ 15 and
-floor ≈ 0.02, to be replaced by the winning cell before merge.
+empirically by the scan using the winner-selection rule in §3; the spec
+placeholder assumption is tau ≈ 15 and floor ≈ 0.02, to be replaced by
+the winning cell before merge. The shipped defaults are recorded in this
+spec's status line and in the site text when chosen.
 
 ### 3. Scan harness
 
-- `scripts/_multi_mass_2d_scenario.py` — shared scenario module holding
-  the truth constants and the rejection-sampling clock placement currently
-  in `scripts/demo_multi_mass_2d.py`. Both the demo and the scan import it
-  (same directory, so a plain import works under `uv run scripts/...`).
+- `clocks._scenarios` — shared scenario module (in the installed package,
+  not `scripts/`) holding the truth constants, the rejection-sampling
+  clock placement currently in `scripts/demo_multi_mass_2d.py`, and the
+  single-run runner + pass-rule evaluation used by scan and test. It must
+  live in the package because the demo console-scripts launch via
+  `runpy.run_path` (`clocks._cli`), which does not put `scripts/` on
+  `sys.path`, and pytest imports from the repo root have the same
+  problem.
 - `scripts/scan_multi_mass_2d.py` — grid over (tau, floor) × 12 seeds
   (0–11), multiprocessing across runs, printing a per-cell pass table.
   Indicative grid (overridable via CLI): tau ∈ {5, 10, 15, 25, 40},
@@ -90,27 +121,58 @@ floor ≈ 0.02, to be replaced by the winning cell before merge.
   Seed `s` drives clock placement, simulation noise, and filter rng
   together, exactly as the demo's single `SEED` does today. Includes a
   fixed-jitter baseline mode to reproduce the June numbers.
-- **Pass rule** (one seed): every one of the 6 parameters has truth within
-  `mean ± 3·posterior_std`, **and** the posterior stds are capped at 0.5
-  for position components and 0.1 for masses. The caps exclude
-  "prior-wide cloud passes by being vague"; the 3σ window excludes
-  "confident collapse on a wrong mode". June's passing runs had stds
-  ~0.09 (positions) / ~0.05 (masses), comfortably inside the caps.
+- **Pass rule** (one seed): absolute posterior-mean error within 0.5 sim
+  units for every position component and within 0.1 for every mass. This
+  rule reproduces the June baseline **exactly** (verified 2026-07-02:
+  jitter_std 0.02/0.05/0.10 → 1/12, 5/12, 7/12), so before/after numbers
+  are directly comparable. An earlier draft used "truth within mean ± 3σ
+  plus posterior-std caps"; it was dropped because it cannot reproduce
+  the baseline (it scores 0.10 as 0/12 — every seed's mass std lands at
+  0.101–0.108, just over the cap) and because jitter directly inflates
+  `posterior_std`, making the rule self-referential.
+- **Diagnostics** reported per run (not gating): 3σ coverage (is truth
+  within mean ± 3·posterior_std per parameter), max posterior std, and
+  predictive residual `max |rates(posterior_mean) − true_rates| /
+  noise_std` — the June failure signature was residuals ~7× noise.
+- **Tuning vs holdout seeds.** The grid is tuned on seeds 0–11; the
+  winning cell is then validated on fresh holdout seeds 100–111.
+  Acceptance = ≥ 10/12 on the **holdout** seeds (selection on the same
+  seeds that certify the winner would bias the estimate). Winner
+  selection on the tuning seeds: highest pass count, ties broken by
+  lowest median (over seeds) max-parameter absolute error, remaining
+  ties by smaller tau (less artificial diffusion).
 - `tests/test_acceptance_multi_mass_2d.py` — `@pytest.mark.slow` test
-  running the 12 seeds at shipped defaults through the same runner
-  function the script uses, asserting ≥ 10/12 passes. The `slow` marker
-  is registered in `pyproject.toml` and excluded by default
-  (`addopts = "-m 'not slow'"`); run manually with
-  `uv run pytest -m slow`. Regular CI stays fast; no scheduled CI job.
+  running the 12 **holdout** seeds at shipped defaults through the same
+  runner function the script uses, asserting ≥ 10/12 passes. This is a
+  deterministic regression pin (same seeds, same code ⇒ same result),
+  not a population reliability estimate. The `slow` marker is registered
+  in `pyproject.toml` and excluded by default (`addopts = "-m 'not
+  slow'"`); run manually with `uv run pytest -m slow`. Regular CI stays
+  fast; accepted tradeoff: the acceptance scan does not guard future
+  merges automatically — rerun it when touching inference defaults.
 
-### 4. Demos and site
+### 4. Demos, animation fix, and site
 
-- The default flip means all five demos pick up annealed jitter with no
+- **Animation off-by-one fix** (pre-existing bug, load-bearing here):
+  `_animate_filter_dashboard` and the model-comparison animator hand
+  `FuncAnimation` a state-mutating callback with no `init_func`, so
+  matplotlib processes frame 0 twice — the committed GIFs ran 81 filter
+  updates for 80 observations (verified against the committed estimates).
+  Because the anneal schedule keys off `observations_seen`, this would
+  also shift the schedule. Fix: precompute the filter states/estimates by
+  driving the filter through the observations once, then let the
+  animation render from the stored sequence; assert afterwards that
+  `observations_seen == len(observations)`. GIF paths then match the
+  `infer()`/scan path exactly.
+- The default flip means all demos pick up annealed jitter with no
   per-script changes; `demo_multi_mass_2d.py` additionally sets
-  `jitter_std` to the winning floor.
-- Regenerate all five GIFs into `assets/` and `site/assets/`, keeping the
-  committed artifacts reproducible by the current scripts (the repo's
-  standing policy).
+  `jitter_std` to the winning floor. `demo_density.py` uses the raw
+  `ParticleFilter` default, so its PNG changes too.
+- Regenerate **all** committed demo artifacts (five GIFs + the density
+  PNG): scripts write to `output/`, then copy to `assets/` and
+  `site/assets/` with a byte-equality check between the two copies,
+  keeping the committed artifacts reproducible by the current scripts
+  (the repo's standing policy).
 - Site text (`site/method/the-particle-filter.qmd`): add an **annealed**
   bullet to the jitter-modes list, state the new default, and rewrite the
   particle-impoverishment failure note (which currently says the freeze
@@ -118,6 +180,9 @@ floor ≈ 0.02, to be replaced by the winning cell before merge.
   annealed fix and the scan result. Check `site/story/two-hidden-masses.qmd`
   and `into-the-plane.qmd` for stale jitter phrasing. (The "at best 7/12
   seeds" scan numbers live in `docs/someday-maybe.md`, not on the site.)
+- Many site pages **execute** `InferenceConfig`-based examples at render
+  time, so the default flip changes their printed outputs: re-render the
+  full site and review the executed cell outputs, not just the prose.
 - `docs/someday-maybe.md`: mark the adaptive/annealed jitter item done
   with a pointer to the harness and the shipped defaults; the "existing
   36-run seed-scan harness" phrasing becomes true.
@@ -129,11 +194,27 @@ Fast unit tests (regular CI):
 - Schedule endpoints: at t = 0 the effective std is the (clamped) initial
   cloud scale; as t → ∞ it approaches `floor`.
 - Upward-anneal clamp: `init < floor` yields a constant-`floor` schedule.
-- Validation: `jitter_tau <= 0` raises `ValueError` (both
-  `ParticleFilter` and `InferenceConfig`).
+- Validation: non-finite or non-positive `jitter_tau`, and non-finite or
+  negative `jitter_std`, raise `ValueError` (both `ParticleFilter` and
+  `InferenceConfig`).
+- Post-jitter support repair: after a resample with large jitter and a
+  `log_prior`, every particle in the public state is in support; a
+  particle whose every retry fails falls back to its parent.
+- Animation: after generating an animation, the filter has seen exactly
+  `len(observations)` observations (pins the frame-0 double-processing
+  fix).
 - Default mode is `"annealed"` in `ParticleFilter`, `InferenceConfig`,
   and `ModelComparison`; `jitter_tau` plumbs through
   `build_particle_filter` and `ModelComparison`.
+- **Default-flip behavioral regressions** (the flip is otherwise only
+  validated on the multi-mass-2D problem): existing scenario tests
+  (single-mass 1D/2D recovery, multi-mass 1D, model comparison selecting
+  the true K) must pass under the new defaults with their thresholds
+  unchanged; add a model-comparison correct-K regression if none exists.
+  If model comparison degrades under annealed jitter (its evidence
+  accumulates through a K-dependent artificial transition), the recorded
+  fallback is `ModelComparison` keeping `jitter="fixed"` as its default
+  while the rest of the library flips.
 - Existing tests audited for baked-in `"fixed"`-default assumptions and
   updated deliberately (not silently).
 
