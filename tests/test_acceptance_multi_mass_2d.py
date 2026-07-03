@@ -9,7 +9,10 @@ import pytest
 
 from clocks._scenarios import run_multi_mass_2d
 
-HOLDOUT_SEEDS = tuple(range(100, 112))
+# Seeds 100-111 are burned (diagnostics only: they exposed the clone-freeze
+# degeneracy, see docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md).
+# Certification now uses 200-211 per the retry protocol.
+HOLDOUT_SEEDS = tuple(range(200, 212))
 
 
 @pytest.mark.slow

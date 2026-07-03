@@ -355,3 +355,40 @@ class TestDefaultFlipRecovery:
         truth_vec = np.array([-3.0, 4.5, 0.6, 0.4])
         error = np.abs(result.posterior_mean - truth_vec)
         assert np.all(error <= np.array([0.5, 0.5, 0.1, 0.1]))
+
+
+class TestSupportBoundsPlumbing:
+    def test_build_particle_filter_constructs_bounds(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        pf = build_particle_filter(
+            InferenceConfig(
+                clock_array=ca,
+                noise=NoiseConfig(observation_std=0.01),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                n_particles=50,
+                n_masses=2,
+            )
+        )
+        lower, upper = pf.support_bounds
+        # 2 masses x 1 dim -> params [x1, x2, M1, M2]
+        assert np.allclose(lower[:2], -8.0) and np.allclose(upper[:2], 8.0)
+        assert np.all(lower[2:] > 0.0) and np.all(lower[2:] < 1e-100)
+        assert np.all(np.isinf(upper[2:]))
+
+    def test_model_comparison_filters_get_bounds(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        result = infer(
+            [Observation(rates=np.ones(6), time=0.0)],
+            InferenceConfig(
+                clock_array=ca,
+                noise=NoiseConfig(observation_std=0.01),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                n_particles=50,
+                n_masses=(1, 2),
+            ),
+        )
+        assert result.best_model in (1, 2)

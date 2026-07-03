@@ -8,6 +8,7 @@ from clocks._scenarios import (
     TRUTH,
     generate_random_clocks,
     passes,
+    run_multi_mass_2d,
 )
 
 
@@ -39,3 +40,12 @@ class TestClockPlacement:
                 assert np.linalg.norm(clocks[i] - clocks[j]) >= MIN_SEPARATION
             for p in exclude:
                 assert np.linalg.norm(clocks[i] - np.array(p)) >= MIN_SEPARATION
+
+
+class TestFreezeRegression:
+    def test_seed_101_does_not_freeze(self) -> None:
+        """Seed 101 froze at t=1 under reject-and-stay (clone-freeze,
+        docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md).
+        Under reflection it must keep a live posterior."""
+        result = run_multi_mass_2d(101, jitter_std=0.02, jitter_tau=5.0)
+        assert result["max_posterior_std"] > 1e-6

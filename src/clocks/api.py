@@ -76,6 +76,14 @@ def build_particle_filter(config: InferenceConfig) -> ParticleFilter:
     n_dims = config.clock_array.positions.shape[1]
     rng = np.random.default_rng(config.seed)
 
+    n_params = n_masses * n_dims + n_masses
+    lower = np.empty(n_params)
+    upper = np.empty(n_params)
+    lower[: n_masses * n_dims] = config.prior.position_range[0]
+    upper[: n_masses * n_dims] = config.prior.position_range[1]
+    lower[n_masses * n_dims :] = np.nextafter(0.0, 1.0)
+    upper[n_masses * n_dims :] = np.inf
+
     return ParticleFilter(
         n_particles=config.n_particles,
         prior_sampler=_make_prior_sampler(config, n_masses, n_dims),
@@ -89,6 +97,7 @@ def build_particle_filter(config: InferenceConfig) -> ParticleFilter:
         jitter=config.jitter,
         jitter_tau=config.jitter_tau,
         log_prior=_make_log_prior(config, n_masses, n_dims),
+        support_bounds=(lower, upper),
     )
 
 

@@ -18,7 +18,10 @@ from multiprocessing import Pool
 from clocks._scenarios import RunResult, run_multi_mass_2d
 
 TUNING_SEEDS = tuple(range(12))
-HOLDOUT_SEEDS = tuple(range(100, 112))
+# Seeds 100-111 are burned (diagnostics only: they exposed the clone-freeze
+# degeneracy, see docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md).
+# Certification now uses 200-211 per the retry protocol.
+HOLDOUT_SEEDS = tuple(range(200, 212))
 
 
 def _run(job: tuple[int, str, float, float]) -> tuple[tuple, RunResult]:
@@ -37,7 +40,7 @@ def _run(job: tuple[int, str, float, float]) -> tuple[tuple, RunResult]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--taus", type=float, nargs="+", default=[5, 10, 15, 25, 40])
-    parser.add_argument("--floors", type=float, nargs="+", default=[0.01, 0.02, 0.05])
+    parser.add_argument("--floors", type=float, nargs="+", default=[0.02, 0.05, 0.10])
     parser.add_argument(
         "--baseline",
         action="store_true",
