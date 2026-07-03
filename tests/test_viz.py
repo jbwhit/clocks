@@ -564,3 +564,58 @@ class TestAnimateModelComparison:
         )
 
         assert out.exists()
+
+
+class TestAnimationProcessesObservationsOnce:
+    def test_dashboard_animation_observation_count(
+        self, tmp_path: Path, clock_array_1d: ClockArray, mass_config_1d: MassConfig
+    ) -> None:
+        rng = np.random.default_rng(0)
+        true_rates = clock_rates(mass_config_1d, clock_array_1d)
+        observations = [
+            Observation(
+                rates=true_rates + rng.normal(0, 0.01, true_rates.shape),
+                time=float(t),
+            )
+            for t in range(4)
+        ]
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=lambda r, n: np.column_stack(
+                [r.uniform(-8, 8, n), r.uniform(0.1, 2.0, n)]
+            ),
+            forward_model=lambda p: clock_rates(
+                MassConfig(positions=p[:1].reshape(1, 1), masses=p[1:]),
+                clock_array_1d,
+            ),
+            noise_std=0.01,
+        )
+        animate_inference(
+            clock_array_1d,
+            mass_config_1d,
+            observations,
+            pf,
+            tmp_path / "anim.gif",
+        )
+        assert pf.state.observations_seen == len(observations)
+
+    def test_model_comparison_animation_observation_count(
+        self, tmp_path: Path, clock_array_1d: ClockArray, mass_config_1d: MassConfig
+    ) -> None:
+        rng = np.random.default_rng(0)
+        true_rates = clock_rates(mass_config_1d, clock_array_1d)
+        observations = [
+            Observation(
+                rates=true_rates + rng.normal(0, 0.01, true_rates.shape),
+                time=float(t),
+            )
+            for t in range(3)
+        ]
+        mc = ModelComparison(
+            clock_array=clock_array_1d, noise_std=0.01, k_max=2, n_particles=50
+        )
+        animate_model_comparison(
+            clock_array_1d, mass_config_1d, observations, mc, tmp_path / "mc.gif"
+        )
+        for pf in mc.filters.values():
+            assert pf.state.observations_seen == len(observations)

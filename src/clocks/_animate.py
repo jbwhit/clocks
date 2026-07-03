@@ -62,20 +62,32 @@ def _animate_filter_dashboard(
     Render callables own their panel completely, including ``ax.clear()``
     and any artist lifecycle (e.g. colorbars).
     """
+    states: list[ParticleState] = []
     means: list[NDArray[np.floating]] = []
     stds: list[NDArray[np.floating]] = []
-
-    def update(frame: int) -> None:
-        obs = observations[frame]
-        pf.update(obs)
+    for obs in observations:
+        state = pf.update(obs)
         est = pf.estimate()
+        states.append(state)
         means.append(est["mean"])
         stds.append(est["std"])
-        render_particles(axes["particles"], pf.state)
-        render_rates(axes["rates"], obs, frame)
-        render_history(axes["history"], np.array(means), np.array(stds))
+    if pf.state.observations_seen != len(observations):
+        raise RuntimeError(
+            f"Animation expected a fresh filter: saw "
+            f"{pf.state.observations_seen} observations for "
+            f"{len(observations)} frames"
+        )
 
-    anim = animation.FuncAnimation(fig, update, frames=len(observations), repeat=False)
+    def render(frame: int) -> None:
+        render_particles(axes["particles"], states[frame])
+        render_rates(axes["rates"], observations[frame], frame)
+        render_history(
+            axes["history"],
+            np.array(means[: frame + 1]),
+            np.array(stds[: frame + 1]),
+        )
+
+    anim = animation.FuncAnimation(fig, render, frames=len(observations), repeat=False)
     _save_animation(anim, fig, output_path, fps)
 
 
@@ -421,10 +433,20 @@ def animate_model_comparison(
     fig, (ax_rates, ax_post) = plt.subplots(1, 2, figsize=figsize)
     fig.tight_layout(pad=3.0)
 
+    posteriors_seq: list[dict[int, float]] = []
+    for obs in observations:
+        model_comparison.update(obs)
+        posteriors_seq.append(model_comparison.evidence()["posterior"])
+    for pf in model_comparison.filters.values():
+        if pf.state.observations_seen != n_obs:
+            raise RuntimeError(
+                f"Animation expected a fresh filter: saw "
+                f"{pf.state.observations_seen} observations for {n_obs} frames"
+            )
+
     def update(frame: int) -> None:
         obs = observations[frame]
-        model_comparison.update(obs)
-        result = model_comparison.evidence()
+        result_posterior = posteriors_seq[frame]
 
         # Left panel: clock rates
         ax_rates.clear()
@@ -437,7 +459,7 @@ def animate_model_comparison(
 
         # Right panel: posterior probabilities
         ax_post.clear()
-        posteriors = [result["posterior"][k] for k in k_values]
+        posteriors = [result_posterior[k] for k in k_values]
         colors = [
             _POSTERIOR_COLORS[i % len(_POSTERIOR_COLORS)] for i in range(len(k_values))
         ]
