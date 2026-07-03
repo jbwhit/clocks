@@ -14,7 +14,11 @@ one-shot reject-and-stay (retry loops bias boundaries) with
 post-constraint revalidation and a safety net, regressions restated as
 new tests, model-comparison fallback extended to tuple-mode infer() via a
 config sentinel, holdout burn rule and total tie-breaker and runtime
-estimate added. Pending round 3.
+estimate added. Round 3 (NEEDS REVISION: 1 Important, 1 Minor) applied:
+initial cloud gets `constraint_fn` at construction so revert-to-parent is
+sound on the first resample, repair implemented as a pure helper so the
+safety net is directly testable, test inventory corrected (correct-K
+model-comparison regressions already exist). Pending round 4.
 **Goal:** Fix the multi-mass-2D premature-collapse failure (at best 7/12 seeds
 recover truth under tested fixed jitters) by annealing the post-resampling
 jitter from prior scale down to a floor, and make the annealed mode the
@@ -85,13 +89,24 @@ stayed 0.333 under reject-and-stay). Order of operations per resample:
 1. jitter all resampled particles once;
 2. apply `constraint_fn` (if any);
 3. evaluate `log_prior`; particles at −inf revert to their resampled
-   parent's value (post-constraint from the parent's own round);
+   parent's value;
 4. safety net: if any reverted particle is *still* invalid (possible only
    when the parent itself was invalid — e.g. the left-sided
-   `searchsorted` selecting a zero-weight CDF plateau, or a
-   `constraint_fn` that maps valid particles out of support), replace it
-   with a uniform draw from the valid particles of this resample; raise
+   `searchsorted` selecting a zero-weight CDF plateau), replace it with a
+   uniform draw from the valid particles of this resample; raise
    `RuntimeError` if none exist.
+
+For revert-to-parent to be sound, parents must themselves satisfy the
+constraint: `__init__` therefore applies `constraint_fn` to the initial
+prior cloud before storing it (and before capturing the anneal `init`
+stds). Today the library's own prior samplers already sort at sampling
+time, but a raw `ParticleFilter` user can pass an unconstrained
+`prior_sampler` plus a `constraint_fn`, and without this the first
+resample could revert to an unconstrained parent. Implement the repair
+(steps 3–4) as a small pure helper so the safety-net path can be
+unit-tested directly with crafted invalid parents — it is not reachable
+end-to-end through a pathological `constraint_fn`, because reversion
+restores the untouched parent.
 
 The existing `log_prior` support definition (positions in range,
 mass > 0 — the mass upper bound deliberately unenforced) is unchanged.
@@ -240,8 +255,10 @@ Fast unit tests (regular CI):
 - Post-jitter support repair: after a resample with large jitter and a
   `log_prior`, every particle in the public state is in support;
   rejected particles carry their parent's value (reject-and-stay); the
-  safety-net replacement path and its `RuntimeError` are exercised with
-  a pathological `constraint_fn`.
+  safety-net replacement path and its `RuntimeError` are exercised by
+  unit-testing the repair helper directly with crafted invalid parents;
+  the initial-cloud constraint application is pinned by a test using an
+  unconstrained `prior_sampler` with a sorting `constraint_fn`.
 - Animation: after generating an animation, the filter has seen exactly
   `len(observations)` observations (pins the frame-0 double-processing
   fix).
@@ -252,10 +269,12 @@ Fast unit tests (regular CI):
   validated on the multi-mass-2D problem). Today only single-mass-1D
   numerical recovery is tested (the multi-mass API test checks shapes,
   the viz tests check artifact creation), so add **new** numerical
-  recovery regressions: single-mass 2D, multi-mass 1D, and model
-  comparison selecting the true K — all at the new defaults, all
-  asserting parameter recovery, not shapes. The existing single-mass-1D
-  test must pass with thresholds unchanged.
+  recovery regressions for single-mass 2D and multi-mass 1D, at the new
+  defaults, asserting parameter recovery, not shapes. Correct-K model
+  comparison is already covered (direct `ModelComparison` in
+  `test_inference.py` and tuple-mode `infer()` in `test_api.py`); those
+  existing default-sensitive regressions, like single-mass-1D recovery,
+  must pass with thresholds unchanged.
 - If model comparison degrades under annealed jitter (its evidence
   accumulates through a K-dependent artificial transition), the recorded
   fallback covers **both** entry points: `ModelComparison.__init__`
