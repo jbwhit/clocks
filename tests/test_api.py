@@ -5,6 +5,7 @@ import pytest
 
 from clocks.api import build_particle_filter, infer, simulate, simulate_and_infer
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
+from clocks.inference import ModelComparison
 from clocks.results import SimulationResult
 from clocks.types import ClockArray, MassConfig, Observation
 
@@ -392,3 +393,19 @@ class TestSupportBoundsPlumbing:
             ),
         )
         assert result.best_model in (1, 2)
+
+        # Assert that ModelComparison-constructed filters carry support_bounds.
+        mc = ModelComparison(clock_array=ca, noise_std=0.01, k_max=2)
+        n_dims = ca.positions.shape[1]  # 1 for this test
+        for k in mc.filters:
+            assert mc.filters[k].support_bounds is not None
+            lower, upper = mc.filters[k].support_bounds
+            # For filter k, params are [positions (k*n_dims), masses (k)].
+            position_end = k * n_dims
+            # Position bounds: lower and upper should be -8.0 and 8.0 respectively.
+            assert np.allclose(lower[:position_end], -8.0)
+            assert np.allclose(upper[:position_end], 8.0)
+            # Mass bounds: lower should be > 0 and finite, upper should be +inf.
+            assert np.all(lower[position_end:] > 0.0)
+            assert np.all(np.isfinite(lower[position_end:]))
+            assert np.all(np.isinf(upper[position_end:]))
