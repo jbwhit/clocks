@@ -15,6 +15,40 @@ _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
 _JITTER_MODES = {"fixed", "covariance"}
 
 
+def _repair_support(
+    proposals: NDArray[np.floating],
+    parents: NDArray[np.floating],
+    log_prior: Callable[[NDArray[np.floating]], NDArray[np.floating]],
+    rng: np.random.Generator,
+) -> NDArray[np.floating]:
+    """One-shot reject-and-stay support repair for post-jitter proposals.
+
+    Proposals with -inf log-prior revert to their resampled parent's value.
+    Parents that are themselves invalid (e.g. a zero-weight CDF plateau
+    selected by left-sided searchsorted) are replaced by a uniform draw
+    from the valid repaired particles. Deliberately NOT retry-until-valid:
+    retrying samples a parent-dependent truncated proposal that biases
+    particles away from support boundaries.
+    """
+    repaired = proposals.copy()
+    invalid = np.isneginf(log_prior(repaired))
+    if not invalid.any():
+        return repaired
+    repaired[invalid] = parents[invalid]
+    still_invalid = np.isneginf(log_prior(repaired))
+    if still_invalid.any():
+        valid_idx = np.flatnonzero(~still_invalid)
+        if valid_idx.size == 0:
+            raise RuntimeError(
+                "Support repair failed: no valid particles remain after "
+                "reverting to parents; prior support and proposals are "
+                "fully disjoint"
+            )
+        donors = rng.choice(valid_idx, size=int(still_invalid.sum()))
+        repaired[np.flatnonzero(still_invalid)] = repaired[donors]
+    return repaired
+
+
 class Estimate(TypedDict):
     """Return type for ParticleFilter.estimate()."""
 
@@ -109,6 +143,10 @@ class ParticleFilter:
         self.log_evidence: float = 0.0
 
         particles = prior_sampler(self.rng, n_particles)
+        if constraint_fn is not None:
+            # Parents must satisfy the constraint for reject-and-stay
+            # reversion to be sound on the very first resample.
+            particles = constraint_fn(particles)
         weights = np.ones(n_particles) / n_particles
         self._state = ParticleState(
             particles=particles,
@@ -220,7 +258,8 @@ class ParticleFilter:
         else:
             indices = self._systematic_indices(weights, n)
 
-        new_particles = particles[indices].copy()
+        parents = particles[indices]
+        new_particles = parents.copy()
 
         # The weighted covariance needs at least ~2 effective samples;
         # below that np.cov's normalization (1 - sum(w^2)) underflows to
@@ -242,6 +281,10 @@ class ParticleFilter:
 
         if self.constraint_fn is not None:
             new_particles = self.constraint_fn(new_particles)
+        if self.log_prior is not None:
+            new_particles = _repair_support(
+                new_particles, parents, self.log_prior, self.rng
+            )
         new_weights = np.ones(n) / n
         return new_particles, new_weights
 

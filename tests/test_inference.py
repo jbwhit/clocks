@@ -7,7 +7,12 @@ import pytest
 from numpy.typing import NDArray
 from scipy.special import logsumexp
 
-from clocks.inference import ConvergenceInfo, ModelComparison, ParticleFilter
+from clocks.inference import (
+    ConvergenceInfo,
+    ModelComparison,
+    ParticleFilter,
+    _repair_support,
+)
 from clocks.noise import add_clock_noise, log_likelihood_gaussian
 from clocks.physics import clock_rates, clock_rates_batch
 from clocks.types import ClockArray, MassConfig, Observation
@@ -227,8 +232,10 @@ class TestParticleFilter:
             obs = Observation(rates=np.array([0.9, 0.95, 0.99]), time=float(t))
             pf.update(obs)
 
-        assert call_count[0] == 5, (
-            f"Constraint should be called on every resample, got {call_count[0]}"
+        # 1 call on the initial cloud (support-repair soundness) + 1 per
+        # resample; resample_threshold=1.0 forces one per update.
+        assert call_count[0] == 6, (
+            f"Constraint: 1 init + 5 resamples expected, got {call_count[0]}"
         )
 
     # --- Resampling methods ---
@@ -444,7 +451,8 @@ class TestParticleFilter:
         )
 
     def test_log_prior_called_each_update(self) -> None:
-        """log_prior should be called once per update."""
+        """log_prior should be called once per update to reweight, plus
+        once per resample for support repair."""
         _, ca = _make_1d_scenario()
         forward = _make_forward_model(ca)
 
@@ -463,6 +471,7 @@ class TestParticleFilter:
             prior_sampler=prior_sampler,
             forward_model=forward,
             noise_std=0.01,
+            resample_threshold=1.0,
             rng=rng,
             log_prior=counting_prior,
         )
@@ -471,8 +480,10 @@ class TestParticleFilter:
             obs = Observation(rates=np.array([0.9, 0.95, 0.99]), time=float(t))
             pf.update(obs)
 
-        assert call_count[0] == 5, (
-            f"log_prior should be called 5 times, got {call_count[0]}"
+        # 5 reweight calls + 5 support-repair calls (threshold forces a
+        # resample every update; all particles valid => one check each).
+        assert call_count[0] == 10, (
+            f"log_prior: 5 reweight + 5 repair calls expected, got {call_count[0]}"
         )
 
     # --- Convergence diagnostics ---
@@ -891,3 +902,81 @@ class TestModelComparison:
         assert set(comp.filters) == {2, 3}
         assert set(result["log_evidence"]) == {2, 3}
         assert set(result["posterior"]) == {2, 3}
+
+
+def _interval_log_prior(particles: np.ndarray) -> np.ndarray:
+    """Support: every component in [-1, 1]."""
+    lp = np.zeros(particles.shape[0])
+    lp[np.any(np.abs(particles) > 1.0, axis=1)] = -np.inf
+    return lp
+
+
+class TestSupportRepair:
+    def test_valid_proposals_pass_through_unchanged(self) -> None:
+        proposals = np.array([[0.5], [-0.5]])
+        parents = np.array([[0.1], [0.2]])
+        out = _repair_support(
+            proposals, parents, _interval_log_prior, np.random.default_rng(0)
+        )
+        assert np.array_equal(out, proposals)
+
+    def test_rejected_proposals_revert_to_parent(self) -> None:
+        proposals = np.array([[0.7], [1.5]])  # second is out of support
+        parents = np.array([[0.5], [0.6]])
+        out = _repair_support(
+            proposals, parents, _interval_log_prior, np.random.default_rng(0)
+        )
+        assert out[0, 0] == 0.7  # valid proposal kept (reject-and-stay)
+        assert out[1, 0] == 0.6  # invalid proposal reverted to parent
+
+    def test_invalid_parent_replaced_from_valid_particles(self) -> None:
+        proposals = np.array([[3.0], [0.4]])  # both rows: proposal 0 invalid
+        parents = np.array([[2.0], [0.5]])  # ... and its parent is too
+        out = _repair_support(
+            proposals, parents, _interval_log_prior, np.random.default_rng(0)
+        )
+        assert out[0, 0] == 0.4  # safety net: drawn from the only valid particle
+        assert out[1, 0] == 0.4
+
+    def test_raises_when_no_valid_particles_exist(self) -> None:
+        proposals = np.array([[3.0], [4.0]])
+        parents = np.array([[2.0], [5.0]])
+        with pytest.raises(RuntimeError, match="no valid particles"):
+            _repair_support(
+                proposals, parents, _interval_log_prior, np.random.default_rng(0)
+            )
+
+    def test_public_state_stays_in_support_after_resample(self) -> None:
+        """Huge jitter + log_prior: no out-of-support particle may survive."""
+        rng = np.random.default_rng(42)
+        pf = ParticleFilter(
+            n_particles=200,
+            prior_sampler=lambda r, n: r.uniform(-1.0, 1.0, (n, 1)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            resample_threshold=1.1,  # force a resample every update
+            jitter_std=5.0,  # most proposals leave [-1, 1]
+            jitter="fixed",
+            log_prior=_interval_log_prior,
+            rng=rng,
+        )
+        pf.update(Observation(rates=np.array([0.0]), time=0.0))
+        assert np.all(np.abs(pf.state.particles) <= 1.0)
+
+    def test_initial_cloud_constraint_applied(self) -> None:
+        """Unconstrained prior sampler + sorting constraint: stored initial
+        particles must already satisfy the constraint."""
+
+        def sort_rows(particles: np.ndarray) -> np.ndarray:
+            return np.sort(particles, axis=1)
+
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=lambda r, n: r.uniform(-1.0, 1.0, (n, 2)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            constraint_fn=sort_rows,
+            rng=np.random.default_rng(7),
+        )
+        p = pf.state.particles
+        assert np.all(p[:, 0] <= p[:, 1])
