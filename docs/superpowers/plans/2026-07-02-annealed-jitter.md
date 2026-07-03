@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-02-annealed-jitter-design.md` (Approved, Codex xhigh 4 rounds → SOUND ENOUGH TO IMPLEMENT).
 
+**Status:** Approved — Codex xhigh, 3 rounds → SOUND ENOUGH TO IMPLEMENT (round 1: 2 Critical / 2 Important / 2 Minor applied, 1 pushback verified correct; round 2: 2 residuals applied; round 3: clean).
+
 ## Global Constraints
 
 - Work on a feature branch `annealed-jitter`; commit after every task; push after every commit (repo workflow).
