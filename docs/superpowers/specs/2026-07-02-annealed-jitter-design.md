@@ -1,7 +1,9 @@
 # Annealed Jitter for the Particle Filter
 
 **Date:** 2026-07-02
-**Status:** Draft — Codex xhigh round 1 (NEEDS REVISION: 3 Critical, 6
+**Status:** Approved — Codex xhigh, 4 rounds → SOUND ENOUGH TO IMPLEMENT
+(round 4: no Critical or Important findings remain, no contradictory
+edits). Round history: round 1 (NEEDS REVISION: 3 Critical, 6
 Important, 3 Minor) applied: pass rule replaced with the absolute-error
 rule that exactly reproduces the June baseline (verified by rerunning the
 36-run scan), tuning/holdout seed split added, post-jitter support-repair
@@ -18,7 +20,7 @@ estimate added. Round 3 (NEEDS REVISION: 1 Important, 1 Minor) applied:
 initial cloud gets `constraint_fn` at construction so revert-to-parent is
 sound on the first resample, repair implemented as a pure helper so the
 safety net is directly testable, test inventory corrected (correct-K
-model-comparison regressions already exist). Pending round 4.
+model-comparison regressions already exist).
 **Goal:** Fix the multi-mass-2D premature-collapse failure (at best 7/12 seeds
 recover truth under tested fixed jitters) by annealing the post-resampling
 jitter from prior scale down to a floor, and make the annealed mode the
