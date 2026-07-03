@@ -3,7 +3,13 @@
 **Date:** 2026-07-02
 **Status:** Approved — Codex xhigh, 4 rounds → SOUND ENOUGH TO IMPLEMENT
 (round 4: no Critical or Important findings remain, no contradictory
-edits). Round history: round 1 (NEEDS REVISION: 3 Critical, 6
+edits). **Amended 2026-07-03** after the Task-7 decision gate failed
+(tuning 10/12, holdout 7/12): the reject-and-stay support repair causes
+a clone-freeze degeneracy; replaced per
+[2026-07-03-clone-freeze-diagnosis.md](2026-07-03-clone-freeze-diagnosis.md)
+(Codex xhigh AGREED DESIGN, independent reproduction by both reviewers;
+certification seeds move to 200–211). Round history: round 1 (NEEDS
+REVISION: 3 Critical, 6
 Important, 3 Minor) applied: pass rule replaced with the absolute-error
 rule that exactly reproduces the June baseline (verified by rerunning the
 36-run scan), tuning/holdout seed split added, post-jitter support-repair
@@ -76,7 +82,21 @@ per-parameter stds broadcast over particles), i.e. the `fixed` branch
 generalized to a scheduled vector scale. The `fixed` and `covariance`
 branches are unchanged.
 
-**Post-jitter support policy.** Today `log_prior` is evaluated *before*
+**Post-jitter support policy.**
+
+> **AMENDED 2026-07-03** — the reject-and-stay design below caused a
+> clone-freeze degeneracy at the Task-7 decision gate (holdout 7/12):
+> mass reversion to a single dominant parent creates a clone-majority
+> cloud whose ESS stays above the resample threshold forever, disabling
+> the resample→jitter cycle. Root cause, evidence, and the agreed
+> replacement (bounds-aware triangular reflection for fixed/annealed;
+> reject-and-stay + state-collapsed-ESS backstop for covariance/no-bounds
+> users; certification moves to seeds 200–211) are in
+> [2026-07-03-clone-freeze-diagnosis.md](2026-07-03-clone-freeze-diagnosis.md),
+> which supersedes this subsection's mechanism. The support definition,
+> pass rule, scenario, and tuning-seed protocol are unchanged.
+
+Today `log_prior` is evaluated *before*
 resampling, so particles jittered out of support (out-of-range positions,
 non-positive masses) enter the public state with uniform weight and are
 only killed by the next observation — and after the final observation
