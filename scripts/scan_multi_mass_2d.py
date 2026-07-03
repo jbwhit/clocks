@@ -47,7 +47,9 @@ def main() -> None:
         help="fixed-jitter baseline over --floors instead of the annealed grid",
     )
     parser.add_argument(
-        "--holdout", action="store_true", help="use holdout seeds 100-111"
+        "--holdout",
+        action="store_true",
+        help="use certification seeds 200-211 (100-111 are burned)",
     )
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument(
