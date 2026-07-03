@@ -1169,7 +1169,7 @@ echo "all artifacts copied and byte-identical"
 
 Expected: the final echo line, exit 0. Explicit names only — `output/` is gitignored and may hold stale unrelated files; do not glob it. (Confirm the density filename first with `ls output/`; the demo writes `output/demo_density.png`.)
 
-- [ ] **Step 4: Commit** — `git add assets site/assets && git commit -m "Regenerate all demo artifacts under annealed-jitter defaults"`
+- [ ] **Step 4: Commit** — `git add assets site/assets scripts/demo_multi_mass_2d.py && git commit -m "Regenerate all demo artifacts under annealed-jitter defaults"` (the demo script is included in case Step 2 changed `SEED`).
 
 ---
 
@@ -1194,7 +1194,7 @@ Expected: the final echo line, exit 0. Explicit names only — `output/` is giti
 and rewrite the particle-impoverishment failure bullet (~line 108): the freeze under too-weak fixed jitter is why the jitter now anneals from prior scale — cite the shipped scan numbers (post-repair fixed baseline X/12 at the same floor vs annealed Y/12 tuning, Z/12 holdout; exact values from Task 7).
 
 - [ ] **Step 2: Check the other pages** — `grep -rn -i "jitter" site --include="*.qmd"`; update `two-hidden-masses.qmd` line ~22 ("resampling jitter") and any `into-the-plane.qmd`/`reproduce/` phrasing only if it asserts fixed jitter or a stale default; leave physics prose alone.
-- [ ] **Step 3: `docs/someday-maybe.md`** — replace the "Adaptive or annealed jitter" item body with a short done-note: shipped (date, PR), pointer to `scripts/scan_multi_mass_2d.py`, `tests/test_acceptance_multi_mass_2d.py`, shipped defaults, and the measured baseline → holdout numbers. Keep the MCMC-rejuvenation item (still open).
+- [ ] **Step 3: `docs/someday-maybe.md`** — replace the "Adaptive or annealed jitter" item body with a short done-note: shipped (date + spec path — the PR number doesn't exist until Task 10; don't reference it), pointer to `scripts/scan_multi_mass_2d.py`, `tests/test_acceptance_multi_mass_2d.py`, shipped defaults, and the measured baseline → holdout numbers. Keep the MCMC-rejuvenation item (still open).
 - [ ] **Step 4: Re-render the whole site** — `cd site && uv run --frozen quarto render` → no errors. `site/_output/` is **gitignored**, so `git status` cannot tell you which rendered pages changed. Instead, list the pages that execute inference directly — `grep -rln "InferenceConfig\|build_particle_filter\|ModelComparison" site --include="*.qmd"` — and inspect each one's rendered HTML under `site/_output/` (open in a browser or read the printed estimate lines): every such page prints slightly different numbers now — confirm none shows a *wrong* result (estimates far from that page's stated truth).
 - [ ] **Step 5: Full gate** — `uv run pytest && uv run ruff format --check . && uv run ruff check .` → green
 - [ ] **Step 6: Commit** — `git commit -am "Update site and someday-maybe for the annealed-jitter default"`
