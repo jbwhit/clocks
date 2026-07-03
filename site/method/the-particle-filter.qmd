@@ -36,7 +36,7 @@ a single random offset through the cumulative weights, giving minimal
 variance; **stratified** draws one uniform sample per equal-probability
 stratum, trading a little variance for independence between strata;
 **residual** deterministically copies each particle
-$\lfloor N w_i \rfloor$ times and only randomizes the remainder. Two
+$\lfloor N w_i \rfloor$ times and only randomizes the remainder. Three
 jitter modes:
 
 - **fixed** — isotropic Gaussian noise with absolute scale `jitter_std`.
@@ -44,6 +44,12 @@ jitter modes:
   cloud, scaled by `jitter_std`. When the posterior is a thin diagonal
   ridge (a "banana"), isotropic jitter pushes particles off the ridge;
   covariance jitter slides them along it.
+- **annealed** (the default) — axis-aligned Gaussian whose per-parameter
+  scale starts at the initial particle cloud's spread (prior scale) and
+  decays exponentially, with time constant `jitter_tau` observations
+  (15, by default), to the `jitter_std` floor. Early on the cloud can
+  still escape a wrong mode; late in the run the jitter is as gentle as
+  fixed jitter.
 
 The covariance mode has a guard worth knowing about: with fewer than two
 effective particles the weighted covariance is mathematically undefined
@@ -106,8 +112,13 @@ each:
   propagating NaN.
 - **Particle impoverishment.** After resampling, the cloud consists of
   near-identical clones; if the jitter is too weak the posterior freezes
-  and reports false certainty. This is the failure that motivated the demos
-  shipping with fixed jitter.
+  and reports false certainty. The six-parameter two-mass-2D problem shows
+  this concretely: at a fixed jitter of `jitter_std = 0.02`, only 1/12
+  tuning seeds recovered truth. Annealing that same floor down from the
+  prior scale (the `jitter_tau = 15` default) let the cloud escape wrong
+  modes early and settle late, recovering 12/12 tuning seeds and 11/12 on
+  a held-out set of fresh seeds — which is why annealed jitter is now the
+  library default.
 - **Label switching.** With multiple masses, the posterior is symmetric
   under relabeling; the [sorting constraint](../story/two-hidden-masses.qmd)
   breaks it, at a known cost near the sort boundary.

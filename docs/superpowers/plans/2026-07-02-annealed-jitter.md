@@ -1140,6 +1140,412 @@ def test_shipped_defaults_match_certified_cell() -> None:
 
 ---
 
+### Task 7A: Reflection repair + clone-aware ESS backstop [AMENDMENT]
+
+Task 7 hard-stopped (holdout 7/12) due to a clone-freeze degeneracy in the
+reject-and-stay repair — root cause, agreed remedy, and retry protocol in
+`docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md` (read it
+first). This task implements the agreed remedy. Task 7B then re-runs the
+decision gate with certification on seeds 200–211.
+
+**Files:**
+- Modify: `src/clocks/inference.py` (new `_reflect_into_bounds` and
+  `_state_collapsed_ess` helpers; `_repair_support` returns a reverted
+  flag; `ParticleFilter` gains `support_bounds`; `_resample` branches;
+  `update` trigger backstop; `ModelComparison` plumbs bounds)
+- Modify: `src/clocks/api.py` (`build_particle_filter` constructs bounds
+  from `PriorConfig`)
+- Modify: `scripts/scan_multi_mass_2d.py` (certification seeds 200–211;
+  baseline default floors {0.02, 0.05, 0.10})
+- Modify: `tests/test_acceptance_multi_mass_2d.py` (certification seeds
+  200–211)
+- Test: `tests/test_inference.py`, `tests/test_api.py`,
+  `tests/test_scenarios.py`
+
+**Interfaces:**
+- Consumes: Tasks 1–6 as merged (existing `_repair_support`, annealed
+  mode, `clocks._scenarios.run_multi_mass_2d`).
+- Produces: `ParticleFilter(..., support_bounds=(lower, upper) | None)`;
+  `_reflect_into_bounds(x, lower, upper) -> NDArray`;
+  `_state_collapsed_ess(particles, weights) -> float`;
+  `_repair_support(...) -> tuple[NDArray, bool]` (repaired, any_reverted).
+
+- [ ] **Step 1: Write the failing tests.**
+
+Append to `tests/test_inference.py` (add `_reflect_into_bounds` and
+`_state_collapsed_ess` to the existing `clocks.inference` import line):
+
+```python
+class TestReflectIntoBounds:
+    def test_interior_points_unchanged(self) -> None:
+        x = np.array([[0.5, 1.0]])
+        lower = np.array([0.0, 0.0])
+        upper = np.array([2.0, 2.0])
+        assert np.allclose(_reflect_into_bounds(x, lower, upper), x)
+
+    def test_single_bounce(self) -> None:
+        x = np.array([[2.5]])  # 0.5 past upper=2 -> reflects to 1.5
+        out = _reflect_into_bounds(x, np.array([0.0]), np.array([2.0]))
+        assert np.allclose(out, [[1.5]])
+
+    def test_repeated_reflection_handles_large_overshoot(self) -> None:
+        # 5.0 in [0, 2]: period-4 triangular wave -> 5 mod 4 = 1 -> 1.0
+        out = _reflect_into_bounds(
+            np.array([[5.0]]), np.array([0.0]), np.array([2.0])
+        )
+        assert np.allclose(out, [[1.0]])
+        assert 0.0 <= out[0, 0] <= 2.0
+
+    def test_one_sided_lower_reflection(self) -> None:
+        # mass-style: lower bound ~0, no upper
+        out = _reflect_into_bounds(
+            np.array([[-0.3]]), np.array([0.0]), np.array([np.inf])
+        )
+        assert np.allclose(out, [[0.3]])
+
+    def test_unbounded_column_passes_through(self) -> None:
+        out = _reflect_into_bounds(
+            np.array([[-7.5]]), np.array([-np.inf]), np.array([np.inf])
+        )
+        assert np.allclose(out, [[-7.5]])
+
+
+class TestStateCollapsedEss:
+    def test_clones_share_one_group(self) -> None:
+        # 4 particles, 3 identical clones with 0.3 weight each + 1 other
+        particles = np.array([[1.0], [1.0], [1.0], [2.0]])
+        weights = np.array([0.3, 0.3, 0.3, 0.1])
+        # groups: {1.0: 0.9, 2.0: 0.1} -> 1/(0.81+0.01) ~= 1.2195
+        ess = _state_collapsed_ess(particles, weights)
+        assert abs(ess - 1.0 / 0.82) < 1e-9
+
+    def test_all_distinct_matches_ordinary_ess(self) -> None:
+        particles = np.arange(4.0).reshape(-1, 1)
+        weights = np.array([0.25, 0.25, 0.25, 0.25])
+        assert abs(_state_collapsedess_or(particles, weights)) if False else True
+        assert abs(_state_collapsed_ess(particles, weights) - 4.0) < 1e-9
+
+
+class TestSupportBoundsReflection:
+    def _make_pf(self, **kwargs: object) -> ParticleFilter:
+        defaults: dict = dict(
+            n_particles=400,
+            prior_sampler=lambda r, n: r.uniform(0.2, 0.8, (n, 2)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            resample_threshold=1.1,  # resample every update
+            jitter="fixed",
+            jitter_std=5.0,  # most proposals leave [0, 1] without repair
+            support_bounds=(np.array([0.0, 0.0]), np.array([1.0, 1.0])),
+            rng=np.random.default_rng(0),
+        )
+        defaults.update(kwargs)
+        return ParticleFilter(**defaults)
+
+    def test_reflection_keeps_diagonal_modes_in_bounds(self) -> None:
+        pf = self._make_pf()
+        pf.update(Observation(rates=np.array([0.5, 0.5]), time=0.0))
+        p = pf.state.particles
+        assert np.all((p >= 0.0) & (p <= 1.0))
+        # reflection must not create clone pileups
+        assert len(np.unique(p, axis=0)) == pf.n_particles
+
+    def test_reflection_runs_before_constraint(self) -> None:
+        pf = self._make_pf(constraint_fn=lambda p: np.sort(p, axis=1))
+        pf.update(Observation(rates=np.array([0.5, 0.5]), time=0.0))
+        p = pf.state.particles
+        assert np.all((p >= 0.0) & (p <= 1.0))
+        assert np.all(p[:, 0] <= p[:, 1])
+
+    def test_bounds_contradicting_log_prior_raise(self) -> None:
+        def strict_log_prior(particles: np.ndarray) -> np.ndarray:
+            lp = np.zeros(particles.shape[0])
+            lp[np.any(particles > 0.5, axis=1)] = -np.inf  # tighter than bounds
+            return lp
+
+        pf = self._make_pf(log_prior=strict_log_prior)
+        with pytest.raises(RuntimeError, match="support_bounds"):
+            pf.update(Observation(rates=np.array([0.2, 0.2]), time=0.0))
+
+    def test_covariance_mode_keeps_reject_and_stay(self) -> None:
+        """Reflection is not valid for correlated kernels; covariance mode
+        must still repair via reject-and-stay (particles stay in support
+        via log_prior, not bounds reflection)."""
+        pf = self._make_pf(
+            jitter="covariance",
+            jitter_std=0.5,
+            log_prior=_interval_log_prior,  # support [-1, 1] on all comps
+            support_bounds=None,
+        )
+        pf.update(Observation(rates=np.array([0.5, 0.5]), time=0.0))
+        assert np.all(np.abs(pf.state.particles) <= 1.0)
+
+
+class TestCloneAwareResampleTrigger:
+    def test_state_collapsed_trigger_fires_on_clone_majority(self) -> None:
+        """A clone-majority cloud with high weight-ESS must still resample
+        after a repair reverted proposals (the seed-101 freeze shape)."""
+        pf = ParticleFilter(
+            n_particles=100,
+            prior_sampler=lambda r, n: r.uniform(-1.0, 1.0, (n, 1)),
+            forward_model=lambda p: p,
+            noise_std=0.5,
+            resample_threshold=0.5,
+            jitter="fixed",
+            jitter_std=0.01,
+            log_prior=_interval_log_prior,
+            rng=np.random.default_rng(1),
+        )
+        clones = np.full((80, 1), 0.3)
+        scattered = np.linspace(-0.9, 0.9, 20).reshape(-1, 1)
+        pf._state = ParticleState(
+            particles=np.vstack([clones, scattered]),
+            weights=np.ones(100) / 100,
+            observations_seen=1,
+        )
+        pf._repair_reverted = True
+        state = pf.update(Observation(rates=np.array([0.3]), time=1.0))
+        # weight-ESS of ~80 equally-weighted clones stays over threshold
+        # (50); the state-collapsed backstop must fire the resample, which
+        # re-diversifies the cloud via jitter.
+        assert len(np.unique(state.particles, axis=0)) > 25
+```
+
+Delete the stray `assert abs(_state_collapsedess_or(...))` line above when
+transcribing — it is a placeholder-scan tripwire; the real assertion is the
+line after it. (`ParticleState` import may be needed in the test file.)
+
+Append to `tests/test_api.py`:
+
+```python
+class TestSupportBoundsPlumbing:
+    def test_build_particle_filter_constructs_bounds(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        pf = build_particle_filter(
+            InferenceConfig(
+                clock_array=ca,
+                noise=NoiseConfig(observation_std=0.01),
+                prior=PriorConfig(
+                    position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)
+                ),
+                n_particles=50,
+                n_masses=2,
+            )
+        )
+        lower, upper = pf.support_bounds
+        # 2 masses x 1 dim -> params [x1, x2, M1, M2]
+        assert np.allclose(lower[:2], -8.0) and np.allclose(upper[:2], 8.0)
+        assert np.all(lower[2:] > 0.0) and np.all(lower[2:] < 1e-100)
+        assert np.all(np.isinf(upper[2:]))
+
+    def test_model_comparison_filters_get_bounds(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        result = infer(
+            [Observation(rates=np.ones(6), time=0.0)],
+            InferenceConfig(
+                clock_array=ca,
+                noise=NoiseConfig(observation_std=0.01),
+                prior=PriorConfig(
+                    position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)
+                ),
+                n_particles=50,
+                n_masses=(1, 2),
+            ),
+        )
+        assert result.best_model in (1, 2)
+```
+
+(The second test exercises the ModelComparison path end-to-end; also add a
+direct check in `tests/test_inference.py` if `ModelComparison` is easier to
+assert on: `mc.filters[k].support_bounds is not None`.)
+
+Append to `tests/test_scenarios.py`:
+
+```python
+from clocks._scenarios import run_multi_mass_2d
+
+
+class TestFreezeRegression:
+    def test_seed_101_does_not_freeze(self) -> None:
+        """Seed 101 froze at t=1 under reject-and-stay (clone-freeze,
+        docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md).
+        Under reflection it must keep a live posterior."""
+        result = run_multi_mass_2d(101, jitter_std=0.02, jitter_tau=5.0)
+        assert result["max_posterior_std"] > 1e-6
+```
+
+- [ ] **Step 2: Run to verify failure** — `uv run pytest tests/test_inference.py::TestReflectIntoBounds tests/test_inference.py::TestSupportBoundsReflection -v` → ImportError / TypeError (`support_bounds` unknown).
+
+- [ ] **Step 3: Implement in `src/clocks/inference.py`.**
+
+New module-level helpers (near `_repair_support`):
+
+```python
+def _reflect_into_bounds(
+    x: NDArray[np.floating],
+    lower: NDArray[np.floating],
+    upper: NDArray[np.floating],
+) -> NDArray[np.floating]:
+    """Repeated triangular-wave reflection into [lower, upper], per column.
+
+    Handles overshoots larger than the interval width (a single bounce or
+    clipping would not) and one-sided intervals where only one bound is
+    finite; doubly-infinite columns pass through unchanged. The reflected
+    diagonal Gaussian kernel is symmetric and cannot create clones.
+    """
+    out = x.copy()
+    both = np.isfinite(lower) & np.isfinite(upper)
+    if both.any():
+        lo, hi = lower[both], upper[both]
+        width = hi - lo
+        y = np.mod(out[:, both] - lo, 2.0 * width)
+        out[:, both] = lo + np.where(y > width, 2.0 * width - y, y)
+    lower_only = np.isfinite(lower) & ~np.isfinite(upper)
+    if lower_only.any():
+        lo = lower[lower_only]
+        out[:, lower_only] = lo + np.abs(out[:, lower_only] - lo)
+    upper_only = ~np.isfinite(lower) & np.isfinite(upper)
+    if upper_only.any():
+        hi = upper[upper_only]
+        out[:, upper_only] = hi - np.abs(out[:, upper_only] - hi)
+    return out
+
+
+def _state_collapsed_ess(
+    particles: NDArray[np.floating], weights: NDArray[np.floating]
+) -> float:
+    """ESS over unique particle values: clones pool into one weight group.
+
+    Ordinary ESS counts weight diversity; a clone-majority cloud can hold
+    ESS above the resample threshold with zero state diversity (the
+    clone-freeze). Grouping by value exposes that collapse.
+    """
+    _, inverse = np.unique(particles, axis=0, return_inverse=True)
+    group_weights = np.bincount(inverse, weights=weights)
+    return float(1.0 / np.sum(group_weights**2))
+```
+
+`_repair_support` — return whether anything was reverted (update the four
+`TestSupportRepair` direct-call tests to unpack the tuple; their assertions
+otherwise stand, plus assert the flag: False for pass-through, True for the
+revert/safety-net cases):
+
+```python
+def _repair_support(...) -> tuple[NDArray[np.floating], bool]:
+    ...
+    invalid = np.isneginf(log_prior(repaired))
+    if not invalid.any():
+        return repaired, False
+    ...
+    return repaired, True
+```
+
+`ParticleFilter.__init__`: new parameter
+`support_bounds: tuple[NDArray[np.floating], NDArray[np.floating]] | None = None`
+(after `log_prior`). Store `self.support_bounds = support_bounds`;
+initialize `self._repair_reverted = False`. After the initial cloud exists,
+validate when bounds are given: both arrays have length
+`particles.shape[1]` and `np.all(lower < upper)`, else `ValueError`.
+Docstring: bounds enable reflection repair for the diagonal jitter modes;
+masses use `(np.nextafter(0.0, 1.0), np.inf)` via the API layer.
+
+`_resample` — replace the repair tail:
+
+```python
+        if (
+            self.support_bounds is not None
+            and self.jitter in ("fixed", "annealed")
+        ):
+            lower, upper = self.support_bounds
+            new_particles = _reflect_into_bounds(new_particles, lower, upper)
+            if self.constraint_fn is not None:
+                new_particles = self.constraint_fn(new_particles)
+            self._repair_reverted = False
+            if self.log_prior is not None:
+                if np.isneginf(self.log_prior(new_particles)).any():
+                    raise RuntimeError(
+                        "support_bounds contradict log_prior: reflected "
+                        "particles are still outside the prior support"
+                    )
+        else:
+            if self.constraint_fn is not None:
+                new_particles = self.constraint_fn(new_particles)
+            if self.log_prior is not None:
+                new_particles, self._repair_reverted = _repair_support(
+                    new_particles, parents, self.log_prior, self.rng
+                )
+```
+
+Covariance-branch guard: change `ess >= 2.0` to also require
+`_state_collapsed_ess(particles, weights) >= 2.0` (a clone-collapsed cloud
+has a degenerate covariance even when weight-ESS looks healthy).
+
+`update` — clone-aware trigger backstop, replacing the plain ESS check:
+
+```python
+        ess = 1.0 / np.sum(weights**2)
+        needs_resample = ess < self.resample_threshold * self.n_particles
+        if not needs_resample and self._repair_reverted:
+            ess_state = _state_collapsed_ess(particles, weights)
+            needs_resample = (
+                ess_state < self.resample_threshold * self.n_particles
+            )
+        if needs_resample:
+            particles, weights = self._resample(particles, weights)
+```
+
+`ModelComparison.__init__`: build the same bounds as the API layer (it
+knows `position_range` and `n_dims`) and pass `support_bounds=` to each
+`ParticleFilter`.
+
+- [ ] **Step 4: Implement in `src/clocks/api.py`** — in `build_particle_filter`, before the `ParticleFilter(...)` call:
+
+```python
+    n_params = n_masses * n_dims + n_masses
+    lower = np.empty(n_params)
+    upper = np.empty(n_params)
+    lower[: n_masses * n_dims] = config.prior.position_range[0]
+    upper[: n_masses * n_dims] = config.prior.position_range[1]
+    lower[n_masses * n_dims :] = np.nextafter(0.0, 1.0)
+    upper[n_masses * n_dims :] = np.inf
+```
+
+and pass `support_bounds=(lower, upper)`. (Masses reflect at 0, not at
+`mass_range` — the support definition "mass > 0, no upper bound" is
+unchanged.)
+
+- [ ] **Step 5: Update the harness seeds** — in `scripts/scan_multi_mass_2d.py`: `HOLDOUT_SEEDS = tuple(range(200, 212))` with a comment that 100–111 are burned (diagnostics only, see the diagnosis doc), and baseline default floors become `[0.02, 0.05, 0.10]` (June comparability). In `tests/test_acceptance_multi_mass_2d.py`: certification seeds `range(200, 212)`, same burn comment.
+
+- [ ] **Step 6: Run the new tests** — the Step-2 command plus `uv run pytest tests/ -v` → all pass (including the updated `TestSupportRepair` tuple unpacking and the seed-101 regression).
+- [ ] **Step 7: Full gate** — `uv run pytest && uv run ruff format --check . && uv run ruff check .` → green.
+- [ ] **Step 8: Commit** — `git add -A && git commit -m "Replace reject-and-stay with bounds reflection; add clone-aware ESS backstop
+
+Fixes the clone-freeze degeneracy (see
+docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md): mass
+reversion to a dominant parent created clone-majority clouds whose
+weight-ESS stayed above the resample threshold forever, permanently
+disabling the resample->jitter cycle."`
+
+---
+
+### Task 7B: Re-run the decision gate; certify on seeds 200–211 [DECISION GATE]
+
+Same protocol as Task 7 (whose brief remains authoritative for Steps 5–8:
+winner into defaults, spec status line, fast default-pinning test, slow
+acceptance run, full gate, commit), with these substitutions:
+
+- [ ] **Step 1: Baseline** — `uv run scripts/scan_multi_mass_2d.py --baseline` (now floors 0.02/0.05/0.10) → record post-reflection fixed baseline.
+- [ ] **Step 2: Tuning grid** — `uv run scripts/scan_multi_mass_2d.py` on seeds 0–11; note the winner (prototype signal: tau=15 hit 12/12 tuning under reflection — the grid landscape has changed; trust the fresh scan, not Task 7's).
+- [ ] **Step 3: GATE** — winner < 10/12 on tuning → STOP, report, no changes.
+- [ ] **Step 4: Certification** — `uv run scripts/scan_multi_mass_2d.py --holdout --taus <tau> --floors <floor>` (now runs seeds 200–211), exactly once. < 10/12 → STOP, report, no changes; seeds 200–211 are then burned too.
+- [ ] **Steps 5–8: as in Task 7's brief** — winner into all defaults (`ParticleFilter`, `ModelComparison`, `InferenceConfig`, `run_multi_mass_2d`, demo `JITTER_STD`), spec status line updated with baseline/tuning/certification tables, fast default-pinning test with the certified values, `uv run pytest -m slow -v` passes, full gate, commit.
+
+---
+
 ### Task 8: Regenerate all committed demo artifacts
 
 **Files:**

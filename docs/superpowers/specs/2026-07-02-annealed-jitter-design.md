@@ -3,7 +3,13 @@
 **Date:** 2026-07-02
 **Status:** Approved — Codex xhigh, 4 rounds → SOUND ENOUGH TO IMPLEMENT
 (round 4: no Critical or Important findings remain, no contradictory
-edits). Round history: round 1 (NEEDS REVISION: 3 Critical, 6
+edits). **Amended 2026-07-03** after the Task-7 decision gate failed
+(tuning 10/12, holdout 7/12): the reject-and-stay support repair causes
+a clone-freeze degeneracy; replaced per
+[2026-07-03-clone-freeze-diagnosis.md](2026-07-03-clone-freeze-diagnosis.md)
+(Codex xhigh AGREED DESIGN, independent reproduction by both reviewers;
+certification seeds move to 200–211). Round history: round 1 (NEEDS
+REVISION: 3 Critical, 6
 Important, 3 Minor) applied: pass rule replaced with the absolute-error
 rule that exactly reproduces the June baseline (verified by rerunning the
 36-run scan), tuning/holdout seed split added, post-jitter support-repair
@@ -21,6 +27,59 @@ initial cloud gets `constraint_fn` at construction so revert-to-parent is
 sound on the first resample, repair implemented as a pure helper so the
 safety net is directly testable, test inventory corrected (correct-K
 model-comparison regressions already exist).
+
+**Task 7B decision gate (2026-07-03, post-reflection-remedy re-run):**
+support repair replaced by bounds reflection (902c8e8); baseline re-measured
+at the new floors 0.02/0.05/0.10, tuning grid re-run on seeds 0-11, and
+certification run exactly once on the fresh seeds 200-211 (100-111 are
+burned per the clone-freeze diagnosis).
+
+Post-reflection fixed-jitter baseline (seeds 0-11):
+
+```
+     mode    tau  floor   pass  med|err|   resid
+    fixed      0   0.02    1/12     2.556     3.8
+    fixed      0   0.05    4/12     1.107     1.5
+    fixed      0    0.1    7/12     0.203     1.3
+```
+
+Tuning grid (seeds 0-11, 15 cells):
+
+```
+     mode    tau  floor   pass  med|err|   resid
+ annealed      5   0.02   10/12     0.100     0.9
+ annealed      5   0.05   10/12     0.125     1.2
+ annealed      5    0.1    9/12     0.236     1.3
+ annealed     10   0.02   11/12     0.105     0.9
+ annealed     10   0.05   11/12     0.140     1.0
+ annealed     10    0.1   11/12     0.199     1.1
+ annealed     15   0.02   12/12     0.133     1.0
+ annealed     15   0.05   12/12     0.170     1.1
+ annealed     15    0.1   11/12     0.187     1.1
+ annealed     25   0.02   11/12     0.284     1.2
+ annealed     25   0.05   10/12     0.247     1.3
+ annealed     25    0.1   10/12     0.261     1.6
+ annealed     40   0.02    8/12     0.427     1.4
+ annealed     40   0.05    5/12     0.653     1.9
+ annealed     40    0.1    7/12     0.423     1.7
+
+winner: tau=15 floor=0.02 (12/12 on tuning seeds)
+```
+
+Certification (seeds 200-211, run exactly once for tau=15, floor=0.02):
+
+```
+     mode    tau  floor   pass  med|err|   resid
+ annealed     15   0.02   11/12     0.121     0.7
+
+winner: tau=15 floor=0.02 (11/12 on holdout seeds)
+```
+
+**Shipped defaults:** `jitter_tau=15.0` (`ParticleFilter`, `ModelComparison`,
+`InferenceConfig`, `run_multi_mass_2d`), `jitter_std`/`JITTER_STD`
+floor `0.02` (`run_multi_mass_2d`, `scripts/demo_multi_mass_2d.py`). Both
+gates cleared: tuning 12/12 ≥ 10/12, certification 11/12 ≥ 10/12.
+
 **Goal:** Fix the multi-mass-2D premature-collapse failure (at best 7/12 seeds
 recover truth under tested fixed jitters) by annealing the post-resampling
 jitter from prior scale down to a floor, and make the annealed mode the
@@ -76,7 +135,21 @@ per-parameter stds broadcast over particles), i.e. the `fixed` branch
 generalized to a scheduled vector scale. The `fixed` and `covariance`
 branches are unchanged.
 
-**Post-jitter support policy.** Today `log_prior` is evaluated *before*
+**Post-jitter support policy.**
+
+> **AMENDED 2026-07-03** — the reject-and-stay design below caused a
+> clone-freeze degeneracy at the Task-7 decision gate (holdout 7/12):
+> mass reversion to a single dominant parent creates a clone-majority
+> cloud whose ESS stays above the resample threshold forever, disabling
+> the resample→jitter cycle. Root cause, evidence, and the agreed
+> replacement (bounds-aware triangular reflection for fixed/annealed;
+> reject-and-stay + state-collapsed-ESS backstop for covariance/no-bounds
+> users; certification moves to seeds 200–211) are in
+> [2026-07-03-clone-freeze-diagnosis.md](2026-07-03-clone-freeze-diagnosis.md),
+> which supersedes this subsection's mechanism. The support definition,
+> pass rule, scenario, and tuning-seed protocol are unchanged.
+
+Today `log_prior` is evaluated *before*
 resampling, so particles jittered out of support (out-of-range positions,
 non-positive masses) enter the public state with uniform weight and are
 only killed by the next observation — and after the final observation

@@ -7,10 +7,17 @@ import pytest
 from numpy.typing import NDArray
 from scipy.special import logsumexp
 
-from clocks.inference import ConvergenceInfo, ModelComparison, ParticleFilter
+from clocks.inference import (
+    ConvergenceInfo,
+    ModelComparison,
+    ParticleFilter,
+    _reflect_into_bounds,
+    _repair_support,
+    _state_collapsed_ess,
+)
 from clocks.noise import add_clock_noise, log_likelihood_gaussian
 from clocks.physics import clock_rates, clock_rates_batch
-from clocks.types import ClockArray, MassConfig, Observation
+from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
 
 def _make_1d_scenario(
@@ -227,8 +234,10 @@ class TestParticleFilter:
             obs = Observation(rates=np.array([0.9, 0.95, 0.99]), time=float(t))
             pf.update(obs)
 
-        assert call_count[0] == 5, (
-            f"Constraint should be called on every resample, got {call_count[0]}"
+        # 1 call on the initial cloud (support-repair soundness) + 1 per
+        # resample; resample_threshold=1.0 forces one per update.
+        assert call_count[0] == 6, (
+            f"Constraint: 1 init + 5 resamples expected, got {call_count[0]}"
         )
 
     # --- Resampling methods ---
@@ -444,7 +453,8 @@ class TestParticleFilter:
         )
 
     def test_log_prior_called_each_update(self) -> None:
-        """log_prior should be called once per update."""
+        """log_prior should be called once per update to reweight, plus
+        once per resample for support repair."""
         _, ca = _make_1d_scenario()
         forward = _make_forward_model(ca)
 
@@ -463,6 +473,7 @@ class TestParticleFilter:
             prior_sampler=prior_sampler,
             forward_model=forward,
             noise_std=0.01,
+            resample_threshold=1.0,
             rng=rng,
             log_prior=counting_prior,
         )
@@ -471,8 +482,10 @@ class TestParticleFilter:
             obs = Observation(rates=np.array([0.9, 0.95, 0.99]), time=float(t))
             pf.update(obs)
 
-        assert call_count[0] == 5, (
-            f"log_prior should be called 5 times, got {call_count[0]}"
+        # 5 reweight calls + 5 support-repair calls (threshold forces a
+        # resample every update; all particles valid => one check each).
+        assert call_count[0] == 10, (
+            f"log_prior: 5 reweight + 5 repair calls expected, got {call_count[0]}"
         )
 
     # --- Convergence diagnostics ---
@@ -891,3 +904,317 @@ class TestModelComparison:
         assert set(comp.filters) == {2, 3}
         assert set(result["log_evidence"]) == {2, 3}
         assert set(result["posterior"]) == {2, 3}
+
+
+def _interval_log_prior(particles: np.ndarray) -> np.ndarray:
+    """Support: every component in [-1, 1]."""
+    lp = np.zeros(particles.shape[0])
+    lp[np.any(np.abs(particles) > 1.0, axis=1)] = -np.inf
+    return lp
+
+
+class TestSupportRepair:
+    def test_valid_proposals_pass_through_unchanged(self) -> None:
+        proposals = np.array([[0.5], [-0.5]])
+        parents = np.array([[0.1], [0.2]])
+        out, reverted = _repair_support(
+            proposals, parents, _interval_log_prior, np.random.default_rng(0)
+        )
+        assert np.array_equal(out, proposals)
+        assert reverted is False
+
+    def test_rejected_proposals_revert_to_parent(self) -> None:
+        proposals = np.array([[0.7], [1.5]])  # second is out of support
+        parents = np.array([[0.5], [0.6]])
+        out, reverted = _repair_support(
+            proposals, parents, _interval_log_prior, np.random.default_rng(0)
+        )
+        assert out[0, 0] == 0.7  # valid proposal kept (reject-and-stay)
+        assert out[1, 0] == 0.6  # invalid proposal reverted to parent
+        assert reverted is True
+
+    def test_invalid_parent_replaced_from_valid_particles(self) -> None:
+        proposals = np.array([[3.0], [0.4]])  # both rows: proposal 0 invalid
+        parents = np.array([[2.0], [0.5]])  # ... and its parent is too
+        out, reverted = _repair_support(
+            proposals, parents, _interval_log_prior, np.random.default_rng(0)
+        )
+        assert out[0, 0] == 0.4  # safety net: drawn from the only valid particle
+        assert out[1, 0] == 0.4
+        assert reverted is True
+
+    def test_raises_when_no_valid_particles_exist(self) -> None:
+        proposals = np.array([[3.0], [4.0]])
+        parents = np.array([[2.0], [5.0]])
+        with pytest.raises(RuntimeError, match="no valid particles"):
+            _repair_support(
+                proposals, parents, _interval_log_prior, np.random.default_rng(0)
+            )
+
+    def test_public_state_stays_in_support_after_resample(self) -> None:
+        """Huge jitter + log_prior: no out-of-support particle may survive."""
+        rng = np.random.default_rng(42)
+        pf = ParticleFilter(
+            n_particles=200,
+            prior_sampler=lambda r, n: r.uniform(-1.0, 1.0, (n, 1)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            resample_threshold=1.1,  # force a resample every update
+            jitter_std=5.0,  # most proposals leave [-1, 1]
+            jitter="fixed",
+            log_prior=_interval_log_prior,
+            rng=rng,
+        )
+        pf.update(Observation(rates=np.array([0.0]), time=0.0))
+        assert np.all(np.abs(pf.state.particles) <= 1.0)
+
+    def test_initial_cloud_constraint_applied(self) -> None:
+        """Unconstrained prior sampler + sorting constraint: stored initial
+        particles must already satisfy the constraint."""
+
+        def sort_rows(particles: np.ndarray) -> np.ndarray:
+            return np.sort(particles, axis=1)
+
+        pf = ParticleFilter(
+            n_particles=50,
+            prior_sampler=lambda r, n: r.uniform(-1.0, 1.0, (n, 2)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            constraint_fn=sort_rows,
+            rng=np.random.default_rng(7),
+        )
+        p = pf.state.particles
+        assert np.all(p[:, 0] <= p[:, 1])
+
+
+class TestAnnealedJitter:
+    def _make_pf(self, **kwargs: object) -> ParticleFilter:
+        defaults: dict = dict(
+            n_particles=500,
+            prior_sampler=lambda r, n: r.uniform(-8.0, 8.0, (n, 2)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            jitter="annealed",
+            jitter_std=0.01,
+            jitter_tau=5.0,
+            rng=np.random.default_rng(0),
+        )
+        defaults.update(kwargs)
+        return ParticleFilter(**defaults)
+
+    def test_schedule_starts_at_initial_cloud_scale(self) -> None:
+        pf = self._make_pf()
+        expected = np.maximum(pf.state.particles.std(axis=0), 0.01)
+        assert np.allclose(pf._annealed_std(0), expected)
+
+    def test_schedule_decays_to_floor(self) -> None:
+        pf = self._make_pf()
+        assert np.allclose(pf._annealed_std(10_000), 0.01)
+
+    def test_schedule_never_anneals_upward(self) -> None:
+        # Tight prior (std ~0.001) with a larger floor: constant at floor.
+        pf = self._make_pf(
+            prior_sampler=lambda r, n: r.uniform(-0.001, 0.001, (n, 2)),
+            jitter_std=0.5,
+        )
+        assert np.allclose(pf._annealed_std(0), 0.5)
+        assert np.allclose(pf._annealed_std(100), 0.5)
+
+    @pytest.mark.parametrize("bad_tau", [0.0, -1.0, float("nan"), float("inf")])
+    def test_invalid_jitter_tau_raises(self, bad_tau: float) -> None:
+        with pytest.raises(ValueError, match="jitter_tau"):
+            self._make_pf(jitter_tau=bad_tau)
+
+    @pytest.mark.parametrize("bad_std", [-0.1, float("nan"), float("inf")])
+    def test_invalid_jitter_std_raises(self, bad_std: float) -> None:
+        with pytest.raises(ValueError, match="jitter_std"):
+            self._make_pf(jitter_std=bad_std)
+
+    def test_annealed_mode_converges_1d(self) -> None:
+        """Annealed jitter recovers a single 1D mass (standard scenario)."""
+        rng = np.random.default_rng(3)
+        true_params = np.array([2.0, 0.5])
+        positions = np.linspace(-6, 6, 8).reshape(-1, 1)
+        ca = ClockArray(positions=positions, track_offset=3.0)
+        mc = MassConfig(positions=true_params[:1].reshape(1, 1), masses=true_params[1:])
+        rates = clock_rates(mc, ca)
+
+        def forward(params: np.ndarray) -> np.ndarray:
+            m = MassConfig(positions=params[:1].reshape(1, 1), masses=params[1:])
+            return clock_rates(m, ca)
+
+        pf = ParticleFilter(
+            n_particles=2000,
+            prior_sampler=lambda r, n: np.column_stack(
+                [r.uniform(-8, 8, n), r.uniform(0.1, 2.0, n)]
+            ),
+            forward_model=forward,
+            noise_std=0.005,
+            jitter="annealed",
+            jitter_std=0.02,
+            jitter_tau=5.0,
+            rng=rng,
+        )
+        for t in range(60):
+            noisy = rates + rng.normal(0, 0.005, size=rates.shape)
+            pf.update(Observation(rates=noisy, time=float(t)))
+        est = pf.estimate()
+        assert abs(est["mean"][0] - 2.0) < 0.5
+        assert abs(est["mean"][1] - 0.5) < 0.1
+
+
+class TestAnnealedDefaults:
+    def test_particle_filter_default_jitter_is_annealed(self) -> None:
+        pf = ParticleFilter(
+            n_particles=10,
+            prior_sampler=lambda r, n: r.uniform(-1, 1, (n, 1)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+        )
+        assert pf.jitter == "annealed"
+
+    def test_model_comparison_default_jitter_is_annealed(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        mc = ModelComparison(clock_array=ca, noise_std=0.01, k_max=2)
+        assert all(pf.jitter == "annealed" for pf in mc.filters.values())
+
+    def test_model_comparison_jitter_tau_plumbs_through(self) -> None:
+        ca = ClockArray(
+            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
+        )
+        mc = ModelComparison(clock_array=ca, noise_std=0.01, k_max=2, jitter_tau=7.0)
+        assert all(pf.jitter_tau == 7.0 for pf in mc.filters.values())
+
+
+class TestReflectIntoBounds:
+    def test_interior_points_unchanged(self) -> None:
+        x = np.array([[0.5, 1.0]])
+        lower = np.array([0.0, 0.0])
+        upper = np.array([2.0, 2.0])
+        assert np.allclose(_reflect_into_bounds(x, lower, upper), x)
+
+    def test_single_bounce(self) -> None:
+        x = np.array([[2.5]])  # 0.5 past upper=2 -> reflects to 1.5
+        out = _reflect_into_bounds(x, np.array([0.0]), np.array([2.0]))
+        assert np.allclose(out, [[1.5]])
+
+    def test_repeated_reflection_handles_large_overshoot(self) -> None:
+        # 5.0 in [0, 2]: period-4 triangular wave -> 5 mod 4 = 1 -> 1.0
+        out = _reflect_into_bounds(np.array([[5.0]]), np.array([0.0]), np.array([2.0]))
+        assert np.allclose(out, [[1.0]])
+        assert 0.0 <= out[0, 0] <= 2.0
+
+    def test_one_sided_lower_reflection(self) -> None:
+        # mass-style: lower bound ~0, no upper
+        out = _reflect_into_bounds(
+            np.array([[-0.3]]), np.array([0.0]), np.array([np.inf])
+        )
+        assert np.allclose(out, [[0.3]])
+
+    def test_unbounded_column_passes_through(self) -> None:
+        out = _reflect_into_bounds(
+            np.array([[-7.5]]), np.array([-np.inf]), np.array([np.inf])
+        )
+        assert np.allclose(out, [[-7.5]])
+
+
+class TestStateCollapsedEss:
+    def test_clones_share_one_group(self) -> None:
+        # 4 particles, 3 identical clones with 0.3 weight each + 1 other
+        particles = np.array([[1.0], [1.0], [1.0], [2.0]])
+        weights = np.array([0.3, 0.3, 0.3, 0.1])
+        # groups: {1.0: 0.9, 2.0: 0.1} -> 1/(0.81+0.01) ~= 1.2195
+        ess = _state_collapsed_ess(particles, weights)
+        assert abs(ess - 1.0 / 0.82) < 1e-9
+
+    def test_all_distinct_matches_ordinary_ess(self) -> None:
+        particles = np.arange(4.0).reshape(-1, 1)
+        weights = np.array([0.25, 0.25, 0.25, 0.25])
+        assert abs(_state_collapsed_ess(particles, weights) - 4.0) < 1e-9
+
+
+class TestSupportBoundsReflection:
+    def _make_pf(self, **kwargs: object) -> ParticleFilter:
+        defaults: dict = dict(
+            n_particles=400,
+            prior_sampler=lambda r, n: r.uniform(0.2, 0.8, (n, 2)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            resample_threshold=1.1,  # resample every update
+            jitter="fixed",
+            jitter_std=5.0,  # most proposals leave [0, 1] without repair
+            support_bounds=(np.array([0.0, 0.0]), np.array([1.0, 1.0])),
+            rng=np.random.default_rng(0),
+        )
+        defaults.update(kwargs)
+        return ParticleFilter(**defaults)
+
+    def test_reflection_keeps_diagonal_modes_in_bounds(self) -> None:
+        pf = self._make_pf()
+        pf.update(Observation(rates=np.array([0.5, 0.5]), time=0.0))
+        p = pf.state.particles
+        assert np.all((p >= 0.0) & (p <= 1.0))
+        # reflection must not create clone pileups
+        assert len(np.unique(p, axis=0)) == pf.n_particles
+
+    def test_reflection_runs_before_constraint(self) -> None:
+        pf = self._make_pf(constraint_fn=lambda p: np.sort(p, axis=1))
+        pf.update(Observation(rates=np.array([0.5, 0.5]), time=0.0))
+        p = pf.state.particles
+        assert np.all((p >= 0.0) & (p <= 1.0))
+        assert np.all(p[:, 0] <= p[:, 1])
+
+    def test_bounds_contradicting_log_prior_raise(self) -> None:
+        def strict_log_prior(particles: np.ndarray) -> np.ndarray:
+            lp = np.zeros(particles.shape[0])
+            lp[np.any(particles > 0.5, axis=1)] = -np.inf  # tighter than bounds
+            return lp
+
+        pf = self._make_pf(log_prior=strict_log_prior)
+        with pytest.raises(RuntimeError, match="support_bounds"):
+            pf.update(Observation(rates=np.array([0.2, 0.2]), time=0.0))
+
+    def test_covariance_mode_keeps_reject_and_stay(self) -> None:
+        """Reflection is not valid for correlated kernels; covariance mode
+        must still repair via reject-and-stay (particles stay in support
+        via log_prior, not bounds reflection)."""
+        pf = self._make_pf(
+            jitter="covariance",
+            jitter_std=0.5,
+            log_prior=_interval_log_prior,  # support [-1, 1] on all comps
+            support_bounds=None,
+        )
+        pf.update(Observation(rates=np.array([0.5, 0.5]), time=0.0))
+        assert np.all(np.abs(pf.state.particles) <= 1.0)
+
+
+class TestCloneAwareResampleTrigger:
+    def test_state_collapsed_trigger_fires_on_clone_majority(self) -> None:
+        """A clone-majority cloud with high weight-ESS must still resample
+        after a repair reverted proposals (the seed-101 freeze shape)."""
+        pf = ParticleFilter(
+            n_particles=100,
+            prior_sampler=lambda r, n: r.uniform(-1.0, 1.0, (n, 1)),
+            forward_model=lambda p: p,
+            noise_std=0.5,
+            resample_threshold=0.5,
+            jitter="fixed",
+            jitter_std=0.01,
+            log_prior=_interval_log_prior,
+            rng=np.random.default_rng(1),
+        )
+        clones = np.full((80, 1), 0.3)
+        scattered = np.linspace(-0.9, 0.9, 20).reshape(-1, 1)
+        pf._state = ParticleState(
+            particles=np.vstack([clones, scattered]),
+            weights=np.ones(100) / 100,
+            observations_seen=1,
+        )
+        pf._repair_reverted = True
+        state = pf.update(Observation(rates=np.array([0.3]), time=1.0))
+        # weight-ESS of ~80 equally-weighted clones stays over threshold
+        # (50); the state-collapsed backstop must fire the resample, which
+        # re-diversifies the cloud via jitter.
+        assert len(np.unique(state.particles, axis=0)) > 25

@@ -1,5 +1,6 @@
 """Particle filter (Sequential Monte Carlo) for mass inference."""
 
+import math
 from collections.abc import Callable
 from typing import TypedDict
 
@@ -12,7 +13,91 @@ from clocks.physics import clock_rates, clock_rates_batch, clock_rates_batch_mul
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
-_JITTER_MODES = {"fixed", "covariance"}
+_JITTER_MODES = {"fixed", "covariance", "annealed"}
+
+
+def _repair_support(
+    proposals: NDArray[np.floating],
+    parents: NDArray[np.floating],
+    log_prior: Callable[[NDArray[np.floating]], NDArray[np.floating]],
+    rng: np.random.Generator,
+) -> tuple[NDArray[np.floating], bool]:
+    """One-shot reject-and-stay support repair for post-jitter proposals.
+
+    Proposals with -inf log-prior revert to their resampled parent's value.
+    Parents that are themselves invalid (e.g. a zero-weight CDF plateau
+    selected by left-sided searchsorted) are replaced by a uniform draw
+    from the valid repaired particles. Deliberately NOT retry-until-valid:
+    retrying samples a parent-dependent truncated proposal that biases
+    particles away from support boundaries.
+
+    Returns the repaired particles and whether anything was reverted. The
+    caller uses the flag to trigger the clone-aware ESS backstop (see
+    ``_state_collapsed_ess``): reverting many proposals to a dominant
+    parent can create a clone-majority cloud whose weight-ESS stays high
+    despite collapsed state diversity (the clone-freeze degeneracy).
+    """
+    repaired = proposals.copy()
+    invalid = np.isneginf(log_prior(repaired))
+    if not invalid.any():
+        return repaired, False
+    repaired[invalid] = parents[invalid]
+    still_invalid = np.isneginf(log_prior(repaired))
+    if still_invalid.any():
+        valid_idx = np.flatnonzero(~still_invalid)
+        if valid_idx.size == 0:
+            raise RuntimeError(
+                "Support repair failed: no valid particles remain after "
+                "reverting to parents; prior support and proposals are "
+                "fully disjoint"
+            )
+        donors = rng.choice(valid_idx, size=int(still_invalid.sum()))
+        repaired[np.flatnonzero(still_invalid)] = repaired[donors]
+    return repaired, True
+
+
+def _reflect_into_bounds(
+    x: NDArray[np.floating],
+    lower: NDArray[np.floating],
+    upper: NDArray[np.floating],
+) -> NDArray[np.floating]:
+    """Repeated triangular-wave reflection into [lower, upper], per column.
+
+    Handles overshoots larger than the interval width (a single bounce or
+    clipping would not) and one-sided intervals where only one bound is
+    finite; doubly-infinite columns pass through unchanged. The reflected
+    diagonal Gaussian kernel is symmetric and cannot create clones.
+    """
+    out = x.copy()
+    both = np.isfinite(lower) & np.isfinite(upper)
+    if both.any():
+        lo, hi = lower[both], upper[both]
+        width = hi - lo
+        y = np.mod(out[:, both] - lo, 2.0 * width)
+        out[:, both] = lo + np.where(y > width, 2.0 * width - y, y)
+    lower_only = np.isfinite(lower) & ~np.isfinite(upper)
+    if lower_only.any():
+        lo = lower[lower_only]
+        out[:, lower_only] = lo + np.abs(out[:, lower_only] - lo)
+    upper_only = ~np.isfinite(lower) & np.isfinite(upper)
+    if upper_only.any():
+        hi = upper[upper_only]
+        out[:, upper_only] = hi - np.abs(out[:, upper_only] - hi)
+    return out
+
+
+def _state_collapsed_ess(
+    particles: NDArray[np.floating], weights: NDArray[np.floating]
+) -> float:
+    """ESS over unique particle values: clones pool into one weight group.
+
+    Ordinary ESS counts weight diversity; a clone-majority cloud can hold
+    ESS above the resample threshold with zero state diversity (the
+    clone-freeze). Grouping by value exposes that collapse.
+    """
+    _, inverse = np.unique(particles, axis=0, return_inverse=True)
+    group_weights = np.bincount(inverse, weights=weights)
+    return float(1.0 / np.sum(group_weights**2))
 
 
 class Estimate(TypedDict):
@@ -53,16 +138,29 @@ class ParticleFilter:
         this is an absolute standard deviation applied isotropically; with
         ``jitter="covariance"`` it scales the Cholesky factor of the weighted
         empirical covariance, so 0.02 means "2% of the cloud's own spread
-        along its correlation structure".
+        along its correlation structure"; with ``jitter="annealed"`` it is
+        the floor the per-parameter schedule decays toward.
     rng : Numpy random generator.
     forward_model_batch : Optional Callable(particles) → (n_particles, n_clocks).
         If provided, used instead of looping forward_model per particle.
     jitter : Jitter mode after resampling. ``"fixed"`` uses isotropic Gaussian
         noise; ``"covariance"`` draws from the weighted empirical covariance
-        so correlated parameters jitter along their joint structure.
+        so correlated parameters jitter along their joint structure;
+        ``"annealed"`` uses an axis-aligned diagonal Gaussian whose
+        per-parameter scale decays from the initial cloud's std down to the
+        ``jitter_std`` floor with time constant ``jitter_tau`` observations.
+    jitter_tau : Time constant (in observations) for the ``"annealed"``
+        jitter schedule's exponential decay. Unused by other jitter modes.
     log_prior : Optional Callable(particles) → (n_particles,) log-prior values.
         Particles with ``-inf`` log-prior get zero weight.  Use this instead
         of constraint clamping for boundary enforcement.
+    support_bounds : Optional (lower, upper) per-parameter arrays enabling
+        bounds reflection repair for the diagonal jitter modes (``"fixed"``
+        and ``"annealed"``); ``"covariance"`` always uses reject-and-stay
+        since coordinate-wise reflection is not symmetric for correlated
+        kernels. Masses use ``(np.nextafter(0.0, 1.0), np.inf)`` via the API
+        layer: reflection enforces "mass > 0, no upper bound", not
+        ``mass_range``.
     """
 
     def __init__(
@@ -79,8 +177,10 @@ class ParticleFilter:
         constraint_fn: Callable[[NDArray[np.floating]], NDArray[np.floating]]
         | None = None,
         resampling: str = "systematic",
-        jitter: str = "fixed",
+        jitter: str = "annealed",
+        jitter_tau: float = 15.0,
         log_prior: Callable[[NDArray[np.floating]], NDArray[np.floating]] | None = None,
+        support_bounds: tuple[NDArray[np.floating], NDArray[np.floating]] | None = None,
     ) -> None:
         if resampling not in _RESAMPLING_METHODS:
             msg = (
@@ -94,6 +194,12 @@ class ParticleFilter:
                 f" expected one of {sorted(_JITTER_MODES)}"
             )
             raise ValueError(msg)
+        if not math.isfinite(jitter_std) or jitter_std < 0:
+            msg = f"jitter_std must be finite and >= 0, got {jitter_std}"
+            raise ValueError(msg)
+        if not math.isfinite(jitter_tau) or jitter_tau <= 0:
+            msg = f"jitter_tau must be finite and > 0, got {jitter_tau}"
+            raise ValueError(msg)
 
         self.n_particles = n_particles
         self.forward_model = forward_model
@@ -104,11 +210,31 @@ class ParticleFilter:
         self.constraint_fn = constraint_fn
         self.resampling = resampling
         self.jitter = jitter
+        self.jitter_tau = jitter_tau
         self.log_prior = log_prior
+        self.support_bounds = support_bounds
         self.rng = rng or np.random.default_rng()
         self.log_evidence: float = 0.0
+        self._repair_reverted = False
 
         particles = prior_sampler(self.rng, n_particles)
+        if constraint_fn is not None:
+            # Parents must satisfy the constraint for reject-and-stay
+            # reversion to be sound on the very first resample.
+            particles = constraint_fn(particles)
+        if support_bounds is not None:
+            lower, upper = support_bounds
+            if len(lower) != particles.shape[1] or len(upper) != particles.shape[1]:
+                msg = (
+                    f"support_bounds arrays must have length {particles.shape[1]}"
+                    f" (n_params), got lower={len(lower)}, upper={len(upper)}"
+                )
+                raise ValueError(msg)
+            if not np.all(lower < upper):
+                raise ValueError("support_bounds requires lower < upper elementwise")
+        # Prior scale for the annealed schedule: the initial cloud is a
+        # prior sample. Clamped so the schedule never anneals upward.
+        self._jitter_init = np.maximum(particles.std(axis=0), jitter_std)
         weights = np.ones(n_particles) / n_particles
         self._state = ParticleState(
             particles=particles,
@@ -164,9 +290,17 @@ class ParticleFilter:
         self.log_evidence += max_lw + np.log(weights.sum())
         weights /= weights.sum()
 
-        # Resample if effective sample size is too low
+        # Resample if effective sample size is too low. A repair that
+        # reverted proposals to a dominant parent can create a clone-
+        # majority cloud whose weight-ESS stays high with zero state
+        # diversity (the clone-freeze degeneracy) -- the state-collapsed
+        # ESS backstop catches that case even when the plain ESS doesn't.
         ess = 1.0 / np.sum(weights**2)
-        if ess < self.resample_threshold * self.n_particles:
+        needs_resample = ess < self.resample_threshold * self.n_particles
+        if not needs_resample and self._repair_reverted:
+            ess_state = _state_collapsed_ess(particles, weights)
+            needs_resample = ess_state < self.resample_threshold * self.n_particles
+        if needs_resample:
             particles, weights = self._resample(particles, weights)
 
         self._state = ParticleState(
@@ -205,6 +339,11 @@ class ParticleFilter:
             indices = np.repeat(np.arange(n), counts)
         return indices.astype(np.intp)
 
+    def _annealed_std(self, t: float) -> NDArray[np.floating]:
+        """Scheduled per-parameter jitter std at 0-based observation index t."""
+        decay = np.exp(-t / self.jitter_tau)
+        return self.jitter_std + (self._jitter_init - self.jitter_std) * decay
+
     def _resample(
         self,
         particles: NDArray[np.floating],
@@ -220,13 +359,20 @@ class ParticleFilter:
         else:
             indices = self._systematic_indices(weights, n)
 
-        new_particles = particles[indices].copy()
+        parents = particles[indices]
+        new_particles = parents.copy()
 
         # The weighted covariance needs at least ~2 effective samples;
         # below that np.cov's normalization (1 - sum(w^2)) underflows to
-        # inf/NaN. Fall back to isotropic jitter to restore diversity.
+        # inf/NaN. Fall back to isotropic jitter to restore diversity. A
+        # clone-collapsed cloud has a degenerate covariance even when
+        # weight-ESS looks healthy, so also require state-collapsed ESS.
         ess = 1.0 / np.sum(weights**2)
-        if self.jitter == "covariance" and ess >= 2.0:
+        if (
+            self.jitter == "covariance"
+            and ess >= 2.0
+            and _state_collapsed_ess(particles, weights) >= 2.0
+        ):
             cov = np.cov(particles.T, aweights=weights)
             n_params = particles.shape[1]
             if n_params == 1:
@@ -235,13 +381,36 @@ class ParticleFilter:
             L = cholesky(cov, lower=True)
             z = self.rng.normal(0, 1, size=new_particles.shape)
             new_particles += self.jitter_std * (z @ L.T)
+        elif self.jitter == "annealed":
+            # observations_seen has not been incremented for the update in
+            # progress, so this is the 0-based index of the current one.
+            sigma = self._annealed_std(self._state.observations_seen)
+            z = self.rng.normal(0.0, 1.0, size=new_particles.shape)
+            new_particles += z * sigma
         else:
             new_particles += self.rng.normal(
                 0, self.jitter_std, size=new_particles.shape
             )
 
-        if self.constraint_fn is not None:
-            new_particles = self.constraint_fn(new_particles)
+        if self.support_bounds is not None and self.jitter in ("fixed", "annealed"):
+            lower, upper = self.support_bounds
+            new_particles = _reflect_into_bounds(new_particles, lower, upper)
+            if self.constraint_fn is not None:
+                new_particles = self.constraint_fn(new_particles)
+            self._repair_reverted = False
+            if self.log_prior is not None:
+                if np.isneginf(self.log_prior(new_particles)).any():
+                    raise RuntimeError(
+                        "support_bounds contradict log_prior: reflected "
+                        "particles are still outside the prior support"
+                    )
+        else:
+            if self.constraint_fn is not None:
+                new_particles = self.constraint_fn(new_particles)
+            if self.log_prior is not None:
+                new_particles, self._repair_reverted = _repair_support(
+                    new_particles, parents, self.log_prior, self.rng
+                )
         new_weights = np.ones(n) / n
         return new_particles, new_weights
 
@@ -322,7 +491,8 @@ class ModelComparison:
         mass_range: tuple[float, float] = (0.1, 2.0),
         rng: np.random.Generator | None = None,
         resampling: str = "systematic",
-        jitter: str = "fixed",
+        jitter: str = "annealed",
+        jitter_tau: float = 15.0,
     ) -> None:
         self.clock_array = clock_array
         self.noise_std = noise_std
@@ -352,8 +522,23 @@ class ModelComparison:
                 constraint_fn=self._make_constraint_fn(k) if k > 1 else None,
                 resampling=resampling,
                 jitter=jitter,
+                jitter_tau=jitter_tau,
                 log_prior=self._make_log_prior(k, position_range, mass_range),
+                support_bounds=self._make_support_bounds(k, position_range),
             )
+
+    def _make_support_bounds(
+        self, k: int, position_range: tuple[float, float]
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+        """Reflection bounds for K masses: positions in range, mass > 0."""
+        n_params = k * self.n_dims + k
+        lower = np.empty(n_params)
+        upper = np.empty(n_params)
+        lower[: k * self.n_dims] = position_range[0]
+        upper[: k * self.n_dims] = position_range[1]
+        lower[k * self.n_dims :] = np.nextafter(0.0, 1.0)
+        upper[k * self.n_dims :] = np.inf
+        return lower, upper
 
     def _make_prior_sampler(
         self,
