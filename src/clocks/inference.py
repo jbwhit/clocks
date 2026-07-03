@@ -1,5 +1,6 @@
 """Particle filter (Sequential Monte Carlo) for mass inference."""
 
+import math
 from collections.abc import Callable
 from typing import TypedDict
 
@@ -12,7 +13,7 @@ from clocks.physics import clock_rates, clock_rates_batch, clock_rates_batch_mul
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
-_JITTER_MODES = {"fixed", "covariance"}
+_JITTER_MODES = {"fixed", "covariance", "annealed"}
 
 
 def _repair_support(
@@ -87,13 +88,19 @@ class ParticleFilter:
         this is an absolute standard deviation applied isotropically; with
         ``jitter="covariance"`` it scales the Cholesky factor of the weighted
         empirical covariance, so 0.02 means "2% of the cloud's own spread
-        along its correlation structure".
+        along its correlation structure"; with ``jitter="annealed"`` it is
+        the floor the per-parameter schedule decays toward.
     rng : Numpy random generator.
     forward_model_batch : Optional Callable(particles) → (n_particles, n_clocks).
         If provided, used instead of looping forward_model per particle.
     jitter : Jitter mode after resampling. ``"fixed"`` uses isotropic Gaussian
         noise; ``"covariance"`` draws from the weighted empirical covariance
-        so correlated parameters jitter along their joint structure.
+        so correlated parameters jitter along their joint structure;
+        ``"annealed"`` uses an axis-aligned diagonal Gaussian whose
+        per-parameter scale decays from the initial cloud's std down to the
+        ``jitter_std`` floor with time constant ``jitter_tau`` observations.
+    jitter_tau : Time constant (in observations) for the ``"annealed"``
+        jitter schedule's exponential decay. Unused by other jitter modes.
     log_prior : Optional Callable(particles) → (n_particles,) log-prior values.
         Particles with ``-inf`` log-prior get zero weight.  Use this instead
         of constraint clamping for boundary enforcement.
@@ -114,6 +121,7 @@ class ParticleFilter:
         | None = None,
         resampling: str = "systematic",
         jitter: str = "fixed",
+        jitter_tau: float = 15.0,
         log_prior: Callable[[NDArray[np.floating]], NDArray[np.floating]] | None = None,
     ) -> None:
         if resampling not in _RESAMPLING_METHODS:
@@ -128,6 +136,12 @@ class ParticleFilter:
                 f" expected one of {sorted(_JITTER_MODES)}"
             )
             raise ValueError(msg)
+        if not math.isfinite(jitter_std) or jitter_std < 0:
+            msg = f"jitter_std must be finite and >= 0, got {jitter_std}"
+            raise ValueError(msg)
+        if not math.isfinite(jitter_tau) or jitter_tau <= 0:
+            msg = f"jitter_tau must be finite and > 0, got {jitter_tau}"
+            raise ValueError(msg)
 
         self.n_particles = n_particles
         self.forward_model = forward_model
@@ -138,6 +152,7 @@ class ParticleFilter:
         self.constraint_fn = constraint_fn
         self.resampling = resampling
         self.jitter = jitter
+        self.jitter_tau = jitter_tau
         self.log_prior = log_prior
         self.rng = rng or np.random.default_rng()
         self.log_evidence: float = 0.0
@@ -147,6 +162,9 @@ class ParticleFilter:
             # Parents must satisfy the constraint for reject-and-stay
             # reversion to be sound on the very first resample.
             particles = constraint_fn(particles)
+        # Prior scale for the annealed schedule: the initial cloud is a
+        # prior sample. Clamped so the schedule never anneals upward.
+        self._jitter_init = np.maximum(particles.std(axis=0), jitter_std)
         weights = np.ones(n_particles) / n_particles
         self._state = ParticleState(
             particles=particles,
@@ -243,6 +261,11 @@ class ParticleFilter:
             indices = np.repeat(np.arange(n), counts)
         return indices.astype(np.intp)
 
+    def _annealed_std(self, t: float) -> NDArray[np.floating]:
+        """Scheduled per-parameter jitter std at 0-based observation index t."""
+        decay = np.exp(-t / self.jitter_tau)
+        return self.jitter_std + (self._jitter_init - self.jitter_std) * decay
+
     def _resample(
         self,
         particles: NDArray[np.floating],
@@ -274,6 +297,12 @@ class ParticleFilter:
             L = cholesky(cov, lower=True)
             z = self.rng.normal(0, 1, size=new_particles.shape)
             new_particles += self.jitter_std * (z @ L.T)
+        elif self.jitter == "annealed":
+            # observations_seen has not been incremented for the update in
+            # progress, so this is the 0-based index of the current one.
+            sigma = self._annealed_std(self._state.observations_seen)
+            z = self.rng.normal(0.0, 1.0, size=new_particles.shape)
+            new_particles += z * sigma
         else:
             new_particles += self.rng.normal(
                 0, self.jitter_std, size=new_particles.shape

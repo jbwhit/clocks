@@ -980,3 +980,79 @@ class TestSupportRepair:
         )
         p = pf.state.particles
         assert np.all(p[:, 0] <= p[:, 1])
+
+
+class TestAnnealedJitter:
+    def _make_pf(self, **kwargs: object) -> ParticleFilter:
+        defaults: dict = dict(
+            n_particles=500,
+            prior_sampler=lambda r, n: r.uniform(-8.0, 8.0, (n, 2)),
+            forward_model=lambda p: p,
+            noise_std=0.1,
+            jitter="annealed",
+            jitter_std=0.01,
+            jitter_tau=5.0,
+            rng=np.random.default_rng(0),
+        )
+        defaults.update(kwargs)
+        return ParticleFilter(**defaults)
+
+    def test_schedule_starts_at_initial_cloud_scale(self) -> None:
+        pf = self._make_pf()
+        expected = np.maximum(pf.state.particles.std(axis=0), 0.01)
+        assert np.allclose(pf._annealed_std(0), expected)
+
+    def test_schedule_decays_to_floor(self) -> None:
+        pf = self._make_pf()
+        assert np.allclose(pf._annealed_std(10_000), 0.01)
+
+    def test_schedule_never_anneals_upward(self) -> None:
+        # Tight prior (std ~0.001) with a larger floor: constant at floor.
+        pf = self._make_pf(
+            prior_sampler=lambda r, n: r.uniform(-0.001, 0.001, (n, 2)),
+            jitter_std=0.5,
+        )
+        assert np.allclose(pf._annealed_std(0), 0.5)
+        assert np.allclose(pf._annealed_std(100), 0.5)
+
+    @pytest.mark.parametrize("bad_tau", [0.0, -1.0, float("nan"), float("inf")])
+    def test_invalid_jitter_tau_raises(self, bad_tau: float) -> None:
+        with pytest.raises(ValueError, match="jitter_tau"):
+            self._make_pf(jitter_tau=bad_tau)
+
+    @pytest.mark.parametrize("bad_std", [-0.1, float("nan"), float("inf")])
+    def test_invalid_jitter_std_raises(self, bad_std: float) -> None:
+        with pytest.raises(ValueError, match="jitter_std"):
+            self._make_pf(jitter_std=bad_std)
+
+    def test_annealed_mode_converges_1d(self) -> None:
+        """Annealed jitter recovers a single 1D mass (standard scenario)."""
+        rng = np.random.default_rng(3)
+        true_params = np.array([2.0, 0.5])
+        positions = np.linspace(-6, 6, 8).reshape(-1, 1)
+        ca = ClockArray(positions=positions, track_offset=3.0)
+        mc = MassConfig(positions=true_params[:1].reshape(1, 1), masses=true_params[1:])
+        rates = clock_rates(mc, ca)
+
+        def forward(params: np.ndarray) -> np.ndarray:
+            m = MassConfig(positions=params[:1].reshape(1, 1), masses=params[1:])
+            return clock_rates(m, ca)
+
+        pf = ParticleFilter(
+            n_particles=2000,
+            prior_sampler=lambda r, n: np.column_stack(
+                [r.uniform(-8, 8, n), r.uniform(0.1, 2.0, n)]
+            ),
+            forward_model=forward,
+            noise_std=0.005,
+            jitter="annealed",
+            jitter_std=0.02,
+            jitter_tau=5.0,
+            rng=rng,
+        )
+        for t in range(60):
+            noisy = rates + rng.normal(0, 0.005, size=rates.shape)
+            pf.update(Observation(rates=noisy, time=float(t)))
+        est = pf.estimate()
+        assert abs(est["mean"][0] - 2.0) < 0.5
+        assert abs(est["mean"][1] - 0.5) < 0.1
