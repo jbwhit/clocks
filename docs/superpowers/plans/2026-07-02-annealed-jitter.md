@@ -37,12 +37,9 @@ Pre-existing bug fix, independent of the annealed mode: particles jittered out o
 - Produces: `_repair_support(proposals, parents, log_prior, rng) -> NDArray` — module-level pure function in `clocks.inference`; `ParticleFilter.__init__` applies `constraint_fn` to the initial cloud before storing it.
 - Consumes: nothing from other tasks.
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_inference.py`:
+- [ ] **Step 1: Write the failing tests.** First add `_repair_support` to the **existing** `from clocks.inference import ...` line at the top of `tests/test_inference.py` (do NOT add a new import mid-file — that trips ruff E402/F811). Then append:
 
 ```python
-from clocks.inference import ModelComparison, ParticleFilter, _repair_support
-
-
 def _interval_log_prior(particles: np.ndarray) -> np.ndarray:
     """Support: every component in [-1, 1]."""
     lp = np.zeros(particles.shape[0])
@@ -194,8 +191,31 @@ In `_resample`, keep a `parents` reference and add the repair step after `constr
 (`particles[indices]` fancy-indexing already copies, so `parents` is independent of the jittered `new_particles`.)
 
 - [ ] **Step 4: Run the new tests** — `uv run pytest tests/test_inference.py::TestSupportRepair -v` → PASS
-- [ ] **Step 5: Run the full suite** — `uv run pytest` → all pass. Repair changes particle trajectories for filters that pass `log_prior` (the ModelComparison tests); if one fails, investigate the assertion — thresholds must NOT be loosened; report instead of patching.
-- [ ] **Step 6: Commit** — `git add -A && git commit -m "Enforce prior support after resampling jitter (reject-and-stay repair)"`
+
+- [ ] **Step 5: Deliberately update the two call-counting tests** (their expected counts change by design — this is the spec's "updated deliberately, not silently"):
+
+In `test_constraint_fn_applied` (`tests/test_inference.py:201`): the constraint now also runs once on the initial cloud, so with 5 forced resamples the count is 6. Replace the assertion:
+
+```python
+        # 1 call on the initial cloud (support-repair soundness) + 1 per
+        # resample; resample_threshold=1.0 forces one per update.
+        assert call_count[0] == 6, (
+            f"Constraint: 1 init + 5 resamples expected, got {call_count[0]}"
+        )
+```
+
+In `test_log_prior_called_each_update` (`tests/test_inference.py:446`): the repair step calls `log_prior` once per resample (all-valid particles return early after the first check). Make the resample count deterministic by adding `resample_threshold=1.0,` to the `ParticleFilter(...)` construction in this test, update the docstring to "once per update to reweight, plus once per resample for support repair", and replace the assertion:
+
+```python
+        # 5 reweight calls + 5 support-repair calls (threshold forces a
+        # resample every update; all particles valid => one check each).
+        assert call_count[0] == 10, (
+            f"log_prior: 5 reweight + 5 repair calls expected, got {call_count[0]}"
+        )
+```
+
+- [ ] **Step 6: Run the full suite** — `uv run pytest` → all pass. Repair changes particle trajectories for filters that pass `log_prior` (the ModelComparison tests); if one fails, investigate the assertion — thresholds must NOT be loosened; report instead of patching.
+- [ ] **Step 7: Commit** — `git add src/clocks/inference.py tests/test_inference.py && git commit -m "Enforce prior support after resampling jitter (reject-and-stay repair)"`
 
 ---
 
@@ -893,7 +913,7 @@ and update `main()` to use `TRUE_POSITIONS`/`TRUE_MASSES` (keep the printed labe
 
 - [ ] **Step 6: Smoke-run the demo via the console script** (exercises the runpy path): `uv run demo-multi-mass-2d` → completes, writes `output/demo_multi_mass_2d.gif`, prints estimates. (~1–2 min.)
 - [ ] **Step 7: Full gate** — `uv run pytest && uv run ruff format --check . && uv run ruff check .` → green
-- [ ] **Step 8: Commit** — `git commit -am "Extract shared multi-mass-2D scenario into clocks._scenarios"`
+- [ ] **Step 8: Commit** (explicit adds — `-am` misses new files) — `git add src/clocks/_scenarios.py tests/test_scenarios.py scripts/demo_multi_mass_2d.py && git commit -m "Extract shared multi-mass-2D scenario into clocks._scenarios"`
 
 ---
 
@@ -1025,7 +1045,11 @@ def main() -> None:
     for key, result in results:
         cells.setdefault(key, []).append(result)
 
-    print(f"{'mode':>9} {'tau':>6} {'floor':>6} {'pass':>6} {'med|err|':>9} {'resid':>7}")
+    header = (
+        f"{'mode':>9} {'tau':>6} {'floor':>6} {'pass':>6}"
+        f" {'med|err|':>9} {'resid':>7}"
+    )
+    print(header)
     ranked = []
     for (jitter, tau, floor), cell in sorted(cells.items()):
         n_pass = sum(r["passed"] for r in cell)
@@ -1049,9 +1073,10 @@ def main() -> None:
     if not args.baseline:
         ranked.sort(key=lambda item: item[0])
         _, (jitter, tau, floor), n_pass = ranked[0]
+        seed_kind = "holdout" if args.holdout else "tuning"
         print(
             f"\nwinner: tau={tau:g} floor={floor:g}"
-            f" ({n_pass}/{len(seeds)} on {'holdout' if args.holdout else 'tuning'} seeds)"
+            f" ({n_pass}/{len(seeds)} on {seed_kind} seeds)"
         )
 
 
@@ -1059,9 +1084,9 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: Smoke-test the script wiring** — `uv run scripts/scan_multi_mass_2d.py --taus 15 --floors 0.02 --workers 4` (12 runs, ~1–3 min) → prints one table row + winner line, no traceback.
+- [ ] **Step 5: Format and smoke-test** — `uv run ruff format scripts/scan_multi_mass_2d.py tests/test_acceptance_multi_mass_2d.py` (the plan's code blocks are not guaranteed formatter-clean), then `uv run scripts/scan_multi_mass_2d.py --taus 15 --floors 0.02 --workers 4` (12 runs, ~1–3 min) → prints one table row + winner line, no traceback.
 - [ ] **Step 6: Full gate** — `uv run pytest && uv run ruff format --check . && uv run ruff check .` → green (acceptance test stays deselected).
-- [ ] **Step 7: Commit** — `git commit -am "Add multi-mass-2D seed-scan harness and slow holdout acceptance test"`
+- [ ] **Step 7: Commit** (explicit adds — `-am` misses new files) — `git add pyproject.toml scripts/scan_multi_mass_2d.py tests/test_acceptance_multi_mass_2d.py && git commit -m "Add multi-mass-2D seed-scan harness and slow holdout acceptance test"`
 
 ---
 
@@ -1079,7 +1104,35 @@ if __name__ == "__main__":
 - [ ] **Step 3: DECISION GATE** — if the winner has < 10/12 on tuning seeds, STOP: do not flip anything further, report the table. (Spec fallback: hybrid schedule with a posterior-std-scaled lower bound — needs explicit approval, and holdout burns to seeds 200–211.)
 - [ ] **Step 4: Holdout certification** — `uv run scripts/scan_multi_mass_2d.py --holdout --taus <winner_tau> --floors <winner_floor>` → must be ≥ 10/12. If not: STOP, same rule as Step 3.
 - [ ] **Step 5: Write the winner into the defaults** — update `jitter_tau` defaults in `ParticleFilter.__init__`, `ModelComparison.__init__`, `InferenceConfig`, and `run_multi_mass_2d`; set `scripts/demo_multi_mass_2d.py::JITTER_STD` and `run_multi_mass_2d`'s `jitter_std` default to the winning floor. Update the spec's Status line: shipped defaults + baseline table + tuning winner + holdout score.
-- [ ] **Step 6: Run the acceptance test as shipped** — `uv run pytest -m slow -v` → PASS (≥ 10/12 at pure defaults; this also proves the defaults in code match the certified cell).
+
+Then add a **fast** default-pinning test to `tests/test_acceptance_multi_mass_2d.py` (the slow holdout test calls `run_multi_mass_2d`, which forwards its *own* defaults — it cannot catch a stale `jitter_tau` in `ParticleFilter`/`InferenceConfig`/`ModelComparison`). Fill in the certified values:
+
+```python
+import inspect
+
+from clocks._scenarios import run_multi_mass_2d
+from clocks.config import InferenceConfig
+from clocks.inference import ModelComparison, ParticleFilter
+
+CERTIFIED_TAU = 15.0  # <- replace with the scan winner's tau
+CERTIFIED_FLOOR = 0.02  # <- replace with the scan winner's floor
+
+
+def test_shipped_defaults_match_certified_cell() -> None:
+    """Fast guard: every shipped jitter_tau default equals the certified
+    scan winner (spec §3). Runs in regular CI (not marked slow)."""
+    field = InferenceConfig.__dataclass_fields__["jitter_tau"]
+    assert field.default == CERTIFIED_TAU
+    for fn in (ParticleFilter.__init__, ModelComparison.__init__):
+        params = inspect.signature(fn).parameters
+        assert params["jitter_tau"].default == CERTIFIED_TAU
+    runner = inspect.signature(run_multi_mass_2d).parameters
+    assert runner["jitter_tau"].default == CERTIFIED_TAU
+    assert runner["jitter_std"].default == CERTIFIED_FLOOR
+```
+
+(Move the existing `import pytest` / `run_multi_mass_2d` import lines into one import block at the top of the file.)
+- [ ] **Step 6: Run the acceptance test as shipped** — `uv run pytest -m slow -v` → PASS (≥ 10/12 through the runner) and `uv run pytest tests/test_acceptance_multi_mass_2d.py -v` → the fast default-pinning test passes (proves the library defaults match the certified cell).
 - [ ] **Step 7: Full gate** — `uv run pytest && uv run ruff format --check . && uv run ruff check .` → green
 - [ ] **Step 8: Commit** — `git commit -am "Finalize annealed-jitter defaults from seed scan; certify holdout acceptance"`
 
@@ -1104,13 +1157,17 @@ uv run demo-1d && uv run demo-2d && uv run demo-multi-mass \
 - [ ] **Step 3: Copy and verify byte-equality**:
 
 ```bash
-for f in output/*.gif output/*.png; do
-  cp "$f" assets/ && cp "$f" site/assets/
+ARTIFACTS="demo_1d.gif demo_2d.gif demo_multi_mass.gif demo_multi_mass_2d.gif demo_model_comparison.gif demo_density.png"
+for f in $ARTIFACTS; do
+  cp "output/$f" assets/ && cp "output/$f" site/assets/ || exit 1
 done
-for f in assets/*; do cmp "$f" "site/assets/$(basename "$f")" || echo "MISMATCH: $f"; done
+for f in $ARTIFACTS; do
+  cmp "assets/$f" "site/assets/$f" || exit 1
+done
+echo "all artifacts copied and byte-identical"
 ```
 
-Expected: no MISMATCH lines. (Only copy files the demos actually produced — check `ls output/` first and don't clobber unrelated assets.)
+Expected: the final echo line, exit 0. Explicit names only — `output/` is gitignored and may hold stale unrelated files; do not glob it. (Confirm the density filename first with `ls output/`; the demo writes `output/demo_density.png`.)
 
 - [ ] **Step 4: Commit** — `git add assets site/assets && git commit -m "Regenerate all demo artifacts under annealed-jitter defaults"`
 
@@ -1124,7 +1181,7 @@ Expected: no MISMATCH lines. (Only copy files the demos actually produced — ch
 **Interfaces:**
 - Consumes: Task 7's shipped defaults and measured numbers (fill them into the prose — no placeholders may survive).
 
-- [ ] **Step 1: `site/method/the-particle-filter.qmd`** — in the jitter-modes list (~line 40), add a third bullet:
+- [ ] **Step 1: `site/method/the-particle-filter.qmd`** — the list intro at line ~39 reads "… randomizes the remainder. Two jitter modes:" — change "Two" to "Three". Then add a third bullet to the list:
 
 ```markdown
 - **annealed** (the default) — axis-aligned Gaussian whose per-parameter
@@ -1138,7 +1195,7 @@ and rewrite the particle-impoverishment failure bullet (~line 108): the freeze u
 
 - [ ] **Step 2: Check the other pages** — `grep -rn -i "jitter" site --include="*.qmd"`; update `two-hidden-masses.qmd` line ~22 ("resampling jitter") and any `into-the-plane.qmd`/`reproduce/` phrasing only if it asserts fixed jitter or a stale default; leave physics prose alone.
 - [ ] **Step 3: `docs/someday-maybe.md`** — replace the "Adaptive or annealed jitter" item body with a short done-note: shipped (date, PR), pointer to `scripts/scan_multi_mass_2d.py`, `tests/test_acceptance_multi_mass_2d.py`, shipped defaults, and the measured baseline → holdout numbers. Keep the MCMC-rejuvenation item (still open).
-- [ ] **Step 4: Re-render the whole site** — `cd site && uv run --frozen quarto render` → no errors. Review executed cell outputs that changed (`git status`, then eyeball the modified pages in `site/_output/` in a browser or via the printed diffs): every page that constructs `InferenceConfig` prints slightly different numbers now — confirm none of them shows a *wrong* result (estimates far from that page's stated truth).
+- [ ] **Step 4: Re-render the whole site** — `cd site && uv run --frozen quarto render` → no errors. `site/_output/` is **gitignored**, so `git status` cannot tell you which rendered pages changed. Instead, list the pages that execute inference directly — `grep -rln "InferenceConfig\|build_particle_filter\|ModelComparison" site --include="*.qmd"` — and inspect each one's rendered HTML under `site/_output/` (open in a browser or read the printed estimate lines): every such page prints slightly different numbers now — confirm none shows a *wrong* result (estimates far from that page's stated truth).
 - [ ] **Step 5: Full gate** — `uv run pytest && uv run ruff format --check . && uv run ruff check .` → green
 - [ ] **Step 6: Commit** — `git commit -am "Update site and someday-maybe for the annealed-jitter default"`
 
