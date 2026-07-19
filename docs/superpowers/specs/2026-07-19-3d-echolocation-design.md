@@ -327,6 +327,15 @@ falloff cell (pure forward model) runs in-page.
    and `uv run ruff check .` clean.
 5. Existing demos and tests unaffected.
 
+## Status history
+
+Implementation events appended chronologically: the tuning freeze (frozen
+constants and measured tuning results), the one-shot certification outcome
+(or a burned-block record with diagnosis), and any parameter re-freezes.
+
+- (pending) Tuning freeze — recorded by the implementation plan's Task 9.
+- (pending) Certification — recorded by the implementation plan's Task 10.
+
 ## Out of scope (deferred, tracked in someday-maybe)
 
 - Lattice-geometry comparisons (field of view per clock).

@@ -1608,25 +1608,40 @@ import pytest
 from clocks._scenarios import (
     ECHO_N_OBSERVATIONS,
     ECHO_N_PARTICLES,
+    ECHO_PASS_MASS_TOL,
+    ECHO_PASS_POS_TOL,
     ECHO_SWEEP_RANGES,
     run_echolocation_3d,
 )
 
 CERT_SEEDS = tuple(range(300, 312))
-CLOSE_RANGE = ECHO_SWEEP_RANGES[0]
-FAR_RANGE = ECHO_SWEEP_RANGES[-1]
-# Frozen from the tuning sweep (Task 9): far-range posterior std must be
-# at least this multiple of the close-range posterior std.
+# Certified configuration, pinned as LITERALS (frozen in Task 9): the pin
+# must not follow later edits to the live scenario constants. The fast
+# guard below asserts the live constants still match, so drift fails
+# loudly instead of silently redefining the certified run.
+CERT_CLOSE_RANGE = 2.0
+CERT_FAR_RANGE = 8.0
+CERT_POS_TOL = 1.0
+CERT_MASS_TOL = 0.075
+# Far-range posterior std must be at least this multiple of close-range.
 ECHO_FAR_STD_FACTOR = 2.0
+
+
+def _cert_passed(result: dict) -> bool:
+    """Pass gate against the CERTIFIED tolerances (not the live ones)."""
+    return (
+        result["position_error"] <= CERT_POS_TOL
+        and result["mass_error"] <= CERT_MASS_TOL
+    )
 
 
 @pytest.mark.slow
 def test_certified_gates_hold_on_certification_seeds() -> None:
     """Both certified gates in one pass so each run executes exactly once."""
-    close = [run_echolocation_3d(seed, CLOSE_RANGE) for seed in CERT_SEEDS]
-    far = [run_echolocation_3d(seed, FAR_RANGE) for seed in CERT_SEEDS]
+    close = [run_echolocation_3d(seed, CERT_CLOSE_RANGE) for seed in CERT_SEEDS]
+    far = [run_echolocation_3d(seed, CERT_FAR_RANGE) for seed in CERT_SEEDS]
 
-    failed = [r["seed"] for r in close if not r["passed"]]
+    failed = [r["seed"] for r in close if not _cert_passed(r)]
     assert len(CERT_SEEDS) - len(failed) >= 10, (
         f"close-range acceptance below 10/12; failing seeds: {failed}"
     )
@@ -1639,12 +1654,18 @@ def test_certified_gates_hold_on_certification_seeds() -> None:
     )
 
 
-def test_scenario_defaults_match_frozen_values() -> None:
-    """Fast guard: runner defaults equal the frozen tuning values."""
+def test_scenario_matches_certified_configuration() -> None:
+    """Fast guard: live scenario constants equal the certified pins."""
     params = inspect.signature(run_echolocation_3d).parameters
     assert params["n_particles"].default == ECHO_N_PARTICLES
     assert params["n_observations"].default == ECHO_N_OBSERVATIONS
+    assert ECHO_SWEEP_RANGES[0] == CERT_CLOSE_RANGE
+    assert ECHO_SWEEP_RANGES[-1] == CERT_FAR_RANGE
+    assert ECHO_PASS_POS_TOL == CERT_POS_TOL
+    assert ECHO_PASS_MASS_TOL == CERT_MASS_TOL
 ```
+
+Before running certification, replace the five `CERT_*`/`ECHO_FAR_STD_FACTOR` literals with the values frozen in Task 9 (they are correct as written only if Task 9 froze the starting defaults unchanged).
 
 - [ ] **Step 2: Run the certification sweep — exactly once**
 
@@ -1669,7 +1690,7 @@ Expected: all three `cmp` commands silent.
 - [ ] **Step 4: Run the slow acceptance pin**
 
 Run: `uv run pytest -m slow tests/test_acceptance_echolocation_3d.py -v`
-Expected: PASS (deterministic re-execution of the certified runs; ~10–20 min). Also run the fast guard: `uv run pytest tests/test_acceptance_echolocation_3d.py -v -k frozen` → PASS.
+Expected: PASS (deterministic re-execution of the certified runs; ~10–20 min). Also run the fast guard: `uv run pytest tests/test_acceptance_echolocation_3d.py -v -k certified_configuration` → PASS.
 
 - [ ] **Step 5: Record certification in the spec**
 
@@ -1838,6 +1859,16 @@ In `site/reproduce/getting-started.qmd`, update the demo count sentence ("Five a
 ```bash
 uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif (~5 min)
 ```
+
+Also add, after the demo list (spec §4 requires the scan command on the reproduce pages):
+
+````markdown
+The echolocation range study behind the site page:
+
+```bash
+uv run scripts/scan_echolocation_range.py   # tuning seeds; published figure used --seed-block 300
+```
+````
 
 - [ ] **Step 4: Build the site**
 
