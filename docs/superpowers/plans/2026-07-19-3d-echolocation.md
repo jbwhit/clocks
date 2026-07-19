@@ -1564,7 +1564,7 @@ close-range pass <n>/12, far-range med_pos_std ratio <value>.
 
 - [ ] **Step 4: Regenerate the demo GIF if constants changed**
 
-If `ECHO_N_PARTICLES` or the demo range/seed changed in Step 2–3:
+If **any** constant affecting the demo changed in Step 2–3 — `ECHO_M_TRUE`, `ECHO_NOISE_STD`, `ECHO_N_OBSERVATIONS`, `ECHO_N_PARTICLES`, `ECHO_MASS_RANGE`, `ECHO_POSITION_HALFWIDTH`, `ECHO_DIRECTION`, or the demo range/seed (in short: anything that alters observations, truth, prior, particle count, or frame count):
 Run: `uv run demo-echolocation-3d`, re-verify the GIF visually, and refresh the tracked copies:
 
 ```bash
@@ -1704,12 +1704,17 @@ def test_scenario_matches_certified_configuration() -> None:
 
 
 def test_filter_construction_matches_certified_configuration() -> None:
-    """Fast guard: jitter settings are certified too, not just constants."""
+    """Fast guard: the built filter is certified too, not just constants."""
     pf = build_echolocation_filter(seed=0, n_particles=10)
     assert pf.jitter == "annealed"
     assert pf.jitter_tau == 15.0
     assert pf.jitter_std == 0.02
     assert pf.noise_std == CERT_NOISE_STD
+    assert pf.support_bounds is not None
+    lower, upper = pf.support_bounds
+    hw = CERT_POSITION_HALFWIDTH
+    assert np.allclose(lower, [-hw, -hw, -hw, CERT_MASS_RANGE[0]])
+    assert np.allclose(upper, [hw, hw, hw, CERT_MASS_RANGE[1]])
 ```
 
 Before running certification, replace every `CERT_*` literal and `ECHO_FAR_STD_FACTOR` with the values frozen in Task 9 (they are correct as written only if Task 9 froze the starting defaults unchanged).
@@ -1717,7 +1722,7 @@ Before running certification, replace every `CERT_*` literal and `ECHO_FAR_STD_F
 - [ ] **Step 2: Run the certification sweep — exactly once**
 
 Run: `uv run scripts/scan_echolocation_range.py --seed-block 300 --per-run`
-Expected: the CERTIFICATION RUN banner prints; 72 runs on seeds 300–311; JSON records `"seed_block": 300`; summary shows close-range pass ≥ 10/12 and the honest-widening trend. **Do not re-run this command after this step** (the deterministic pytest pin in Step 4 is the only permitted re-execution). If the gates FAIL: per spec §3a, block 300 is burned — record the failure and diagnosis in the spec Status history, return to Task 9 (tuning seeds only), re-freeze, then certify once on `--seed-block 400`. On the burn path, the block number is parameterized in exactly one place per artifact: update `CERT_SEED_BLOCK` in the acceptance test, and substitute the new block for `300` in this task's scan command, Status-history record, and commit message (Steps 2, 5, 6). Nothing else encodes the block.
+Expected: the CERTIFICATION RUN banner prints; 72 runs on seeds 300–311; JSON records `"seed_block": 300`; summary shows close-range pass ≥ 10/12 and the honest-widening trend. **Do not re-run this command after this step** (the deterministic pytest pin in Step 4 is the only permitted re-execution). If the gates FAIL: per spec §3a, block 300 is burned — record the failure and diagnosis in the spec Status history, return to Task 9 (tuning seeds only), re-freeze, then certify once on `--seed-block 400`. On the burn path, the block number is parameterized in exactly one place per artifact: update `CERT_SEED_BLOCK` in the acceptance test, and substitute the new block for `300` in this task's scan command, Status-history record, and commit message (Steps 2, 5, 6) **and in every downstream mention of the certified block** — the site page's reproduce callout and study paragraph (Task 11), the reproduce page's scan comment (Task 11), and the PR body (Task 12), all of which say "seed-block 300" as written. The spec Status history is the source of truth for which block certified.
 
 - [ ] **Step 3: Commit the certified artifacts to tracked locations**
 
@@ -1771,6 +1776,7 @@ git commit -m "Certify echolocation on seeds 300-311; add slow acceptance pin"
 **Interfaces:**
 - Consumes: **tracked** artifacts committed by earlier tasks — `assets/demo_echolocation_3d.gif` + `site/assets/demo_echolocation_3d.gif` (Task 8/9) and `assets/echolocation_range_study.{json,png}` + `site/assets/echolocation_range_study.png` (Task 10); `build_head_lattice`, `echo_mass_config`, `ECHO_*` constants for the in-page falloff cell. This task never reads `output/`.
 - Produces: the published page. Fill `<N-CLOSE>`, `<USABLE-RANGE>`, `<FAR-BEHAVIOR>` from the certified study (`assets/echolocation_range_study.json` / the spec's certification record) before committing — grep the page for `<` to confirm nothing remains.
+- **Conditional rewrite (verdict honesty):** the page template below assumes the certified far range showed *honest* widening (`covered_3sigma` mostly true — check the certified JSON). If certification instead showed the filter **confidently wrong** at far range (poor coverage), rewrite `<FAR-BEHAVIOR>`, the "Verdict" section, and the caption claims accordingly: report that the sense degrades *without* knowing it, drop the "knows when it is failing" framing, and state the coverage numbers plainly. The study's finding is whatever certification measured — the page adapts to it, never the reverse.
 
 - [ ] **Step 1: Verify the tracked artifacts exist**
 
