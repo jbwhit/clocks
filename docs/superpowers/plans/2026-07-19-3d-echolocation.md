@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Approved — Codex xhigh review, 8 rounds (2026-07-19): rounds 1–7
+NEEDS REVISION (certification exactly-once semantics + artifact handoff,
+prediction rates panel, CLI validation, full certified-configuration
+pinning, burn-path parameterization, SNR preflight, prose/constant
+reconciliation, likelihood footnote — all applied); round 8 verified, no
+findings — **SOUND ENOUGH TO IMPLEMENT**.
+
 **Goal:** A 3D exterior-mass demo (rotating-camera GIF), a resolution-vs-range study with certification protocol, and a "Gravitational Echolocation" site page — per spec `docs/superpowers/specs/2026-07-19-3d-echolocation-design.md`.
 
 **Architecture:** A new shared scenario (`run_echolocation_3d` in `clocks._scenarios`) builds a 27-clock cubic lattice and a raw `ParticleFilter` with a mean-centered (differential) measurement model. New viz module `clocks._panels3d` supplies the hero-3D dashboard; a new `animate_echolocation` driver in `clocks._animate` rotates the camera per frame. Study helpers live in `clocks._echo_study` (importable by tests and the thin scan script). No changes to physics, inference, noise, or the public API.
