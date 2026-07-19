@@ -514,9 +514,12 @@ class TestBatchEquivalence3D:
 
 - [ ] **Step 2: Write the API test**
 
-Append to `tests/test_api.py` (again extending existing imports as needed; `InferenceResult` comes from `clocks.results`):
+Append to `tests/test_api.py` (again extending existing imports as needed — in particular the file currently imports only `SimulationResult` from `clocks.results`, so extend that line):
 
 ```python
+from clocks.results import InferenceResult, SimulationResult  # replaces the existing import line
+
+
 class TestInference3D:
     def test_single_mass_3d_recovery(self) -> None:
         """(x, y, z, M) inference works end-to-end through the public API."""
@@ -869,7 +872,14 @@ from clocks._echo_study import (
     summarize,
     write_summary_figure,
 )
-from clocks._scenarios import ECHO_SWEEP_RANGES, EchoRunResult, run_echolocation_3d
+from clocks._scenarios import (
+    ECHO_M_TRUE,
+    ECHO_SWEEP_RANGES,
+    EchoRunResult,
+    build_head_lattice,
+    run_echolocation_3d,
+    validate_echo_geometry,
+)
 
 JSON_PATH = Path("output/echolocation_range_study.json")
 PNG_PATH = Path("output/echolocation_range_study.png")
@@ -927,6 +937,23 @@ def main() -> None:
         write_summary_figure(load_study(JSON_PATH), PNG_PATH)
         print(f"Figure written to {PNG_PATH}")
         return
+
+    # Validate at the boundary (spec sections 3a and 5).
+    if args.workers < 1:
+        parser.error("--workers must be >= 1")
+    if args.seed_block != 0 and (args.seed_block < 300 or args.seed_block % 100 != 0):
+        parser.error(
+            "--seed-block must be 0 (tuning) or a certification block "
+            "(300, 400, ...); see spec section 3a"
+        )
+    head = build_head_lattice()
+    for range_r in args.ranges:
+        validate_echo_geometry(range_r, ECHO_M_TRUE, head)
+    if args.seed_block >= 300:
+        print(
+            f"CERTIFICATION RUN (seed block {args.seed_block}): "
+            "run exactly once; results are final."
+        )
 
     print("Noise-free centered signal vs range (SNR sanity gate):")
     _print_snr_table(args.ranges)
@@ -986,7 +1013,7 @@ git commit -m "Add echolocation range-sweep harness with SNR gate and seed block
 - Produces (used by Task 7):
   - `create_echolocation_dashboard(figsize=(14.0, 8.0)) -> tuple[Figure, dict[str, Axes]]` with keys `"scene"` (3D), `"history"`, `"mass"`, `"rates"`
   - `plot_scene_3d(ax, clock_array, mass_config, particle_state, *, azim: float, elev: float = 18.0, max_particles: int = 1500) -> None`
-  - `plot_centered_rates(ax, observed: NDArray, true_centered: NDArray) -> None`
+  - `plot_centered_rates(ax, observed: NDArray, predicted_centered: NDArray) -> None` — observed vs the filter's *current prediction* (spec §2), both centered
   - `_ECHO_COLORS = ["tab:blue", "tab:green", "tab:purple", "tab:orange"]`, `_ECHO_LABELS = ["x", "y", "z", "M"]`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1034,9 +1061,9 @@ class TestEcholocationDashboard:
     def test_centered_rates_panel(self) -> None:
         fig, axes = create_echolocation_dashboard()
         rng = np.random.default_rng(1)
-        true_centered = rng.normal(0, 0.005, 27)
-        observed = true_centered + rng.normal(0, 0.005, 27)
-        plot_centered_rates(axes["rates"], observed, true_centered)
+        predicted_centered = rng.normal(0, 0.005, 27)
+        observed = predicted_centered + rng.normal(0, 0.005, 27)
+        plot_centered_rates(axes["rates"], observed, predicted_centered)
         assert len(axes["rates"].patches) == 54  # two bar sets, 27 clocks each
         plt.close(fig)
 ```
@@ -1144,12 +1171,21 @@ def plot_scene_3d(
 def plot_centered_rates(
     ax: Axes,
     observed: NDArray[np.floating],
-    true_centered: NDArray[np.floating],
+    predicted_centered: NDArray[np.floating],
 ) -> None:
-    """Centered (differential) rates by clock index: true vs observed."""
+    """Centered (differential) rates by clock index: prediction vs observed.
+
+    ``predicted_centered`` is the forward model at the filter's current
+    estimate, centered — so the panel shows the fit improving over frames.
+    """
     idx = np.arange(len(observed))
     ax.bar(
-        idx, true_centered, width=0.8, color="lightcoral", alpha=0.7, label="True"
+        idx,
+        predicted_centered,
+        width=0.8,
+        color="lightcoral",
+        alpha=0.7,
+        label="Predicted",
     )
     ax.bar(idx, observed, width=0.4, color="steelblue", alpha=0.7, label="Observed")
     ax.axhline(0.0, color="gray", linewidth=0.5)
@@ -1288,12 +1324,19 @@ def animate_echolocation(
     whole animation. Particles have 4 columns: [x, y, z, M].
     """
     true_params = np.append(mass_config.positions[0], mass_config.masses[0])
-    true_rates = clock_rates(mass_config, clock_array)
-    true_centered = true_rates - true_rates.mean()
 
     fig, axes = create_echolocation_dashboard()
     states, means, stds = _precompute_filter_states(pf, observations)
     n_frames = len(observations)
+
+    def predicted_centered(frame: int) -> NDArray[np.floating]:
+        """Centered forward model at the frame's posterior mean (spec §2)."""
+        mean = means[frame]
+        rates = clock_rates(
+            MassConfig(positions=mean[:3].reshape(1, 3), masses=mean[3:4]),
+            clock_array,
+        )
+        return rates - rates.mean()
 
     def render(frame: int) -> None:
         azim = -60.0 + 360.0 * frame / n_frames
@@ -1315,7 +1358,9 @@ def animate_echolocation(
         axes["mass"].clear()
         plot_mass_histogram(axes["mass"], states[frame], float(true_params[3]))
         axes["rates"].clear()
-        plot_centered_rates(axes["rates"], observations[frame].rates, true_centered)
+        plot_centered_rates(
+            axes["rates"], observations[frame].rates, predicted_centered(frame)
+        )
 
     anim = animation.FuncAnimation(fig, render, frames=n_frames, repeat=False)
     _save_animation(anim, fig, output_path, fps)
@@ -1445,11 +1490,24 @@ demo-echolocation-3d = "clocks._cli:demo_echolocation_3d"
 Run: `uv run demo-echolocation-3d`
 Expected: prints the true parameters, generates `output/demo_echolocation_3d.gif` (expect a few minutes — 80 frames × 6000 particles), prints final estimates. Open the GIF and check: camera orbits smoothly, the head cube and star are visible, the cloud visibly contracts toward the star. If the cloud does not converge with seed 0, this is the disclosed-curation knob: try seeds 1, 2, … and update `DEMO_SEED` (nothing else) — record the chosen seed in the commit message.
 
-- [ ] **Step 4: Gate and commit**
+- [ ] **Step 4: Copy the GIF to tracked asset locations (byte-identical policy)**
+
+`output/` is gitignored, so publishable artifacts are committed from `assets/` and `site/assets/` the moment they are produced — later tasks must never need `output/`:
+
+```bash
+cp output/demo_echolocation_3d.gif assets/
+cp output/demo_echolocation_3d.gif site/assets/
+cmp output/demo_echolocation_3d.gif assets/demo_echolocation_3d.gif
+cmp output/demo_echolocation_3d.gif site/assets/demo_echolocation_3d.gif
+```
+
+Expected: both `cmp` commands silent.
+
+- [ ] **Step 5: Gate and commit**
 
 ```bash
 uv run ruff format --check . && uv run ruff check . && uv run pytest
-git add scripts/demo_echolocation_3d.py src/clocks/_cli.py pyproject.toml uv.lock
+git add scripts/demo_echolocation_3d.py src/clocks/_cli.py pyproject.toml uv.lock assets/demo_echolocation_3d.gif site/assets/demo_echolocation_3d.gif
 git commit -m "Add demo-echolocation-3d entry point and rotating 3D demo"
 ```
 
@@ -1495,7 +1553,14 @@ close-range pass <n>/12, far-range med_pos_std ratio <value>.
 - [ ] **Step 4: Regenerate the demo GIF if constants changed**
 
 If `ECHO_N_PARTICLES` or the demo range/seed changed in Step 2–3:
-Run: `uv run demo-echolocation-3d` and re-verify the GIF visually.
+Run: `uv run demo-echolocation-3d`, re-verify the GIF visually, and refresh the tracked copies:
+
+```bash
+cp output/demo_echolocation_3d.gif assets/
+cp output/demo_echolocation_3d.gif site/assets/
+cmp output/demo_echolocation_3d.gif assets/demo_echolocation_3d.gif
+cmp output/demo_echolocation_3d.gif site/assets/demo_echolocation_3d.gif
+```
 
 - [ ] **Step 5: Gate and commit**
 
@@ -1511,11 +1576,12 @@ git commit -m "Freeze echolocation tuning: parameters, tolerances, sweep bounds"
 
 **Files:**
 - Create: `tests/test_acceptance_echolocation_3d.py`
+- Create (copies): `assets/echolocation_range_study.json`, `assets/echolocation_range_study.png`, `site/assets/echolocation_range_study.png`
 - Modify: `docs/superpowers/specs/2026-07-19-3d-echolocation-design.md` (record certification outcome)
 
 **Interfaces:**
 - Consumes (Tasks 2, 9): `run_echolocation_3d`, frozen `ECHO_SWEEP_RANGES`, `ECHO_PASS_*`, `ECHO_FAR_STD_FACTOR` value from the tuning freeze.
-- Produces: the slow certification pin; certification artifacts `output/echolocation_range_study.json` + `.png` from seed block 300 (these become the published study in Task 11).
+- Produces: the slow certification pin; certified artifacts committed as `assets/echolocation_range_study.{json,png}` and `site/assets/echolocation_range_study.png` from seed block 300 (Task 11 consumes only these tracked copies — never `output/`).
 
 - [ ] **Step 1: Write the acceptance test (before running certification)**
 
@@ -1524,11 +1590,14 @@ Create `tests/test_acceptance_echolocation_3d.py`. Replace `ECHO_FAR_STD_FACTOR 
 ```python
 """Slow acceptance pin: echolocation scenario on certification seeds.
 
-Deterministic regression pin (same seeds + same code => same result), not
-a population reliability estimate. Excluded from default runs; execute
-with `uv run pytest -m slow`. Certification seeds 300-311 (spec section
-3a); tuning used 0-11. Rerun whenever inference defaults or the scenario
-change.
+Deterministic re-execution of the certified runs (same seeds + same code
+=> same result) — a regression pin, not a re-certification and not a
+population reliability estimate. The exactly-once rule (spec section 3a)
+bars using these seeds for tuning or selection; re-executing the frozen
+configuration is permitted, exactly as test_acceptance_multi_mass_2d.py
+re-executes its holdout. Excluded from default runs; execute with
+`uv run pytest -m slow`. Rerun whenever inference defaults or the
+scenario change.
 """
 
 import inspect
@@ -1552,18 +1621,16 @@ ECHO_FAR_STD_FACTOR = 2.0
 
 
 @pytest.mark.slow
-def test_close_range_localizes_on_certification_seeds() -> None:
-    results = [run_echolocation_3d(seed, CLOSE_RANGE) for seed in CERT_SEEDS]
-    failed = [r["seed"] for r in results if not r["passed"]]
+def test_certified_gates_hold_on_certification_seeds() -> None:
+    """Both certified gates in one pass so each run executes exactly once."""
+    close = [run_echolocation_3d(seed, CLOSE_RANGE) for seed in CERT_SEEDS]
+    far = [run_echolocation_3d(seed, FAR_RANGE) for seed in CERT_SEEDS]
+
+    failed = [r["seed"] for r in close if not r["passed"]]
     assert len(CERT_SEEDS) - len(failed) >= 10, (
         f"close-range acceptance below 10/12; failing seeds: {failed}"
     )
 
-
-@pytest.mark.slow
-def test_far_range_posterior_widens_honestly() -> None:
-    close = [run_echolocation_3d(seed, CLOSE_RANGE) for seed in CERT_SEEDS]
-    far = [run_echolocation_3d(seed, FAR_RANGE) for seed in CERT_SEEDS]
     med_close = statistics.median(r["pos_std"] for r in close)
     med_far = statistics.median(r["pos_std"] for r in far)
     assert med_far >= ECHO_FAR_STD_FACTOR * med_close, (
@@ -1582,28 +1649,44 @@ def test_scenario_defaults_match_frozen_values() -> None:
 - [ ] **Step 2: Run the certification sweep — exactly once**
 
 Run: `uv run scripts/scan_echolocation_range.py --seed-block 300 --per-run`
-Expected: 72 runs on seeds 300–311; JSON records `"seed_block": 300`; summary shows close-range pass ≥ 10/12 and the honest-widening trend. **Do not re-run this command after this step.** If the gates FAIL: per spec §3a, block 300 is burned — record the failure and diagnosis in the spec status history, return to Task 9 (tuning seeds only), re-freeze, then certify once on `--seed-block 400`.
+Expected: the CERTIFICATION RUN banner prints; 72 runs on seeds 300–311; JSON records `"seed_block": 300`; summary shows close-range pass ≥ 10/12 and the honest-widening trend. **Do not re-run this command after this step** (the deterministic pytest pin in Step 4 is the only permitted re-execution). If the gates FAIL: per spec §3a, block 300 is burned — record the failure and diagnosis in the spec status history, return to Task 9 (tuning seeds only), re-freeze, then certify once on `--seed-block 400`.
 
-- [ ] **Step 3: Run the slow acceptance tests**
+- [ ] **Step 3: Commit the certified artifacts to tracked locations**
+
+`output/` is gitignored and the certification cannot be re-run, so the certified JSON and figure are committed immediately (byte-identical policy; Task 11 consumes only these tracked copies):
+
+```bash
+cp output/echolocation_range_study.png assets/
+cp output/echolocation_range_study.png site/assets/
+cp output/echolocation_range_study.json assets/
+cmp output/echolocation_range_study.png assets/echolocation_range_study.png
+cmp output/echolocation_range_study.png site/assets/echolocation_range_study.png
+cmp output/echolocation_range_study.json assets/echolocation_range_study.json
+```
+
+Expected: all three `cmp` commands silent.
+
+- [ ] **Step 4: Run the slow acceptance pin**
 
 Run: `uv run pytest -m slow tests/test_acceptance_echolocation_3d.py -v`
 Expected: PASS (deterministic re-execution of the certified runs; ~10–20 min). Also run the fast guard: `uv run pytest tests/test_acceptance_echolocation_3d.py -v -k frozen` → PASS.
 
-- [ ] **Step 4: Record certification in the spec**
+- [ ] **Step 5: Record certification in the spec**
 
 Append to the spec Status history:
 
 ```
 Certification (seeds 300-311, run once, <date>): close-range pass <n>/12,
-med pos_std ratio far/close = <value>; artifacts
-output/echolocation_range_study.{json,png} at seed_block 300.
+med pos_std ratio far/close = <value>; certified artifacts committed as
+assets/echolocation_range_study.{json,png} and
+site/assets/echolocation_range_study.png (seed_block 300).
 ```
 
-- [ ] **Step 5: Gate and commit**
+- [ ] **Step 6: Gate and commit**
 
 ```bash
 uv run ruff format --check . && uv run ruff check . && uv run pytest
-git add tests/test_acceptance_echolocation_3d.py docs/superpowers/specs/2026-07-19-3d-echolocation-design.md
+git add tests/test_acceptance_echolocation_3d.py docs/superpowers/specs/2026-07-19-3d-echolocation-design.md assets/echolocation_range_study.json assets/echolocation_range_study.png site/assets/echolocation_range_study.png
 git commit -m "Certify echolocation on seeds 300-311; add slow acceptance pin"
 ```
 
@@ -1614,26 +1697,18 @@ git commit -m "Certify echolocation on seeds 300-311; add slow acceptance pin"
 **Files:**
 - Create: `site/story/gravitational-echolocation.qmd`
 - Modify: `site/_quarto.yml` (sidebar), `site/reproduce/getting-started.qmd` (demo list)
-- Create (copies): `assets/demo_echolocation_3d.gif`, `assets/echolocation_range_study.png`, `site/assets/demo_echolocation_3d.gif`, `site/assets/echolocation_range_study.png`
 
 **Interfaces:**
-- Consumes: certified artifacts from Task 10 (`output/echolocation_range_study.png` at seed block 300), demo GIF from Task 8/9; `build_head_lattice`, `echo_mass_config`, `ECHO_*` constants for the in-page falloff cell.
-- Produces: the published page. Fill `<N-CLOSE>`, `<USABLE-RANGE>`, `<FAR-BEHAVIOR>` from the certification summary before committing — grep the page for `<` to confirm nothing remains.
+- Consumes: **tracked** artifacts committed by earlier tasks — `assets/demo_echolocation_3d.gif` + `site/assets/demo_echolocation_3d.gif` (Task 8/9) and `assets/echolocation_range_study.{json,png}` + `site/assets/echolocation_range_study.png` (Task 10); `build_head_lattice`, `echo_mass_config`, `ECHO_*` constants for the in-page falloff cell. This task never reads `output/`.
+- Produces: the published page. Fill `<N-CLOSE>`, `<USABLE-RANGE>`, `<FAR-BEHAVIOR>` from the certified study (`assets/echolocation_range_study.json` / the spec's certification record) before committing — grep the page for `<` to confirm nothing remains.
 
-- [ ] **Step 1: Copy artifacts (byte-identical policy)**
+- [ ] **Step 1: Verify the tracked artifacts exist**
 
 ```bash
-cp output/demo_echolocation_3d.gif assets/
-cp output/demo_echolocation_3d.gif site/assets/
-cp output/echolocation_range_study.png assets/
-cp output/echolocation_range_study.png site/assets/
-cmp output/demo_echolocation_3d.gif assets/demo_echolocation_3d.gif
-cmp output/demo_echolocation_3d.gif site/assets/demo_echolocation_3d.gif
-cmp output/echolocation_range_study.png assets/echolocation_range_study.png
-cmp output/echolocation_range_study.png site/assets/echolocation_range_study.png
+git ls-files --error-unmatch assets/demo_echolocation_3d.gif site/assets/demo_echolocation_3d.gif assets/echolocation_range_study.json assets/echolocation_range_study.png site/assets/echolocation_range_study.png
 ```
 
-Expected: all four `cmp` commands silent (byte-identical).
+Expected: all five paths print (exit 0). If any is missing, stop — the producing task (8/9/10) did not complete its artifact-commit step.
 
 - [ ] **Step 2: Write the page**
 
@@ -1686,7 +1761,7 @@ from clocks._scenarios import (
 )
 
 head = build_head_lattice()
-ranges = np.linspace(1.5, 10.0, 60)
+ranges = np.linspace(2.0, 10.0, 60)  # from the validated exterior minimum
 signal = []
 for r in ranges:
     rates = clock_rates(echo_mass_config(float(r)), head)

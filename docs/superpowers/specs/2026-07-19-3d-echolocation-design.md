@@ -222,6 +222,15 @@ to avoid certifying on the data used to choose the setup:
   JSON output records the seed block used, and any burned block is recorded
   in this spec's status history — so which seeds produced which artifact is
   never ambient knowledge.
+- **What "exactly once" means:** the rule bars using certification seeds
+  for tuning, selection, or any decision that feeds back into parameters
+  or thresholds. Deterministic re-execution of the already-certified runs
+  (identical seeds, parameters, and code — e.g. the slow acceptance pin,
+  exactly as `test_acceptance_multi_mass_2d.py` re-executes its holdout)
+  is a regression pin, not a re-certification, and is permitted. The
+  certified study JSON and figure are committed to the repo (under
+  `assets/`) so the published artifacts never depend on re-running the
+  sweep.
 
 ### 4. Site page — `site/story/gravitational-echolocation.qmd`
 
