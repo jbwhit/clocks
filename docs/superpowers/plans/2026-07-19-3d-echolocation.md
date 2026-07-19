@@ -857,7 +857,7 @@ docs/superpowers/specs/2026-07-19-3d-echolocation-design.md section 3.
 
 Usage:
     uv run scripts/scan_echolocation_range.py                  # tuning seeds 0-11
-    uv run scripts/scan_echolocation_range.py --seed-block 300 # certification
+    uv run scripts/scan_echolocation_range.py --seed-block 300 # certification block (spec 3a)
     uv run scripts/scan_echolocation_range.py --figure-only    # re-render PNG
 """
 
@@ -922,7 +922,11 @@ def main() -> None:
         "--seed-block",
         type=int,
         default=0,
-        help="first seed of the 12-seed block (0=tuning, 300=certification)",
+        help=(
+            "first seed of the 12-seed block: 0 = tuning; certification "
+            "blocks are 300, 400, ... (spec section 3a; the Status history "
+            "records which block certified)"
+        ),
     )
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--per-run", action="store_true")
@@ -1788,7 +1792,7 @@ Expected: all five paths print (exit 0). If any is missing, stop — the produci
 
 - [ ] **Step 2: Write the page**
 
-Create `site/story/gravitational-echolocation.qmd`. Fill the three `<placeholders>` from the certification summary (Task 10 Step 2 output):
+Create `site/story/gravitational-echolocation.qmd`. Fill the three `<placeholders>` from the certification summary (Task 10 Step 2 output). **Then reconcile every hardcoded number in the prose with the frozen constants** — the template below is written for the *starting* defaults, and Task 9 may have changed them: "four circumradii" ↔ `DEMO_RANGE_R`, "eighty differential observations" ↔ `ECHO_N_OBSERVATIONS`, "six thousand hypotheses" ↔ `ECHO_N_PARTICLES`, "two to eight circumradii" ↔ `ECHO_SWEEP_RANGES` endpoints, "twelve independent runs" ↔ the seed-block size, and "seed-block 300" in the reproduce callout ↔ the certified block per the spec Status history ("twenty-seven clocks" and "3×3×3" are fixed by the spec and never change). Cross-check against `src/clocks/_scenarios.py` and `scripts/demo_echolocation_3d.py` as committed:
 
 ````markdown
 ---
