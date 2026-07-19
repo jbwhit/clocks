@@ -931,6 +931,11 @@ def main() -> None:
         action="store_true",
         help="re-render the PNG from the existing JSON without sweeping",
     )
+    parser.add_argument(
+        "--snr-only",
+        action="store_true",
+        help="print the SNR sanity table and exit without sweeping",
+    )
     args = parser.parse_args()
 
     if args.figure_only:
@@ -957,6 +962,8 @@ def main() -> None:
 
     print("Noise-free centered signal vs range (SNR sanity gate):")
     _print_snr_table(args.ranges)
+    if args.snr_only:
+        return
 
     seeds = range(args.seed_block, args.seed_block + 12)
     jobs = [(seed, range_r) for range_r in args.ranges for seed in seeds]
@@ -1525,6 +1532,11 @@ git commit -m "Add demo-echolocation-3d entry point and rotating 3D demo"
 - Consumes: the full pipeline (Tasks 1–8).
 - Produces: frozen `ECHO_PASS_POS_TOL`, `ECHO_PASS_MASS_TOL`, `ECHO_SWEEP_RANGES`, scenario parameters, and the honest-uncertainty factor `ECHO_FAR_STD_FACTOR` used by Task 10. **Tuning seeds only (0–11). Never touch seeds 300–311 here.**
 
+- [ ] **Step 0: SNR preflight — before burning any runs**
+
+Run: `uv run scripts/scan_echolocation_range.py --snr-only`
+Expected: the SNR table only (no sweep). Check criterion 1 of Step 2 now: at the farthest swept range, `signal_over_noise` ≥ 0.1. If violated, shrink the top of `ECHO_SWEEP_RANGES` (and re-run this preflight) before sweeping. (For reference, the review-time probe measured `signal_over_noise` ≈ 0.28 at range 8.0 with the starting defaults — expected to pass.)
+
 - [ ] **Step 1: Run the full tuning sweep**
 
 Run: `uv run scripts/scan_echolocation_range.py --per-run`
@@ -1603,26 +1615,44 @@ scenario change.
 import inspect
 import statistics
 
+import numpy as np
 import pytest
 
 from clocks._scenarios import (
+    ECHO_DIRECTION,
+    ECHO_M_TRUE,
+    ECHO_MASS_RANGE,
     ECHO_N_OBSERVATIONS,
     ECHO_N_PARTICLES,
+    ECHO_NOISE_STD,
     ECHO_PASS_MASS_TOL,
     ECHO_PASS_POS_TOL,
+    ECHO_POSITION_HALFWIDTH,
     ECHO_SWEEP_RANGES,
+    build_echolocation_filter,
     run_echolocation_3d,
 )
 
-CERT_SEEDS = tuple(range(300, 312))
 # Certified configuration, pinned as LITERALS (frozen in Task 9): the pin
 # must not follow later edits to the live scenario constants. The fast
 # guard below asserts the live constants still match, so drift fails
-# loudly instead of silently redefining the certified run.
+# loudly instead of silently redefining the certified run. On a burned
+# block (spec section 3a), update CERT_SEED_BLOCK — nothing else here
+# encodes the block.
+CERT_SEED_BLOCK = 300
+CERT_SEEDS = tuple(range(CERT_SEED_BLOCK, CERT_SEED_BLOCK + 12))
 CERT_CLOSE_RANGE = 2.0
 CERT_FAR_RANGE = 8.0
 CERT_POS_TOL = 1.0
 CERT_MASS_TOL = 0.075
+CERT_SWEEP_RANGES = (2.0, 2.6, 3.5, 4.6, 6.1, 8.0)
+CERT_M_TRUE = 0.15
+CERT_NOISE_STD = 0.005
+CERT_N_PARTICLES = 6000
+CERT_N_OBSERVATIONS = 80
+CERT_MASS_RANGE = (0.05, 2.0)
+CERT_POSITION_HALFWIDTH = 16.0
+CERT_DIRECTION = (2.0 / 7.0, 3.0 / 7.0, 6.0 / 7.0)
 # Far-range posterior std must be at least this multiple of close-range.
 ECHO_FAR_STD_FACTOR = 2.0
 
@@ -1659,18 +1689,35 @@ def test_scenario_matches_certified_configuration() -> None:
     params = inspect.signature(run_echolocation_3d).parameters
     assert params["n_particles"].default == ECHO_N_PARTICLES
     assert params["n_observations"].default == ECHO_N_OBSERVATIONS
+    assert ECHO_N_PARTICLES == CERT_N_PARTICLES
+    assert ECHO_N_OBSERVATIONS == CERT_N_OBSERVATIONS
+    assert ECHO_SWEEP_RANGES == CERT_SWEEP_RANGES
     assert ECHO_SWEEP_RANGES[0] == CERT_CLOSE_RANGE
     assert ECHO_SWEEP_RANGES[-1] == CERT_FAR_RANGE
     assert ECHO_PASS_POS_TOL == CERT_POS_TOL
     assert ECHO_PASS_MASS_TOL == CERT_MASS_TOL
+    assert ECHO_M_TRUE == CERT_M_TRUE
+    assert ECHO_NOISE_STD == CERT_NOISE_STD
+    assert ECHO_MASS_RANGE == CERT_MASS_RANGE
+    assert ECHO_POSITION_HALFWIDTH == CERT_POSITION_HALFWIDTH
+    assert np.allclose(ECHO_DIRECTION, CERT_DIRECTION)
+
+
+def test_filter_construction_matches_certified_configuration() -> None:
+    """Fast guard: jitter settings are certified too, not just constants."""
+    pf = build_echolocation_filter(seed=0, n_particles=10)
+    assert pf.jitter == "annealed"
+    assert pf.jitter_tau == 15.0
+    assert pf.jitter_std == 0.02
+    assert pf.noise_std == CERT_NOISE_STD
 ```
 
-Before running certification, replace the five `CERT_*`/`ECHO_FAR_STD_FACTOR` literals with the values frozen in Task 9 (they are correct as written only if Task 9 froze the starting defaults unchanged).
+Before running certification, replace every `CERT_*` literal and `ECHO_FAR_STD_FACTOR` with the values frozen in Task 9 (they are correct as written only if Task 9 froze the starting defaults unchanged).
 
 - [ ] **Step 2: Run the certification sweep — exactly once**
 
 Run: `uv run scripts/scan_echolocation_range.py --seed-block 300 --per-run`
-Expected: the CERTIFICATION RUN banner prints; 72 runs on seeds 300–311; JSON records `"seed_block": 300`; summary shows close-range pass ≥ 10/12 and the honest-widening trend. **Do not re-run this command after this step** (the deterministic pytest pin in Step 4 is the only permitted re-execution). If the gates FAIL: per spec §3a, block 300 is burned — record the failure and diagnosis in the spec status history, return to Task 9 (tuning seeds only), re-freeze, then certify once on `--seed-block 400`.
+Expected: the CERTIFICATION RUN banner prints; 72 runs on seeds 300–311; JSON records `"seed_block": 300`; summary shows close-range pass ≥ 10/12 and the honest-widening trend. **Do not re-run this command after this step** (the deterministic pytest pin in Step 4 is the only permitted re-execution). If the gates FAIL: per spec §3a, block 300 is burned — record the failure and diagnosis in the spec Status history, return to Task 9 (tuning seeds only), re-freeze, then certify once on `--seed-block 400`. On the burn path, the block number is parameterized in exactly one place per artifact: update `CERT_SEED_BLOCK` in the acceptance test, and substitute the new block for `300` in this task's scan command, Status-history record, and commit message (Steps 2, 5, 6). Nothing else encodes the block.
 
 - [ ] **Step 3: Commit the certified artifacts to tracked locations**
 
@@ -1697,11 +1744,13 @@ Expected: PASS (deterministic re-execution of the certified runs; ~10–20 min).
 Append to the spec Status history:
 
 ```
-Certification (seeds 300-311, run once, <date>): close-range pass <n>/12,
-med pos_std ratio far/close = <value>; certified artifacts committed as
-assets/echolocation_range_study.{json,png} and
-site/assets/echolocation_range_study.png (seed_block 300).
+Certification (seeds <block>-<block+11>, run once, <date>): close-range
+pass <n>/12, med pos_std ratio far/close = <value>; certified artifacts
+committed as assets/echolocation_range_study.{json,png} and
+site/assets/echolocation_range_study.png (seed_block <block>).
 ```
+
+(`<block>` is 300, or the replacement block on the burn path.)
 
 - [ ] **Step 6: Gate and commit**
 
