@@ -1859,6 +1859,13 @@ plt.close(fig)
 fig
 ```
 
+One technical footnote. Subtracting the mean makes the observation noise
+slightly correlated — every centered rate shares the subtracted average.
+The filter nonetheless keeps the simpler independent-noise likelihood,
+which is harmless here: on centered residuals the two likelihoods differ
+only by a constant that cancels out of the particle weights. (Only the
+absolute evidence normalization shifts, and nothing on this page uses it.)
+
 ## Watching the head lock on
 
 The demo places the mass at four circumradii along a fixed off-axis
