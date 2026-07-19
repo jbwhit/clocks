@@ -1,9 +1,11 @@
 # 3D Gravitational Echolocation — Demo, Range Study, and Site Page
 
 **Date:** 2026-07-19
-**Status:** Draft — Codex xhigh round 1 returned NEEDS REVISION; round-1
-fixes applied; round 2 returned NEEDS REVISION (1 major, 2 minor); round-2
-fixes applied, awaiting round 3.
+**Status:** Approved — Codex xhigh review, 3 rounds (2026-07-19): round 1
+NEEDS REVISION (2 blockers: absolute-rates measurement model, tuning/
+certification on same seeds; 4 major, 3 minor); round 2 NEEDS REVISION
+(1 major: mass support_bounds vs log-prior mismatch; 2 minor); round 3
+verified all fixes, no findings — **SOUND ENOUGH TO IMPLEMENT**.
 **Origin:** `docs/someday-maybe.md` § "3D and exterior masses: gravitational
 echolocation"
 
