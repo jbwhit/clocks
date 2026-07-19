@@ -11,11 +11,15 @@ from clocks._scenarios import (
     MIN_SEPARATION,
     PASS_TOLERANCE,
     TRUTH,
+    EchoRunResult,
+    build_echolocation_filter,
     build_head_lattice,
     echo_mass_config,
     echo_mass_position,
     generate_random_clocks,
+    make_echo_observations,
     passes,
+    run_echolocation_3d,
     run_multi_mass_2d,
     validate_echo_geometry,
 )
@@ -103,3 +107,64 @@ class TestEchoGeometry:
     def test_validate_accepts_shipped_defaults(self) -> None:
         head = build_head_lattice()
         validate_echo_geometry(ECHO_MIN_RANGE_R, ECHO_M_TRUE, head)
+
+
+class TestEchoMeasurementModel:
+    def test_centered_observations_have_zero_mean(self) -> None:
+        _, centered = make_echo_observations(seed=0, range_r=2.0)
+        for obs in centered:
+            assert np.isclose(obs.rates.mean(), 0.0, atol=1e-12)
+
+    def test_centering_removes_constant_offset(self) -> None:
+        # A uniform offset (the M/R common mode) must vanish under centering.
+        rates = np.full(27, 0.997)
+        assert np.allclose(rates - rates.mean(), 0.0)
+
+    def test_forward_model_batch_rows_are_centered(self) -> None:
+        pf = build_echolocation_filter(seed=0, n_particles=50)
+        assert pf.forward_model_batch is not None
+        predicted = pf.forward_model_batch(pf.state.particles)
+        assert predicted.shape == (50, 27)
+        assert np.allclose(predicted.mean(axis=1), 0.0, atol=1e-12)
+
+    def test_scalar_forward_model_matches_batch(self) -> None:
+        pf = build_echolocation_filter(seed=1, n_particles=8)
+        assert pf.forward_model_batch is not None
+        batch = pf.forward_model_batch(pf.state.particles)
+        for i in range(8):
+            single = pf.forward_model(pf.state.particles[i])
+            assert np.allclose(single, batch[i])
+
+    def test_prior_support_bounds_match_log_prior(self) -> None:
+        pf = build_echolocation_filter(seed=0, n_particles=100)
+        assert pf.support_bounds is not None
+        assert pf.log_prior is not None
+        lower, upper = pf.support_bounds
+        # In-support particles get 0; nudged-outside particles get -inf.
+        inside = pf.state.particles
+        assert np.all(pf.log_prior(inside) == 0.0)
+        outside = inside.copy()
+        outside[:, 3] = upper[3] + 0.1
+        assert np.all(np.isneginf(pf.log_prior(outside)))
+
+
+class TestEchoRunResult:
+    def test_small_run_populates_fields(self) -> None:
+        result: EchoRunResult = run_echolocation_3d(
+            seed=0, range_r=2.0, n_particles=400, n_observations=15
+        )
+        assert result["seed"] == 0
+        assert result["range_r"] == 2.0
+        assert result["mean"].shape == (4,)
+        assert result["std"].shape == (4,)
+        assert result["position_error"] >= 0.0
+        assert result["mass_error"] >= 0.0
+        assert result["pos_std"] > 0.0
+        assert result["mass_std"] > 0.0
+        assert isinstance(result["passed"], bool)
+        assert isinstance(result["covered_3sigma"], bool)
+        assert result["residual_over_noise"] >= 0.0
+
+    def test_run_rejects_invalid_geometry(self) -> None:
+        with pytest.raises(ValueError, match="exterior"):
+            run_echolocation_3d(seed=0, range_r=1.0)
