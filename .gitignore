@@ -30,6 +30,9 @@ output/
 # Gemini scratch
 .gemini/
 
+# Brainstorming visual companion sessions
+.superpowers/
+
 # Quarto build products
 site/_output/
 site/.quarto/
