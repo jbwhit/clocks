@@ -857,7 +857,7 @@ docs/superpowers/specs/2026-07-19-3d-echolocation-design.md section 3.
 
 Usage:
     uv run scripts/scan_echolocation_range.py                  # tuning seeds 0-11
-    uv run scripts/scan_echolocation_range.py --seed-block 300 # certification block (spec 3a)
+    uv run scripts/scan_echolocation_range.py --seed-block 300 # initial certification block (300, 400, ... per spec 3a)
     uv run scripts/scan_echolocation_range.py --figure-only    # re-render PNG
 """
 
