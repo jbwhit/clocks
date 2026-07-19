@@ -8,6 +8,7 @@ runpy and pytest imports from the repo root; neither puts scripts/ on
 sys.path.
 """
 
+from itertools import product
 from typing import TypedDict
 
 import numpy as np
@@ -136,3 +137,62 @@ def run_multi_mass_2d(
             np.max(np.abs(predicted - sim.true_rates)) / NOISE_STD
         ),
     )
+
+
+# --- 3D echolocation scenario (spec 2026-07-19-3d-echolocation-design) ---
+
+# The head: 3x3x3 cubic lattice, spacing 1.0, centered on the origin.
+# Circumradius (center to corner clocks) — the unit for range_r.
+ECHO_R_HEAD = float(np.sqrt(3.0))
+# Fixed exterior direction: exact unit vector, off-axis and off-diagonal
+# so no projection or lattice symmetry hides the mass.
+ECHO_DIRECTION = np.array([2.0, 3.0, 6.0]) / 7.0
+ECHO_M_TRUE = 0.15
+ECHO_NOISE_STD = 0.005
+ECHO_N_OBSERVATIONS = 80
+ECHO_N_PARTICLES = 6000
+ECHO_MASS_RANGE = (0.05, 2.0)
+ECHO_MIN_RANGE_R = 2.0  # circumradii; exterior means exterior, with clearance
+ECHO_POSITION_HALFWIDTH = 16.0  # prior box covers max swept range 8*R_head~13.9
+ECHO_SWEEP_RANGES = (2.0, 2.6, 3.5, 4.6, 6.1, 8.0)  # log-ish, circumradii
+
+
+def build_head_lattice() -> ClockArray:
+    """The 27-clock head: 3x3x3 grid over {-1, 0, 1}^3."""
+    grid = (-1.0, 0.0, 1.0)
+    positions = np.array(list(product(grid, grid, grid)))
+    return ClockArray(positions=positions, track_offset=0.0)
+
+
+def echo_mass_position(range_r: float) -> NDArray[np.floating]:
+    """Exterior mass position at range_r circumradii along ECHO_DIRECTION."""
+    return ECHO_DIRECTION * range_r * ECHO_R_HEAD
+
+
+def echo_mass_config(range_r: float, m_true: float = ECHO_M_TRUE) -> MassConfig:
+    return MassConfig(
+        positions=echo_mass_position(range_r).reshape(1, 3),
+        masses=np.array([m_true]),
+    )
+
+
+def validate_echo_geometry(
+    range_r: float, m_true: float, clock_array: ClockArray
+) -> None:
+    """Fail fast on interior masses and weak-field violations (spec section 1)."""
+    if range_r < ECHO_MIN_RANGE_R:
+        raise ValueError(
+            f"range_r={range_r} is below the exterior minimum "
+            f"{ECHO_MIN_RANGE_R} circumradii: exterior means exterior"
+        )
+    d_min = float(
+        np.min(
+            np.linalg.norm(clock_array.positions - echo_mass_position(range_r), axis=1)
+        )
+    )
+    if d_min < 10.0 * m_true:
+        raise ValueError(
+            f"weak-field constraint violated: min clock-mass distance "
+            f"{d_min:.3f} < 10*M_true={10.0 * m_true:.3f} "
+            f"(range_r={range_r}, M_true={m_true})"
+        )
