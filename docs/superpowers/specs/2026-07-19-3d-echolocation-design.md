@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-19
 **Status:** Draft — Codex xhigh round 1 returned NEEDS REVISION; round-1
-fixes applied, awaiting round 2.
+fixes applied; round 2 returned NEEDS REVISION (1 major, 2 minor); round-2
+fixes applied, awaiting round 3.
 **Origin:** `docs/someday-maybe.md` § "3D and exterior masses: gravitational
 echolocation"
 
@@ -88,15 +89,18 @@ The shared scenario used by demo, study, and acceptance test, alongside
   documents `build_particle_filter` for observation-by-observation use) —
   with:
   - a prior sampler over a position box that contains the full swept range
-    in every axis (deliberately mostly *outside* the head) and
-    `M ∈ [0.05, 2.0]`;
-  - a custom `log_prior` enforcing the position box **and the mass upper
-    bound** (unlike the public API's masses-positive-only prior), so the
-    mass–distance degeneracy at far range shows up as posterior widening
-    *within* the prior box rather than runaway mass growth;
-  - matching per-parameter `support_bounds` (position box; mass
-    `[nextafter(0,1)…mass_max]`) so annealed-jitter reflection repair stays
-    consistent with the log-prior;
+    in every axis (deliberately mostly *outside* the head) and a mass range
+    `[M_lo, M_hi] = [0.05, 2.0]`;
+  - a custom `log_prior` enforcing the position box **and the full mass
+    range `[M_lo, M_hi]`** (unlike the public API's masses-positive-only
+    prior), so the mass–distance degeneracy at far range shows up as
+    posterior widening *within* the prior box rather than runaway mass
+    growth;
+  - per-parameter `support_bounds` **identical to the log-prior support**
+    (position box; mass `[M_lo, M_hi]` — not the API's
+    `[nextafter(0,1), inf)` convention), since reflected annealed jitter
+    moves particles anywhere inside `support_bounds` and the filter
+    requires reflection to land inside the log-prior's support;
   - the centered forward model of §1a. No `constraint_fn` (K = 1).
 - **Return type — `EchoRunResult` (new TypedDict):** the multi-mass-2D
   `RunResult` fields don't decompose position vs mass, which is the whole
@@ -125,9 +129,13 @@ premise. The scenario therefore centers both data and predictions:
 - **Likelihood approximation (documented in code and on the page):**
   centering noisy iid Gaussian rates yields noise with covariance
   `σ²(I − 11ᵀ/N)` — variance `σ²(1 − 1/N)` and pairwise correlation
-  `−1/N`. The scenario keeps the existing iid Gaussian likelihood at std
-  `σ`; for N = 27 clocks the mismatch is ≤ 4% in variance and is noted,
-  not modeled. No changes to `noise.py`.
+  `−1/(N−1)`. The scenario keeps the existing iid Gaussian likelihood at
+  std `σ`. This is benign: for centered residuals the iid quadratic form
+  equals the projected-Gaussian quadratic form up to a
+  parameter-independent constant, so particle *weights* are unaffected;
+  only the absolute likelihood normalization (and hence log-evidence,
+  unused here) differs. Noted in code, not modeled. No changes to
+  `noise.py`.
 - **Physics consequence (the page's central explanation):** after
   centering, the leading observable is the potential *gradient* across the
   head (differential spread ∼ 2·M·a/R² for lattice half-width a), and
@@ -170,7 +178,7 @@ premise. The scenario therefore centers both data and predictions:
 
 - **Harness:** `scripts/scan_echolocation_range.py`, modeled on
   `scan_multi_mass_2d.py` — multiprocessing `Pool`, CLI flags (`--ranges`,
-  `--holdout`, `--workers`, `--per-run`), per-cell table on stdout.
+  `--seed-block`, `--workers`, `--per-run`), per-cell table on stdout.
 - **Sweep:** `range_r` over ~2–8 circumradii (log-ish spacing, ~6 values;
   defaults frozen during tuning) × 12 seeds per range. ~72 runs per sweep,
   comparable to the annealed-jitter tuning grid.
@@ -207,8 +215,11 @@ to avoid certifying on the data used to choose the setup:
   seeds, and the next block (400–411) is used. (300s chosen to avoid
   collision with the multi-mass-2D convention: 0–11 tuning, 100s burned,
   200s certification.)
-- The scan harness takes `--holdout` to select the certification block,
-  mirroring `scan_multi_mass_2d.py`.
+- **Operationally:** the harness takes `--seed-block N` (seeds N…N+11;
+  default 0 = the tuning block; certification is `--seed-block 300`). The
+  JSON output records the seed block used, and any burned block is recorded
+  in this spec's status history — so which seeds produced which artifact is
+  never ambient knowledge.
 
 ### 4. Site page — `site/story/gravitational-echolocation.qmd`
 
