@@ -31,20 +31,14 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
   GR effects compete the way they do for real GPS satellites.
 - **Mass placement scenarios.** Masses inside vs outside a ring of clocks in
   2D; which geometries make the inverse problem ill-posed?
-- **3D and exterior masses: gravitational echolocation.** The library is
-  already dimension-agnostic, but no demo or page exercises 3D, and none
-  places the mass *outside* the clock volume. The motivating premise is a
-  hard sci-fi idea: a person born with a 3D lattice of atomic clocks
-  embedded in their head, sensing the mass distribution of their
-  surroundings the way echolocation senses surfaces. The physics questions
-  it raises are real and well-posed for this codebase: how does inference
-  quality fall off with distance once the mass is outside the lattice
-  (exterior masses only show the lattice a far-field gradient — closely
-  related to the mass-distance degeneracy)? What lattice geometry maximizes
-  "field of view" per clock? What is the angular/range resolution of an
-  N-clock head at a given noise floor? A 3D demo plus a resolution-vs-range
-  study would make a strong site page — and would quantify whether the
-  sci-fi sense is physically coherent.
+- **3D and exterior masses: gravitational echolocation.** Shipped
+  2026-07-19 — spec
+  `docs/superpowers/specs/2026-07-19-3d-echolocation-design.md`.
+  Demo: `uv run demo-echolocation-3d`; study:
+  `scripts/scan_echolocation_range.py`; site page
+  `site/story/gravitational-echolocation.qmd`. Deferred follow-ons still
+  open: lattice-geometry comparisons (field of view per clock),
+  angular-resolution measurement, multiple/moving exterior masses.
 
 ## Deployment
 
