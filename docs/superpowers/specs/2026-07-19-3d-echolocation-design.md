@@ -359,7 +359,11 @@ constants and measured tuning results), the one-shot certification outcome
   upward re-curation and no GIF regeneration. Tuning artifacts written to
   output/ (gitignored); certification (seed block 300) and the committed
   study JSON/figure are Task 10's, run exactly once.
-- (pending) Certification — recorded by the implementation plan's Task 10.
+- Certification (seeds 300-311, run once, 2026-07-19): close-range
+  pass 11/12, med pos_std ratio far/close = 14.71 (5.389 at range 8.0 /
+  0.366 at range 2.0); certified artifacts committed as
+  assets/echolocation_range_study.{json,png} and
+  site/assets/echolocation_range_study.png (seed_block 300).
 
 ## Out of scope (deferred, tracked in someday-maybe)
 
