@@ -130,6 +130,111 @@ Echolocation is the right metaphor, with the right caveat: a near-field
 sense, written in spacetime instead of sound — reliable at arm's reach,
 credulous in the middle distance, and knowingly blind beyond.
 
+## Coda: could she feel the Sun?
+
+The simulation runs in units where G = c = 1, but nothing stops us from
+asking the question in SI. Give the head a 10 cm clock baseline and the
+best clocks the present day offers — fractional-frequency instability
+near $10^{-16}/\sqrt{\tau}$, systematic floors around $10^{-18}$ — and
+ask: sitting long and still enough, could she feel the Sun? Jupiter?
+
+```{python}
+#| code-fold: true
+import math
+
+from IPython.display import Markdown
+
+C2 = 8.987551787e16  # c^2, (m/s)^2
+BASELINE = 0.1  # clock baseline inside the head, m
+SIGMA0 = 1e-16  # clock instability: sigma_y(tau) = SIGMA0 / sqrt(tau)
+FLOOR = 1e-18  # systematic floor
+GM_SUN, GM_JUP = 1.327124e20, 1.266865e17  # m^3/s^2
+AU, R_EARTH, G_SURFACE = 1.495979e11, 6.371e6, 9.80665
+
+
+def gradient(gm, r):
+    """Differential rate across the baseline, held static at range r."""
+    return gm * BASELINE / (r**2 * C2)
+
+
+def tide(gm, r):
+    """Surviving differential for a head riding the freely falling Earth."""
+    return 2 * gm * R_EARTH * BASELINE / (r**3 * C2)
+
+
+def sitting_time(signal):
+    tau = (SIGMA0 / signal) ** 2
+    for label, unit in [("seconds", 1.0), ("hours", 3600.0), ("days", 86400.0)]:
+        if tau < 1000 * unit:
+            return f"{tau / unit:.0f} {label}"
+    years = tau / 3.156e7
+    if years < 1e4:
+        return f"{years:.0f} years"
+    return f"$10^{{{round(math.log10(years))}}}$ years"
+
+
+def vs_floor(signal):
+    ratio = signal / FLOOR
+    if ratio >= 1:
+        return f"{ratio:.0f}× above"
+    ratio = 1.0 / ratio
+    if ratio < 1000:
+        return f"{ratio:.0f}× below"
+    return f"$10^{{{round(math.log10(ratio))}}}$× below"
+
+
+ROWS = [
+    ("Earth, from a chair", G_SURFACE * BASELINE / C2),
+    ("Sun, hovering static at 1 AU", gradient(GM_SUN, AU)),
+    ("Sun, from a chair on Earth", tide(GM_SUN, AU)),
+    ("Jupiter, from a chair on Earth", tide(GM_JUP, 4.2 * AU)),
+    ("Jupiter, hovering 100,000 km out", gradient(GM_JUP, 1.0e8)),
+]
+lines = [
+    "| Source | Differential signal | Sitting time (statistical)"
+    " | vs systematic floor |",
+    "|---|---|---|---|",
+]
+for name, s in ROWS:
+    lines.append(f"| {name} | {s:.1e} | {sitting_time(s)} | {vs_floor(s)} |")
+Markdown("\n".join(lines))
+```
+
+Earth passes immediately. The vertical gradient across her own head is
+$1.1\times10^{-17}$ — laboratory clocks have already resolved this across
+a single millimeter — so a minute or two of stillness gives her *down*,
+permanently and unambiguously.
+
+The Sun is stranger. Hovering motionless at 1 AU the signal exists, and
+seven patient years would statistically resolve it — but it sits two
+orders of magnitude beneath today's systematic floor, so that sense waits
+on the next generation of clocks. And from a chair on Earth the situation
+is not merely hard but *impossible in principle*: the Earth free-falls
+around the Sun, and free fall cancels the leading gradient exactly — the
+equivalence principle, enforcing itself. All that survives inside the
+head is the tidal residue, four further orders down. No amount of focus
+recovers a signal that geometry has already removed. (Earthbound clock
+networks genuinely do feel the Moon and Sun near the $10^{-17}$ level —
+but through the solid-Earth tide bodily raising and lowering their clocks
+in Earth's *own* field, and that ride is common mode across one head:
+centering erases it.)
+
+Jupiter, from Earth, is beyond hopeless. To feel Jupiter she must go
+there — and *hold station*, engines burning, because an orbit is free
+fall and free fall forfeits the signal. Hovering 100,000 km above the
+cloud tops, Jupiter presses on her clocks as strongly as Earth does from
+a chair: one meditative minute.
+
+There is a familiar shape in all this. Setting the signal against the
+$10^{-18}$ floor gives the head a detection horizon of about 0.08 AU for
+a Sun-sized mass — and the Sun sits twelve times beyond its own horizon,
+just as the study above found a reach of only a few circumradii. And even
+inside the horizon, the verdict's caveat becomes absolute at astronomical
+range: the curvature term that separates mass from distance is suppressed
+by a further factor of baseline over range, about $10^{-12}$ at 1 AU. She
+could feel direction and pull, never distance — a presence, not a place.
+Which may be the most meditative conclusion physics has on offer.
+
 ::: {.callout-note title="Reproduce"}
 `uv run demo-echolocation-3d` regenerates the demo;
 `uv run scripts/scan_echolocation_range.py` reruns the sweep (tuning
