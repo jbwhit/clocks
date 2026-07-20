@@ -12,6 +12,7 @@ from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 from clocks.viz import (
+    animate_echolocation,
     animate_inference,
     animate_inference_2d,
     animate_inference_multi_1d,
@@ -669,3 +670,27 @@ class TestEcholocationDashboard:
         plot_centered_rates(axes["rates"], observed, predicted_centered)
         assert len(axes["rates"].patches) == 54  # two bar sets, 27 clocks each
         plt.close(fig)
+
+
+class TestAnimateEcholocation:
+    def test_creates_gif_and_processes_all_observations(self, tmp_path: Path) -> None:
+        from clocks._scenarios import (
+            build_echolocation_filter,
+            build_head_lattice,
+            echo_mass_config,
+            make_echo_observations,
+        )
+
+        _, centered = make_echo_observations(seed=0, range_r=2.0, n_observations=4)
+        pf = build_echolocation_filter(seed=0, n_particles=300)
+        out = tmp_path / "echo.gif"
+        animate_echolocation(
+            clock_array=build_head_lattice(),
+            mass_config=echo_mass_config(2.0),
+            observations=centered,
+            pf=pf,
+            output_path=out,
+            fps=2,
+        )
+        assert out.exists()
+        assert pf.state.observations_seen == 4  # frame-0 fix invariant

@@ -21,10 +21,18 @@ from clocks._panels import (
     plot_clock_rates,
     plot_clock_setup,
     plot_clock_setup_2d,
+    plot_mass_histogram,
     plot_particle_cloud,
     plot_particle_cloud_2d,
     plot_particle_cloud_multi_1d,
     plot_particle_cloud_multi_2d,
+)
+from clocks._panels3d import (
+    _ECHO_COLORS,
+    _ECHO_LABELS,
+    create_echolocation_dashboard,
+    plot_centered_rates,
+    plot_scene_3d,
 )
 from clocks.inference import ModelComparison, ParticleFilter
 from clocks.physics import clock_rates
@@ -46,6 +54,29 @@ def _save_animation(
     plt.close(fig)
 
 
+def _precompute_filter_states(
+    pf: ParticleFilter,
+    observations: list[Observation],
+) -> tuple[list[ParticleState], list[NDArray[np.floating]], list[NDArray[np.floating]]]:
+    """Run the filter through all observations up front (frame-0 fix)."""
+    states: list[ParticleState] = []
+    means: list[NDArray[np.floating]] = []
+    stds: list[NDArray[np.floating]] = []
+    for obs in observations:
+        state = pf.update(obs)
+        est = pf.estimate()
+        states.append(state)
+        means.append(est["mean"])
+        stds.append(est["std"])
+    if pf.state.observations_seen != len(observations):
+        raise RuntimeError(
+            f"Animation expected a fresh filter: saw "
+            f"{pf.state.observations_seen} observations for "
+            f"{len(observations)} frames"
+        )
+    return states, means, stds
+
+
 def _animate_filter_dashboard(
     fig: Figure,
     axes: dict[str, Axes],
@@ -62,21 +93,7 @@ def _animate_filter_dashboard(
     Render callables own their panel completely, including ``ax.clear()``
     and any artist lifecycle (e.g. colorbars).
     """
-    states: list[ParticleState] = []
-    means: list[NDArray[np.floating]] = []
-    stds: list[NDArray[np.floating]] = []
-    for obs in observations:
-        state = pf.update(obs)
-        est = pf.estimate()
-        states.append(state)
-        means.append(est["mean"])
-        stds.append(est["std"])
-    if pf.state.observations_seen != len(observations):
-        raise RuntimeError(
-            f"Animation expected a fresh filter: saw "
-            f"{pf.state.observations_seen} observations for "
-            f"{len(observations)} frames"
-        )
+    states, means, stds = _precompute_filter_states(pf, observations)
 
     def render(frame: int) -> None:
         render_particles(axes["particles"], states[frame])
@@ -483,4 +500,59 @@ def animate_model_comparison(
         frames=n_obs,
         repeat=False,
     )
+    _save_animation(anim, fig, output_path, fps)
+
+
+def animate_echolocation(
+    clock_array: ClockArray,
+    mass_config: MassConfig,
+    observations: list[Observation],
+    pf: ParticleFilter,
+    output_path: Path,
+    fps: int = 4,
+) -> None:
+    """Animate the 3D echolocation filter with a slowly orbiting camera.
+
+    ``observations`` must be the centered observations the filter consumes
+    (the head has no external reference). One full azimuth orbit spans the
+    whole animation. Particles have 4 columns: [x, y, z, M].
+    """
+    true_params = np.append(mass_config.positions[0], mass_config.masses[0])
+
+    fig, axes = create_echolocation_dashboard()
+    states, means, stds = _precompute_filter_states(pf, observations)
+    n_frames = len(observations)
+
+    def predicted_centered(frame: int) -> NDArray[np.floating]:
+        """Centered forward model at the frame's posterior mean (spec §2)."""
+        mean = means[frame]
+        rates = clock_rates(
+            MassConfig(positions=mean[:3].reshape(1, 3), masses=mean[3:4]),
+            clock_array,
+        )
+        return rates - rates.mean()
+
+    def render(frame: int) -> None:
+        azim = -60.0 + 360.0 * frame / n_frames
+        plot_scene_3d(axes["scene"], clock_array, mass_config, states[frame], azim=azim)
+        axes["history"].clear()
+        steps = np.arange(1, frame + 2)
+        _plot_convergence(
+            axes["history"],
+            steps,
+            np.array(means[: frame + 1]),
+            np.array(stds[: frame + 1]),
+            true_params,
+            _ECHO_COLORS,
+            _ECHO_LABELS,
+            legend_kwargs={"fontsize": 7, "ncol": 2},
+        )
+        axes["mass"].clear()
+        plot_mass_histogram(axes["mass"], states[frame], float(true_params[3]))
+        axes["rates"].clear()
+        plot_centered_rates(
+            axes["rates"], observations[frame].rates, predicted_centered(frame)
+        )
+
+    anim = animation.FuncAnimation(fig, render, frames=n_frames, repeat=False)
     _save_animation(anim, fig, output_path, fps)

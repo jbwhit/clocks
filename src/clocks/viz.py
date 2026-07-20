@@ -5,6 +5,7 @@ Implementations live in ``clocks._panels`` (static primitives) and
 """
 
 from clocks._animate import (
+    animate_echolocation,
     animate_inference,
     animate_inference_2d,
     animate_inference_multi_1d,
@@ -30,6 +31,7 @@ from clocks._panels3d import (
 )
 
 __all__ = [
+    "animate_echolocation",
     "animate_inference",
     "animate_inference_2d",
     "animate_inference_multi_1d",
