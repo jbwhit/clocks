@@ -1,7 +1,7 @@
 """Matplotlib plotting and animation (public facade).
 
-Implementations live in ``clocks._panels`` (static primitives) and
-``clocks._animate`` (animation drivers).
+Implementations live in ``clocks._panels`` and ``clocks._panels3d`` (static
+primitives) and ``clocks._animate`` (animation drivers).
 """
 
 from clocks._animate import (

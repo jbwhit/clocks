@@ -117,7 +117,7 @@ to.
 Physically coherent, with a short and treacherous horizon. The differential
 signal an exterior mass leaves on a head-sized lattice dies as 1/R², and
 separating mass from range leans on a fainter curvature term dying as 1/R³.
-So the sense is sharp only within two to three head-radii. Just beyond that
+So the sense is sharp only within two to three circumradii. Just beyond that
 lies a band where the degeneracy makes the head misjudge range *with
 confidence* — the most dangerous failure a sense can have — before the
 signal finally sinks far enough that the uncertainty widens honestly and
