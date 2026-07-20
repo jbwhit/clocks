@@ -158,7 +158,11 @@ def gradient(gm, r):
 
 
 def tide(gm, r):
-    """Surviving differential for a head riding the freely falling Earth."""
+    """Surviving differential for a head riding the freely falling Earth.
+
+    Best case: a vertical baseline at the sub-source point, where the
+    tidal factor (3 cos^2 theta - 1) reaches its maximum of 2.
+    """
     return 2 * gm * R_EARTH * BASELINE / (r**3 * C2)
 
 
@@ -188,7 +192,7 @@ ROWS = [
     ("Sun, hovering static at 1 AU", gradient(GM_SUN, AU)),
     ("Sun, from a chair on Earth", tide(GM_SUN, AU)),
     ("Jupiter, from a chair on Earth", tide(GM_JUP, 4.2 * AU)),
-    ("Jupiter, hovering 100,000 km out", gradient(GM_JUP, 1.0e8)),
+    ("Jupiter, hovering 100,000 km from center", gradient(GM_JUP, 1.0e8)),
 ]
 lines = [
     "| Source | Differential signal | Sitting time (statistical)"
@@ -208,22 +212,26 @@ permanently and unambiguously.
 The Sun is stranger. Hovering motionless at 1 AU the signal exists, and
 seven patient years would statistically resolve it — but it sits two
 orders of magnitude beneath today's systematic floor, so that sense waits
-on the next generation of clocks. And from a chair on Earth the situation
-is not merely hard but *impossible in principle*: the Earth free-falls
-around the Sun, and free fall cancels the leading gradient exactly — the
-equivalence principle, enforcing itself. All that survives inside the
-head is the tidal residue, four further orders down. No amount of focus
-recovers a signal that geometry has already removed. (Earthbound clock
-networks genuinely do feel the Moon and Sun near the $10^{-17}$ level —
-but through the solid-Earth tide bodily raising and lowering their clocks
-in Earth's *own* field, and that ride is common mode across one head:
-centering erases it.)
+on the next generation of clocks. And from a chair on Earth the problem
+changes in kind, not just degree: the Earth free-falls around the Sun,
+and free fall cancels that leading $1/R^2$ gradient exactly — the
+equivalence principle, enforcing itself. What survives inside the head is
+the tidal residue: real physics, measurable in principle, but four
+further orders down even with the most favorable alignment, and a million
+times beneath the floor. No amount of focus recovers the term geometry
+has removed, and no clock on any horizon reaches the one it leaves
+behind. (Earthbound clock networks genuinely do see lunar and solar
+signatures near the $10^{-17}$ level — tidal-potential and solid-Earth
+responses spread across continental baselines. Across a single head,
+though, that ride is common mode: centering erases it, leaving only the
+local residue already in the table.)
 
 Jupiter, from Earth, is beyond hopeless. To feel Jupiter she must go
 there — and *hold station*, engines burning, because an orbit is free
-fall and free fall forfeits the signal. Hovering 100,000 km above the
-cloud tops, Jupiter presses on her clocks as strongly as Earth does from
-a chair: one meditative minute.
+fall and free fall forfeits the signal. Hovering 100,000 km from
+Jupiter's center — barely 30,000 km above the cloud tops — Jupiter
+presses on her clocks as strongly as Earth does from a chair: one
+meditative minute.
 
 There is a familiar shape in all this. Setting the signal against the
 $10^{-18}$ floor gives the head a detection horizon of about 0.08 AU for
