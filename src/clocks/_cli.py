@@ -38,3 +38,7 @@ def demo_multi_mass_2d() -> None:
 
 def demo_density() -> None:
     _run_script("demo_density.py")
+
+
+def demo_echolocation_3d() -> None:
+    _run_script("demo_echolocation_3d.py")

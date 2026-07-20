@@ -35,6 +35,8 @@ website:
             href: story/how-many-masses.qmd
           - text: "Beyond Point Masses"
             href: story/beyond-point-masses.qmd
+          - text: "Gravitational Echolocation"
+            href: story/gravitational-echolocation.qmd
       - section: "Part 2 — Under the Hood"
         contents:
           - text: "The Particle Filter"

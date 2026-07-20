@@ -143,6 +143,18 @@ uv run demo-density    # → output/demo_density.png
 
 ![Gaussian density demo](assets/demo_density.png)
 
+**3D echolocation** — a 3×3×3 "head" of 27 clocks senses a single
+*exterior* mass from differential (mean-centered) rates only — the head
+has no outside time reference. Demo seed/range are curated for clarity;
+`scripts/scan_echolocation_range.py` runs the uncurated resolution-vs-range
+study behind the site page:
+
+```bash
+uv run demo-echolocation-3d    # → output/demo_echolocation_3d.gif
+```
+
+![3D echolocation demo](assets/demo_echolocation_3d.gif)
+
 ## Run tests
 
 ```bash
@@ -162,14 +174,20 @@ src/clocks/
     noise.py       Gaussian noise model and log-likelihood
     inference.py   Particle filter (SMC with systematic resampling)
     viz.py         Plotting and animation facade (_panels.py, _animate.py)
+    _panels3d.py   3D plotting primitives for the echolocation dashboard
+    _scenarios.py  Shared scenario builders for demos/scan harnesses/tests
+    _echo_study.py Reporting helpers for the echolocation range study
     _cli.py        Entry points for demo scripts
 scripts/
-    demo_1d.py               1D end-to-end demo
-    demo_2d.py               2D end-to-end demo
-    demo_multi_mass.py       Two masses in 1D
-    demo_multi_mass_2d.py    Two masses in 2D (random clocks)
-    demo_model_comparison.py Bayesian model comparison (infer K)
-    demo_density.py          Gaussian density forward model
+    demo_1d.py                    1D end-to-end demo
+    demo_2d.py                    2D end-to-end demo
+    demo_multi_mass.py            Two masses in 1D
+    demo_multi_mass_2d.py         Two masses in 2D (random clocks)
+    demo_model_comparison.py      Bayesian model comparison (infer K)
+    demo_density.py               Gaussian density forward model
+    demo_echolocation_3d.py       27-clock 3D echolocation demo (rotating camera)
+    scan_echolocation_range.py    Resolution-vs-range study for 3D echolocation
+    scan_multi_mass_2d.py         Seed-scan harness for the multi-mass-2D scenario
 tests/
     test_api.py, test_physics.py, test_inference.py, test_noise.py, test_viz.py
 ```

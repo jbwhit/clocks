@@ -21,7 +21,7 @@ uv sync
 
 ## Run the demos
 
-Five animated demos plus the density figure. Rough runtimes on a laptop:
+Six animated demos plus the density figure. Rough runtimes on a laptop:
 
 ```bash
 uv run demo-1d                  # → output/demo_1d.gif            (~2 min)
@@ -29,7 +29,14 @@ uv run demo-2d                  # → output/demo_2d.gif            (~3 min)
 uv run demo-multi-mass          # → output/demo_multi_mass.gif    (~3 min)
 uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.gif (~5 min)
 uv run demo-model-comparison    # → output/demo_model_comparison.gif (~5 min)
+uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif (~5 min)
 uv run demo-density             # → output/demo_density.png       (~2 min)
+```
+
+The echolocation range study behind the site page:
+
+```bash
+uv run scripts/scan_echolocation_range.py   # tuning seeds; published figure used --seed-block 300
 ```
 
 ## Use the library

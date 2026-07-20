@@ -12,12 +12,15 @@ from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 from clocks.viz import (
+    animate_echolocation,
     animate_inference,
     animate_inference_2d,
     animate_inference_multi_1d,
     animate_inference_multi_2d,
     animate_model_comparison,
+    create_echolocation_dashboard,
     create_inference_dashboard,
+    plot_centered_rates,
     plot_clock_rates,
     plot_clock_rates_2d,
     plot_clock_setup,
@@ -27,6 +30,7 @@ from clocks.viz import (
     plot_particle_cloud_2d,
     plot_particle_cloud_multi_1d,
     plot_particle_cloud_multi_2d,
+    plot_scene_3d,
 )
 
 matplotlib.use("Agg")
@@ -619,3 +623,74 @@ class TestAnimationProcessesObservationsOnce:
         )
         for pf in mc.filters.values():
             assert pf.state.observations_seen == len(observations)
+
+
+# -- Echolocation 3D panels --
+
+
+@pytest.fixture()
+def head_state() -> ParticleState:
+    rng = np.random.default_rng(0)
+    particles = np.column_stack(
+        [rng.uniform(-5, 5, size=(200, 3)), rng.uniform(0.05, 2.0, size=(200, 1))]
+    )
+    return ParticleState(
+        particles=particles,
+        weights=np.ones(200) / 200,
+        observations_seen=5,
+    )
+
+
+class TestEcholocationDashboard:
+    def test_dashboard_has_expected_axes(self) -> None:
+        fig, axes = create_echolocation_dashboard()
+        assert set(axes) == {"scene", "history", "mass", "rates"}
+        assert axes["scene"].name == "3d"
+        plt.close(fig)
+
+    def test_scene_renders_without_error(self, head_state: ParticleState) -> None:
+        from clocks._scenarios import build_head_lattice, echo_mass_config
+
+        fig, axes = create_echolocation_dashboard()
+        plot_scene_3d(
+            axes["scene"],
+            build_head_lattice(),
+            echo_mass_config(4.0),
+            head_state,
+            azim=30.0,
+        )
+        assert len(axes["scene"].collections) > 0
+        plt.close(fig)
+
+    def test_centered_rates_panel(self) -> None:
+        fig, axes = create_echolocation_dashboard()
+        rng = np.random.default_rng(1)
+        predicted_centered = rng.normal(0, 0.005, 27)
+        observed = predicted_centered + rng.normal(0, 0.005, 27)
+        plot_centered_rates(axes["rates"], observed, predicted_centered)
+        assert len(axes["rates"].patches) == 54  # two bar sets, 27 clocks each
+        plt.close(fig)
+
+
+class TestAnimateEcholocation:
+    def test_creates_gif_and_processes_all_observations(self, tmp_path: Path) -> None:
+        from clocks._scenarios import (
+            build_echolocation_filter,
+            build_head_lattice,
+            echo_mass_config,
+            make_echo_observations,
+        )
+
+        _, centered = make_echo_observations(seed=0, range_r=2.0, n_observations=4)
+        pf = build_echolocation_filter(seed=0, n_particles=300)
+        out = tmp_path / "echo.gif"
+        animate_echolocation(
+            clock_array=build_head_lattice(),
+            mass_config=echo_mass_config(2.0),
+            observations=centered,
+            pf=pf,
+            output_path=out,
+            fps=2,
+        )
+        assert out.exists()
+        assert pf.state.observations_seen == 4  # frame-0 fix invariant

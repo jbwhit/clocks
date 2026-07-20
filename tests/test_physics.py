@@ -386,3 +386,24 @@ class TestGaussianDensity:
         )
         result = clock_rates_density_gaussian_batch(params_batch, ca)
         assert result.shape == (4, 5)
+
+
+class TestBatchEquivalence3D:
+    def test_clock_rates_batch_matches_loop_in_3d(self) -> None:
+        rng = np.random.default_rng(7)
+        clock_array = ClockArray(
+            positions=rng.uniform(-2, 2, size=(9, 3)), track_offset=0.0
+        )
+        mass_positions = rng.uniform(3, 8, size=(20, 3))
+        masses = rng.uniform(0.05, 0.5, size=20)
+        batch = clock_rates_batch(mass_positions, masses, clock_array)
+        assert batch.shape == (20, 9)
+        for i in range(20):
+            single = clock_rates(
+                MassConfig(
+                    positions=mass_positions[i].reshape(1, 3),
+                    masses=masses[i : i + 1],
+                ),
+                clock_array,
+            )
+            assert np.allclose(batch[i], single)

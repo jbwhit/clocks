@@ -6,7 +6,7 @@ import pytest
 from clocks.api import build_particle_filter, infer, simulate, simulate_and_infer
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.inference import ModelComparison
-from clocks.results import SimulationResult
+from clocks.results import InferenceResult, SimulationResult
 from clocks.types import ClockArray, MassConfig, Observation
 
 
@@ -409,3 +409,38 @@ class TestSupportBoundsPlumbing:
             assert np.all(lower[position_end:] > 0.0)
             assert np.all(np.isfinite(lower[position_end:]))
             assert np.all(np.isinf(upper[position_end:]))
+
+
+class TestInference3D:
+    def test_single_mass_3d_recovery(self) -> None:
+        """(x, y, z, M) inference works end-to-end through the public API."""
+        rng = np.random.default_rng(3)
+        clock_array = ClockArray(
+            positions=rng.uniform(-3, 3, size=(12, 3)), track_offset=0.0
+        )
+        truth = MassConfig(
+            positions=np.array([[1.0, -1.5, 0.5]]), masses=np.array([0.5])
+        )
+        sim = simulate(
+            SimulationConfig(
+                clock_array=clock_array,
+                ground_truth=truth,
+                noise=NoiseConfig(observation_std=0.005),
+                n_observations=40,
+                seed=3,
+            )
+        )
+        result = infer(
+            sim.observations,
+            InferenceConfig(
+                clock_array=clock_array,
+                noise=NoiseConfig(observation_std=0.005),
+                prior=PriorConfig(position_range=(-5.0, 5.0), mass_range=(0.1, 2.0)),
+                n_particles=2000,
+                n_masses=1,
+                seed=3,
+            ),
+        )
+        assert isinstance(result, InferenceResult)
+        expected = np.array([1.0, -1.5, 0.5, 0.5])
+        assert np.all(np.abs(result.posterior_mean - expected) < 0.5)

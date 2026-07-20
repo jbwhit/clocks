@@ -333,8 +333,37 @@ Implementation events appended chronologically: the tuning freeze (frozen
 constants and measured tuning results), the one-shot certification outcome
 (or a burned-block record with diagnosis), and any parameter re-freezes.
 
-- (pending) Tuning freeze — recorded by the implementation plan's Task 9.
-- (pending) Certification — recorded by the implementation plan's Task 10.
+- Tuning freeze (seeds 0-11, 2026-07-19): ECHO_SWEEP_RANGES=(2.0, 2.6, 3.5,
+  4.6, 6.1, 8.0), ECHO_N_PARTICLES=6000, ECHO_PASS_POS_TOL=1.0,
+  ECHO_PASS_MASS_TOL=0.075, ECHO_FAR_STD_FACTOR=7.6, close-range pass 12/12,
+  far-range med_pos_std ratio 15.29 (5.510 at range 8.0 / 0.360 at range 2.0).
+  All four freeze criteria met at the starting defaults, so no scenario
+  constant was changed. SNR gate: signal/noise=0.28 at range 8.0 (>=0.1).
+  Close-range recovery: 12/12 at range 2.0. Degradation: med_pos_std rises
+  monotonically 0.360 -> 0.915 -> 2.186 -> 2.554 -> 3.927 -> 5.510; the filter
+  honestly widens its posterior with range. med_position_error rises steeply
+  from 0.280 (range 2.0) into the M/r-degeneracy band (4.07 at 2.6, peaking
+  9.65 at 3.5) then declines at far range (6.36 at 6.1, 5.48 at 8.0) as the
+  weak-signal posterior grows diffuse and reverts toward prior-center rather
+  than overshooting along the true-mass ray -- the study's expected finding,
+  not a defect. ECHO_FAR_STD_FACTOR=7.6 = floor(15.29/2, 1 decimal): a
+  headroom pin for Task 10, not a tautology. Honest uncertainty: far-range
+  covered_3sigma 11/12 at range 8.0 (>=8/12) -- far runs are honestly
+  uncertain, not confidently wrong; no particle-count increase needed.
+  (Coverage dips in the mid-range degeneracy band -- 3/12, 1/12, 1/12 at
+  2.6/3.5/4.6 -- where the estimate confidently overshoots along the ray; a
+  genuine finding for the page, distinct from the criterion-4 far-range gate.)
+  Demo kept at DEMO_RANGE_R=2.0, DEMO_SEED=4: no swept range above 2.0 has a
+  tuning seed converging cleanly (best above 2.0 is range 2.6 seed 0 at
+  pos_err 1.005, mass err 0.078 -- not under 1.0, mass not near 0.15), so no
+  upward re-curation and no GIF regeneration. Tuning artifacts written to
+  output/ (gitignored); certification (seed block 300) and the committed
+  study JSON/figure are Task 10's, run exactly once.
+- Certification (seeds 300-311, run once, 2026-07-19): close-range
+  pass 11/12, med pos_std ratio far/close = 14.71 (5.389 at range 8.0 /
+  0.366 at range 2.0); certified artifacts committed as
+  assets/echolocation_range_study.{json,png} and
+  site/assets/echolocation_range_study.png (seed_block 300).
 
 ## Out of scope (deferred, tracked in someday-maybe)
 
