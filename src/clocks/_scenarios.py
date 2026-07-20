@@ -8,6 +8,7 @@ runpy and pytest imports from the repo root; neither puts scripts/ on
 sys.path.
 """
 
+import math
 from collections.abc import Callable
 from itertools import product
 from typing import TypedDict
@@ -182,6 +183,8 @@ def validate_echo_geometry(
     range_r: float, m_true: float, clock_array: ClockArray
 ) -> None:
     """Fail fast on interior masses and weak-field violations (spec section 1)."""
+    if not math.isfinite(range_r):
+        raise ValueError(f"range_r must be finite, got {range_r}")
     if range_r < ECHO_MIN_RANGE_R:
         raise ValueError(
             f"range_r={range_r} is below the exterior minimum "

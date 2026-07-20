@@ -14,8 +14,9 @@ annealed-jitter defaults -- the estimate is pulled outward along the
 true-mass ray with mass biased ~5x high (a real M/r degeneracy at that
 SNR, not seed noise; position error ~8-10 vs a 1.0 pass tolerance across
 all ten seeds). Range 2.0 -- the scenario's own minimum (ECHO_MIN_RANGE_R)
-and the value already certified 12/12 in the range-study tuning sweep --
-converges cleanly and robustly (max position error 0.41 across 8 seeds).
+-- converges cleanly and robustly (max position error 0.41 across 8 seeds):
+it passed 12/12 on the tuning seeds (0-11); the one-shot certification
+sweep (seeds 300-311) later measured 11/12 there.
 See the task-8 report for the full range/seed scan.
 """
 

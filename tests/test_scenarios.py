@@ -108,6 +108,12 @@ class TestEchoGeometry:
         head = build_head_lattice()
         validate_echo_geometry(ECHO_MIN_RANGE_R, ECHO_M_TRUE, head)
 
+    def test_validate_rejects_non_finite_range(self) -> None:
+        head = build_head_lattice()
+        for bad in (float("inf"), float("nan")):
+            with pytest.raises(ValueError, match="finite"):
+                validate_echo_geometry(bad, ECHO_M_TRUE, head)
+
 
 class TestEchoMeasurementModel:
     def test_centered_observations_have_zero_mean(self) -> None:
