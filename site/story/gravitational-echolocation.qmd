@@ -1,0 +1,138 @@
+---
+title: "Gravitational Echolocation"
+---
+
+## A sense you weren't born with
+
+Imagine someone born with a lattice of atomic clocks embedded in their
+head — twenty-seven of them, arranged in a neat 3×3×3 grid. Every mass in
+the world dents spacetime, and clocks deeper in the dent tick slower. Could
+such a person *feel* the masses around them, the way echolocation feels
+surfaces?
+
+One constraint makes this premise honest: the head carries no outside
+reference. There is no distant master clock to compare against — only the
+twenty-seven clocks against each other. Whatever is sensed must live in
+the *differences* between their tick rates, never in their absolute values.
+
+That is a well-posed physics question, and everything on this site so far
+— the forward model, the particle filter, the degeneracy analysis — is
+already dimension-agnostic. So: how far can this sense reach?
+
+## What an exterior mass shows the head
+
+Every previous page hid the mass *inside* the sensor array. An exterior
+mass is a harder target: it shifts all twenty-seven clocks by nearly the
+same amount (a common-mode offset, ∝ M/R), and that shared offset is
+exactly what the head cannot perceive. Subtract the mean and what remains
+is the *gradient* of the potential across the head — falling off as 1/R²
+— plus the still-fainter curvature that distinguishes "small mass nearby"
+from "large mass far away." Direction is cheap; range is expensive. This
+is the [mass–distance degeneracy](one-clock-is-not-enough.qmd) in its
+purest form.
+
+```{python}
+#| code-fold: true
+#| fig-cap: "The differential signal an exterior mass leaves on the head, vs range. The dashed line is the per-observation noise floor; the sense must work in the shrinking gap above it."
+import matplotlib.pyplot as plt
+import numpy as np
+from clocks import clock_rates
+from clocks._scenarios import (
+    ECHO_NOISE_STD,
+    build_head_lattice,
+    echo_mass_config,
+)
+
+head = build_head_lattice()
+ranges = np.linspace(2.0, 10.0, 60)  # from the validated exterior minimum
+signal = []
+for r in ranges:
+    rates = clock_rates(echo_mass_config(float(r)), head)
+    signal.append(np.max(np.abs(rates - rates.mean())))
+
+fig, ax = plt.subplots()
+ax.semilogy(ranges, signal, color="steelblue", label="differential signal")
+ax.axhline(
+    ECHO_NOISE_STD, color="lightcoral", linestyle="--", label="noise floor"
+)
+ax.set_xlabel("range (circumradii)")
+ax.set_ylabel("max centered rate difference")
+ax.legend()
+plt.close(fig)
+fig
+```
+
+One technical footnote. Subtracting the mean makes the observation noise
+slightly correlated — every centered rate shares the subtracted average.
+The filter nonetheless keeps the simpler independent-noise likelihood,
+which is harmless here: on centered residuals the two likelihoods differ
+only by a constant that cancels out of the particle weights. (Only the
+absolute evidence normalization shifts, and nothing on this page uses it.)
+
+## Watching the head lock on
+
+The demo places the mass at two circumradii along a fixed off-axis
+direction and lets the filter work through eighty differential
+observations. The camera orbits once while the particle cloud — six
+thousand hypotheses spread through a box far larger than the head —
+collapses onto the true mass. (This demo run is curated for visual
+clarity: two circumradii is the closest, most favorable range, and its
+seed is fixed. The study below takes no such liberties.)
+
+![The echolocation demo. Left: the head lattice, the true exterior mass (star), and the particle cloud, camera orbiting. Right, top to bottom: parameter convergence, mass marginal, differential rates by clock.](../assets/demo_echolocation_3d.gif)
+
+## How far does the sense reach?
+
+The quantitative version: sweep the range from two to eight circumradii,
+twelve independent runs per range (certification seeds, run exactly once —
+no cherry-picking), and track both the *actual* error and the filter's own
+*claimed* uncertainty. The pass criterion is strict, and only the nearest
+range clears it.
+
+![Resolution vs range. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, dashed lines are the filter's claimed uncertainty (posterior std).](../assets/echolocation_range_study.png)
+
+At two circumradii the head localizes the mass in eleven of twelve runs,
+and its confidence is honest: the truth lands inside the filter's own
+3-sigma region in all twelve. This is the near field, and the sense works.
+
+Past that, it fails in two very different ways. From roughly two-and-a-half
+to four-and-a-half circumradii the filter is *confidently wrong*. The
+mass–distance degeneracy drags its estimate outward along the line of
+sight — pushing the mass too far and inflating its size to compensate —
+while the reported uncertainty stays deceptively tight. 3-sigma coverage
+collapses across this band: three of twelve, then one of twelve, then zero
+of twelve as the range grows. Here the head would swear it senses a mass
+that simply is not where it thinks.
+
+Farther out, from about six to eight circumradii, the failure turns honest.
+The signal now sits so far below the level where range can be pinned that
+the posterior just goes diffuse — position uncertainty at eight circumradii
+runs roughly fifteen times the near-field value — and with that width the
+truth falls back inside the credible region nine and then eleven times out
+of twelve. The head no longer knows *where*; but it has stopped pretending
+to.
+
+## Verdict
+
+Physically coherent, with a short and treacherous horizon. The differential
+signal an exterior mass leaves on a head-sized lattice dies as 1/R², and
+separating mass from range leans on a fainter curvature term dying as 1/R³.
+So the sense is sharp only within two to three head-radii. Just beyond that
+lies a band where the degeneracy makes the head misjudge range *with
+confidence* — the most dangerous failure a sense can have — before the
+signal finally sinks far enough that the uncertainty widens honestly and
+the false certainty dissolves. Our imagined synesthete would feel what is
+close — furniture, a doorframe, someone leaning in — as a presence with
+clear direction and rough heft; would feel things in the middle distance
+too, but misplaced, and held with a conviction they haven't earned; and
+would sense the far world only as a vague pressure with no fixed location.
+Echolocation is the right metaphor, with the right caveat: a near-field
+sense, written in spacetime instead of sound — reliable at arm's reach,
+credulous in the middle distance, and knowingly blind beyond.
+
+::: {.callout-note title="Reproduce"}
+`uv run demo-echolocation-3d` regenerates the demo;
+`uv run scripts/scan_echolocation_range.py` reruns the sweep (tuning
+seeds; the published figure used `--seed-block 300`). See
+[Getting Started](../reproduce/getting-started.qmd).
+:::
