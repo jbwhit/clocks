@@ -68,7 +68,7 @@ format:
     include-in-header: includes/fonts.html
 
 execute:
-  cache: false  # mirror blackholes: all cells are fast; every build fully recomputes
+  cache: false  # no caching: all cells are fast; every build fully recomputes (same policy as the blackholes repo)
   warning: false
 
 jupyter: python3

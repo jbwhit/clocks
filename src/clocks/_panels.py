@@ -169,7 +169,7 @@ def plot_particle_cloud_2d(
     particle_state: ParticleState,
     true_params: NDArray[np.floating] | None = None,
 ) -> None:
-    """Scatter particles on x-y plane, colored by weight, sized by mass."""
+    """Scatter particles on the x-y plane, colored by weight."""
     p = particle_state.particles
     w = particle_state.weights
 
@@ -256,7 +256,6 @@ def plot_clock_rates_2d(
 
 
 def create_inference_dashboard(
-    n_params: int = 2,
     figsize: tuple[float, float] = (12, 8),
 ) -> tuple[Figure, dict[str, Axes]]:
     """Create a 2x2 dashboard figure for inference animation.

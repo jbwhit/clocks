@@ -8,8 +8,9 @@ Real gravitational anomalies are rarely points — ore bodies, voids,
 aquifers, anything extended. The same machinery handles them: replace the
 point-mass forward model with one that integrates the potential over a
 continuous profile. Here, a Gaussian density with three parameters —
-center $\mu$, width $\sigma$, and peak amplitude $A$ — and the identical
-particle filter on top.
+center $\mu$, width $\sigma$ (the profile's own width here, not the
+observation noise from earlier pages), and peak amplitude $A$ — and the
+identical particle filter on top.
 
 ![The density demo. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
 
@@ -49,12 +50,14 @@ true one disagree visibly — yet the center panel shows their clock rates
 matching almost perfectly. The center $\mu$ localizes well, but $\sigma$
 and $A$ trade off along a ridge: a wider, weaker profile and a narrower,
 denser one can produce nearly identical potentials at a handful of clock
-positions. This is the
-[mass–distance degeneracy](one-clock-is-not-enough.qmd), reborn one level
-up. The
+positions. This is the same inverse-problem pattern as the
+[mass–distance degeneracy](one-clock-is-not-enough.qmd): different physical
+profiles map to nearly identical clock-rate data. The
 library's covariance-shaped jitter mode exists for exactly this kind of
 correlated posterior — it lets the particle cloud slide *along* the ridge
-instead of scattering off it.
+instead of scattering off it (the demo here uses the annealed default;
+covariance jitter is the specialist tool when the ridge is the whole
+story).
 
 ::: {.callout-note title="Where this could go"}
 The repo's [someday-maybe list](https://github.com/jbwhit/clocks/blob/main/docs/someday-maybe.md)
@@ -62,5 +65,6 @@ sketches the next steps: a special-relativity velocity term so SR and GR
 compete the way they do for real GPS satellites, an MCMC rejuvenation step
 to make the filter exactly posterior-preserving, and an in-browser
 interactive version — the inference engine is pure numpy/scipy, which
-Pyodide already supports.
+Pyodide already supports. First, though, one last question:
+[could you *feel* gravity?](gravitational-echolocation.qmd)
 :::

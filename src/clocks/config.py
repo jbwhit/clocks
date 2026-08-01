@@ -19,7 +19,12 @@ class NoiseConfig:
 
 @dataclass(frozen=True)
 class PriorConfig:
-    """Prior bounds for position and mass parameters."""
+    """Initial sampling ranges for position and mass parameters.
+
+    Positions remain bounded by `position_range` throughout inference;
+    masses are constrained only to be positive after initialization
+    (`mass_range` shapes the initial sample only).
+    """
 
     position_range: tuple[float, float]
     mass_range: tuple[float, float]
@@ -36,8 +41,9 @@ class InferenceConfig:
     """Top-level config for end-to-end inference.
 
     ``jitter_std`` scales the post-resampling jitter: an absolute standard
-    deviation when ``jitter="fixed"``, a fraction of the particle cloud's
-    weighted covariance when ``jitter="covariance"``, or the floor (late-run
+    deviation when ``jitter="fixed"``, a fraction of the particle cloud's own
+    spread (technically: it scales the Cholesky factor of the weighted
+    covariance) when ``jitter="covariance"``, or the floor (late-run
     asymptote) when ``jitter="annealed"``. ``jitter_tau`` is the anneal time
     constant, in observations, for the ``"annealed"`` schedule.
     """

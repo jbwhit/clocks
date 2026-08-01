@@ -48,7 +48,7 @@ print(f"Hidden mass: x = {x:.2f} ± {sx:.2f} (true 2.5)")
 print(f"             M = {m:.2f} ± {sm:.2f} (true 0.8)")
 ```
 
-## Read the idea in seven pages
+## Read the idea in eight pages
 
 1. [Clocks as Gravimeters](story/clocks-as-gravimeters.qmd) — time dilation
    is measured, not theoretical, and a precise clock is a gravity sensor.
@@ -64,6 +64,9 @@ print(f"             M = {m:.2f} ± {sm:.2f} (true 0.8)")
    as automatic Occam's razor.
 7. [Beyond Point Masses](story/beyond-point-masses.qmd) — inferring a
    continuous mass distribution.
+8. [Gravitational Echolocation](story/gravitational-echolocation.qmd) — a
+   27-clock "head" senses exterior masses, and we measure how far the sense
+   reaches.
 
 Or jump to [Getting Started](reproduce/getting-started.qmd) to run
 everything yourself.

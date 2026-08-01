@@ -4,8 +4,9 @@ title: "Gravitational Echolocation"
 
 ## A sense you weren't born with
 
-Imagine someone born with a lattice of atomic clocks embedded in their
-head — twenty-seven of them, arranged in a neat 3×3×3 grid. Every mass in
+Imagine someone — call her the synesthete — born with a lattice of atomic
+clocks embedded in their head — twenty-seven of them, arranged in a neat
+3×3×3 grid. Every mass in
 the world dents spacetime, and clocks deeper in the dent tick slower. Could
 such a person *feel* the masses around them, the way echolocation feels
 surfaces?
@@ -92,8 +93,9 @@ range clears it.
 ![Resolution vs range. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, dashed lines are the filter's claimed uncertainty (posterior std).](../assets/echolocation_range_study.png)
 
 At two circumradii the head localizes the mass in eleven of twelve runs,
-and its confidence is honest: the truth lands inside the filter's own
-3-sigma region in all twelve. This is the near field, and the sense works.
+and its confidence is honest: the truth lands inside all four componentwise
+±3 posterior-standard-deviation intervals in all twelve runs. This is the
+near field, and the sense works.
 
 Past that, it fails in two very different ways. From roughly two-and-a-half
 to four-and-a-half circumradii the filter is *confidently wrong*. The
@@ -108,17 +110,18 @@ Farther out, from about six to eight circumradii, the failure turns honest.
 The signal now sits so far below the level where range can be pinned that
 the posterior just goes diffuse — position uncertainty at eight circumradii
 runs roughly fifteen times the near-field value — and with that width the
-truth falls back inside the credible region nine and then eleven times out
-of twelve. The head no longer knows *where*; but it has stopped pretending
-to.
+truth falls back inside the componentwise 3-sigma intervals nine and then
+eleven times out of twelve. The head no longer knows *where*; but it has
+stopped pretending to.
 
 ## Verdict
 
 Physically coherent, with a short and treacherous horizon. The differential
 signal an exterior mass leaves on a head-sized lattice dies as 1/R², and
 separating mass from range leans on a fainter curvature term dying as 1/R³.
-So the sense is sharp only within two to three circumradii. Just beyond that
-lies a band where the degeneracy makes the head misjudge range *with
+So the sense is sharp only out to about two circumradii; by roughly 2.6
+circumradii it is already unreliable. Just beyond that lies a band where
+the degeneracy makes the head misjudge range *with
 confidence* — the most dangerous failure a sense can have — before the
 signal finally sinks far enough that the uncertainty widens honestly and
 the false certainty dissolves. Our imagined synesthete would feel what is
@@ -133,10 +136,10 @@ credulous in the middle distance, and knowingly blind beyond.
 ## Coda: could she feel the Sun?
 
 The simulation runs in units where G = c = 1, but nothing stops us from
-asking the question in SI. Give the head a 10 cm clock baseline and the
-best clocks the present day offers — fractional-frequency instability
-near $10^{-16}/\sqrt{\tau}$, systematic floors around $10^{-18}$ — and
-ask: sitting long and still enough, could she feel the Sun? Jupiter?
+asking the question in SI. Give the head a 10 cm clock baseline. For this
+estimate, assume a clock budget with fractional-frequency instability near
+$10^{-16}/\sqrt{\tau}$ and a systematic floor around $10^{-18}$ — and ask:
+sitting long and still enough, could she feel the Sun? Jupiter?
 
 ```{python}
 #| code-fold: true
@@ -205,8 +208,9 @@ Markdown("\n".join(lines))
 ```
 
 Earth passes immediately. The vertical gradient across her own head is
-$1.1\times10^{-17}$ — laboratory clocks have already resolved this across
-a single millimeter — so a minute or two of stillness gives her *down*,
+$1.1\times10^{-17}$. Laboratory clocks have resolved the same
+gravitational-redshift effect across a single millimeter, about
+$1.1\times10^{-19}$ — so a minute or two of stillness gives her *down*,
 permanently and unambiguously.
 
 The Sun is stranger. Hovering motionless at 1 AU the signal exists, and
@@ -219,16 +223,18 @@ equivalence principle, enforcing itself. What survives inside the head is
 the tidal residue: real physics, measurable in principle, but four
 further orders down even with the most favorable alignment, and a million
 times beneath the floor. No amount of focus recovers the term geometry
-has removed, and no clock on any horizon reaches the one it leaves
-behind. (Earthbound clock networks genuinely do see lunar and solar
+has removed — no future clock, however good, can measure a signal the
+equivalence principle has already cancelled. (Earthbound clock networks
+genuinely do see lunar and solar
 signatures near the $10^{-17}$ level — tidal-potential and solid-Earth
 responses spread across continental baselines. Across a single head,
 though, that ride is common mode: centering erases it, leaving only the
 local residue already in the table.)
 
 Jupiter, from Earth, is beyond hopeless. To feel Jupiter she must go
-there — and *hold station*, engines burning, because an orbit is free
-fall and free fall forfeits the signal. Hovering 100,000 km from
+there — and *hold station*, engines burning. Because an orbit is free
+fall: it removes the leading $1/R^2$ gradient and leaves only the much
+smaller tidal residue. Hovering 100,000 km from
 Jupiter's center — barely 30,000 km above the cloud tops — Jupiter
 presses on her clocks as strongly as Earth does from a chair: one
 meditative minute.

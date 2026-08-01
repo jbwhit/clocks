@@ -13,10 +13,12 @@ the seeds shown and you will get the numbers printed on the page.
 
 ## Tests
 
-The full suite — `uv run pytest` — covers the forward model's physical
+The default suite — `uv run pytest` — covers the forward model's physical
 invariants, the particle filter (convergence, resampling variants, the
 evidence-vs-direct-computation identity, weight-collapse handling), the
-noise model, the public API surface, and every animator. See
+noise model, the public API surface, and every animator; two long-running
+acceptance scans are excluded by default (`uv run pytest -m slow` runs
+them). See
 [`tests/`](https://github.com/jbwhit/clocks/tree/main/tests) for the
 current inventory; the README deliberately does not quote a test count,
 because hardcoded counts go stale.
@@ -26,13 +28,15 @@ because hardcoded counts go stale.
 Two workflows run on GitHub Actions:
 
 - [`ci.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/ci.yml)
-  runs tests and lint on every push.
+  runs tests and lint on every push to `main` and on every pull request.
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
   re-renders and redeploys this site on every push to `main`, so every
   executed-cell figure you see is regenerated from source at deploy time. The
-  demo GIFs and the density PNG are the exception: they are pre-rendered,
-  committed assets, reproducible on your machine via the
-  `uv run demo-*` commands.
+  demo GIFs, the density PNG, and the echolocation range-study PNG are the
+  exceptions: they are pre-rendered, committed assets, reproducible on your
+  machine via the `uv run demo-*` commands (the range-study PNG via
+  `uv run scripts/scan_echolocation_range.py`; see the
+  [echolocation page](../story/gravitational-echolocation.qmd)).
 
 ## Locked dependencies
 

@@ -17,7 +17,8 @@ def compute_distances(
     mass_positions: NDArray[np.floating],
     track_offset: float = 0.0,
 ) -> NDArray[np.floating]:
-    """Euclidean distance from each clock to each mass.
+    """Distance from each clock to each mass, with `track_offset` added as
+    an orthogonal (perpendicular) component.
 
     Returns: (n_clocks, n_masses) distance array.
     """
@@ -47,11 +48,12 @@ def time_dilation_factor(
 ) -> NDArray[np.floating]:
     """Gravitational time dilation factor: dtau/dt = sqrt(1 + 2*Phi).
 
-    In GR with c=1, the metric gives dtau/dt = sqrt(1 + 2*Phi/c^2).
+    In general relativity, dtau/dt = sqrt(1 + 2*Phi/c^2); in simulation
+    units (c=1) this simplifies to sqrt(1 + 2*Phi).
     Since Phi is negative, clocks in deeper potential wells tick slower.
     Clamped above eps to avoid sqrt of negative (black hole regime).
 
-    Returns: (n_clocks,) dilation factors in [0, 1].
+    Returns: (n_clocks,) dilation factors in (0, 1].
     """
     argument = 1.0 + 2.0 * potential
     return np.sqrt(np.maximum(argument, _EPS))

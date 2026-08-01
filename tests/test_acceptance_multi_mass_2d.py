@@ -32,13 +32,17 @@ def test_annealed_defaults_pass_holdout_scan() -> None:
 
 
 def test_shipped_defaults_match_certified_cell() -> None:
-    """Fast guard: every shipped jitter_tau default equals the certified
-    scan winner (spec §3). Runs in regular CI (not marked slow)."""
-    field = InferenceConfig.__dataclass_fields__["jitter_tau"]
-    assert field.default == CERTIFIED_TAU
+    """Fast guard: every shipped jitter_tau and jitter_std default equals
+    the certified scan winner (spec §3). Runs in regular CI (not marked
+    slow)."""
+    tau_field = InferenceConfig.__dataclass_fields__["jitter_tau"]
+    assert tau_field.default == CERTIFIED_TAU
+    floor_field = InferenceConfig.__dataclass_fields__["jitter_std"]
+    assert floor_field.default == CERTIFIED_FLOOR
     for fn in (ParticleFilter.__init__, ModelComparison.__init__):
         params = inspect.signature(fn).parameters
         assert params["jitter_tau"].default == CERTIFIED_TAU
+        assert params["jitter_std"].default == CERTIFIED_FLOOR
     runner = inspect.signature(run_multi_mass_2d).parameters
     assert runner["jitter_tau"].default == CERTIFIED_TAU
     assert runner["jitter_std"].default == CERTIFIED_FLOOR

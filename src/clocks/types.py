@@ -34,7 +34,9 @@ class ClockArray:
     """Array of clocks at fixed positions.
 
     positions: (n_clocks, n_dims) array of clock locations
-    track_offset: perpendicular offset from mass track (for 1D mass on track)
+    track_offset: perpendicular distance between the clock array and the
+        subspace the masses live in (a parallel track in 1D, an offset
+        plane in 2D; 0.0 for co-located, as in 3D)
     """
 
     positions: NDArray[np.floating]

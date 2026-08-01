@@ -2,17 +2,17 @@
 
 Gravitational time dilation simulation and inference library.
 
-**Website:** [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/) — the full story, from GPS corrections to Bayesian model comparison.
+**Website:** [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/) — the full story, from GPS corrections through model comparison, continuous densities, and 3D gravitational echolocation.
 
-Place atomic clocks near a hidden mass — they tick slower in the gravitational well. A particle filter (Sequential Monte Carlo) watches the noisy tick rates and infers the mass's position and magnitude, acting like a relativistic GPS.
+Place atomic clocks near a hidden mass — they tick slower in the gravitational well. A particle filter (Sequential Monte Carlo) watches the noisy tick rates and infers the mass's position and magnitude — GPS run in reverse.
 
 ## How it works
 
-**Forward model:** Given a point mass at position **x** with mass M, compute the Newtonian gravitational potential at each clock, then derive the GR time dilation factor (tick rate). Uses simulation units where G = c = 1.
+**Forward model:** Given one or more point masses at positions **x**_j with masses M_j, compute the Newtonian gravitational potential at each clock, then derive the weak-field GR time dilation factor (tick rate). Uses simulation units where G = c = 1.
 
-**Inverse problem:** A particle filter maintains a cloud of hypotheses for the unknown parameters. Each observation (noisy clock rates) reweights particles by likelihood, and systematic resampling with jitter prevents degeneracy. The cloud converges on the true parameters.
+**Inverse problem:** A particle filter maintains a cloud of hypotheses for the unknown parameters. Each observation (noisy clock rates) reweights particles by likelihood, and resampling with jitter reduces particle degeneracy. In well-conditioned scenarios, the cloud concentrates near the true parameters.
 
-The physics and inference are dimension-agnostic — the same code handles 1D, 2D, and 3D.
+The point-mass forward model and core particle filter are dimension-agnostic, with examples in 1D, 2D, and 3D.
 
 ## Setup
 
@@ -24,7 +24,7 @@ uv sync
 
 ## Use as a library
 
-The package now exposes stable end-to-end entry points for simulation and inference:
+The package exposes stable end-to-end entry points for simulation and inference:
 
 ```python
 import numpy as np
@@ -75,7 +75,7 @@ print(result.best_model)
 print(result.posterior_by_model)
 ```
 
-For fixed-K inference, pass an integer to `n_masses` instead of a tuple.
+For fixed-K inference, pass an integer to `n_masses` instead of a tuple. Model-comparison results (`n_masses` as a tuple) expose `best_model` and `posterior_by_model`; fixed-K results (`n_masses` as an int) expose a posterior summary instead (`posterior_mean`, `posterior_std`, `history`).
 
 To drive the filter observation-by-observation (e.g. for custom animation),
 build the same filter `infer` uses internally:
@@ -83,7 +83,15 @@ build the same filter `infer` uses internally:
 ```python
 from clocks import build_particle_filter
 
-pf = build_particle_filter(config)   # fixed-K InferenceConfig
+fixed_k_config = InferenceConfig(
+    clock_array=clock_array,
+    noise=NoiseConfig(observation_std=0.005),
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+    n_particles=1500,
+    n_masses=2,
+    seed=42,
+)
+pf = build_particle_filter(fixed_k_config)
 for obs in simulation.observations:
     pf.update(obs)
 print(pf.estimate())
@@ -157,6 +165,8 @@ uv run demo-echolocation-3d    # → output/demo_echolocation_3d.gif
 
 ## Run tests
 
+`uv run pytest` runs the default non-slow suite; run `uv run pytest -m slow` for the long acceptance scans.
+
 ```bash
 uv run pytest
 uv run ruff check src/ tests/ scripts/   # lint
@@ -172,8 +182,8 @@ src/clocks/
     api.py         End-to-end entry points (simulate, infer, build_particle_filter)
     physics.py     Forward model: mass config → clock tick rates
     noise.py       Gaussian noise model and log-likelihood
-    inference.py   Particle filter (SMC with systematic resampling)
-    viz.py         Plotting and animation facade (_panels.py, _animate.py)
+    inference.py   Particle filter (SMC with systematic/stratified/residual resampling)
+    viz.py         Plotting and animation facade (_panels.py, _panels3d.py, _animate.py)
     _panels3d.py   3D plotting primitives for the echolocation dashboard
     _scenarios.py  Shared scenario builders for demos/scan harnesses/tests
     _echo_study.py Reporting helpers for the echolocation range study
@@ -189,5 +199,6 @@ scripts/
     scan_echolocation_range.py    Resolution-vs-range study for 3D echolocation
     scan_multi_mass_2d.py         Seed-scan harness for the multi-mass-2D scenario
 tests/
-    test_api.py, test_physics.py, test_inference.py, test_noise.py, test_viz.py
+    Unit, scenario, visualization, echo-study, and slow acceptance tests —
+    see `tests/` for the current inventory.
 ```
