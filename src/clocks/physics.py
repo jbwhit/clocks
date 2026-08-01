@@ -48,8 +48,8 @@ def time_dilation_factor(
 ) -> NDArray[np.floating]:
     """Gravitational time dilation factor: dtau/dt = sqrt(1 + 2*Phi).
 
-    In general relativity, dtau/dt = sqrt(1 + 2*Phi/c^2); in simulation
-    units (c=1) this simplifies to sqrt(1 + 2*Phi).
+    In the weak-field limit of general relativity, dtau/dt = sqrt(1 + 2*Phi/c^2);
+    in simulation units (c=1) this simplifies to sqrt(1 + 2*Phi).
     Since Phi is negative, clocks in deeper potential wells tick slower.
     Clamped above eps to avoid sqrt of negative (black hole regime).
 

@@ -10,9 +10,9 @@ near a mass) ticks at a rate
 
 $$\frac{d\tau}{dt} = \sqrt{1 + \frac{2\Phi}{c^2}}$$
 
-relative to a clock far from everything. The factor is the weak-field
-metric's time–time component; for a single spherical mass it reduces to
-the Schwarzschild result. We will not derive it here, just use it
+relative to a clock far from everything. The factor comes from the
+weak-field metric's time–time component; for a single spherical mass it
+reduces to the Schwarzschild result. We will not derive it here, just use it
 relentlessly. Deeper in a gravitational well, $\Phi$ is
 more negative, the square root is smaller, and the clock ticks slower. No
 exotic conditions required — it is true of every clock, everywhere, all the

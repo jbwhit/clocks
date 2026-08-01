@@ -5,7 +5,7 @@ title: "Gravitational Echolocation"
 ## A sense you weren't born with
 
 Imagine someone — call her the synesthete — born with a lattice of atomic
-clocks embedded in their head — twenty-seven of them, arranged in a neat
+clocks embedded in her head — twenty-seven of them, arranged in a neat
 3×3×3 grid. Every mass in
 the world dents spacetime, and clocks deeper in the dent tick slower. Could
 such a person *feel* the masses around them, the way echolocation feels
@@ -74,7 +74,7 @@ absolute evidence normalization shifts, and nothing on this page uses it.)
 
 The demo places the mass at two circumradii along a fixed off-axis
 direction and lets the filter work through eighty differential
-observations. The camera orbits once while the particle cloud — six
+observations. The camera nearly completes an orbit while the particle cloud — six
 thousand hypotheses spread through a box far larger than the head —
 collapses onto the true mass. (This demo run is curated for visual
 clarity: two circumradii is the closest, most favorable range, and its

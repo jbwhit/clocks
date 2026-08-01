@@ -35,7 +35,8 @@ Two workflows run on GitHub Actions:
   demo GIFs, the density PNG, and the echolocation range-study PNG are the
   exceptions: they are pre-rendered, committed assets, reproducible on your
   machine via the `uv run demo-*` commands (the range-study PNG via
-  `uv run scripts/scan_echolocation_range.py`; see the
+  `uv run scripts/scan_echolocation_range.py --seed-block 300`, the
+  certification block the published figure used; see the
   [echolocation page](../story/gravitational-echolocation.qmd)).
 
 ## Locked dependencies
