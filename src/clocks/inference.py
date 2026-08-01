@@ -143,6 +143,11 @@ class ParticleFilter:
     rng : Numpy random generator.
     forward_model_batch : Optional Callable(particles) → (n_particles, n_clocks).
         If provided, used instead of looping forward_model per particle.
+    constraint_fn : Optional Callable(particles) -> particles applied after
+        resampling (and at init) to enforce structural constraints, e.g. mass
+        ordering for multi-mass models.
+    resampling : Resampling scheme after ESS drops below threshold: "systematic"
+        (default, minimal-variance), "stratified", or "residual".
     jitter : Jitter mode after resampling. ``"fixed"`` uses isotropic Gaussian
         noise; ``"covariance"`` draws from the weighted empirical covariance
         so correlated parameters jitter along their joint structure;
@@ -170,7 +175,7 @@ class ParticleFilter:
         forward_model: Callable[[NDArray[np.floating]], NDArray[np.floating]],
         noise_std: float,
         resample_threshold: float = 0.5,
-        jitter_std: float = 0.01,
+        jitter_std: float = 0.02,
         rng: np.random.Generator | None = None,
         forward_model_batch: Callable[[NDArray[np.floating]], NDArray[np.floating]]
         | None = None,
@@ -474,8 +479,9 @@ class ModelComparisonResult(TypedDict):
 class ModelComparison:
     """Bayesian model comparison over number of point masses.
 
-    Runs parallel particle filters for K=1..k_max and compares
-    accumulated log-evidence to infer the most likely number of masses.
+    Runs parallel particle filters for `k_values` when provided; otherwise
+    for K=1..k_max, and compares accumulated log-evidence to infer the most
+    likely number of masses.
     """
 
     def __init__(
@@ -635,7 +641,9 @@ class ModelComparison:
         position_range: tuple[float, float],
         mass_range: tuple[float, float],
     ) -> Callable[[NDArray[np.floating]], NDArray[np.floating]]:
-        """Log-prior: -inf for negative masses or out-of-range positions."""
+        """Log-prior: -inf for non-positive masses or positions outside
+        position_range; mass_range only shapes initial sampling, not the
+        prior support."""
         n_dims = self.n_dims
 
         def log_prior(particles: NDArray[np.floating]) -> NDArray[np.floating]:

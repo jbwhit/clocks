@@ -32,12 +32,15 @@ from clocks.results import (
 )
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 from clocks.viz import (
+    animate_echolocation,
     animate_inference,
     animate_inference_2d,
     animate_inference_multi_1d,
     animate_inference_multi_2d,
     animate_model_comparison,
+    create_echolocation_dashboard,
     create_inference_dashboard,
+    plot_centered_rates,
     plot_clock_rates,
     plot_clock_rates_2d,
     plot_clock_setup,
@@ -47,6 +50,7 @@ from clocks.viz import (
     plot_particle_cloud_2d,
     plot_particle_cloud_multi_1d,
     plot_particle_cloud_multi_2d,
+    plot_scene_3d,
 )
 
 __all__ = [
@@ -68,6 +72,7 @@ __all__ = [
     "SimulationConfig",
     "SimulationResult",
     "add_clock_noise",
+    "animate_echolocation",
     "animate_inference",
     "animate_inference_2d",
     "animate_inference_multi_1d",
@@ -80,11 +85,13 @@ __all__ = [
     "clock_rates_density_gaussian",
     "clock_rates_density_gaussian_batch",
     "compute_distances",
+    "create_echolocation_dashboard",
     "create_inference_dashboard",
     "gravitational_potential",
     "infer",
     "log_likelihood_gaussian",
     "log_likelihood_gaussian_batch",
+    "plot_centered_rates",
     "plot_clock_rates",
     "plot_clock_rates_2d",
     "plot_clock_setup",
@@ -94,6 +101,7 @@ __all__ = [
     "plot_particle_cloud_2d",
     "plot_particle_cloud_multi_1d",
     "plot_particle_cloud_multi_2d",
+    "plot_scene_3d",
     "simulate",
     "simulate_and_infer",
     "time_dilation_factor",

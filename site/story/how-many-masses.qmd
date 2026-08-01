@@ -16,9 +16,10 @@ predicted it win.
 
 ## Occam's razor, automatic
 
-The suspicious thing is that $K=3$ doesn't win — a three-mass model
-*contains* every two-mass configuration (set one mass near zero), so its
-best fit is at least as good. Evidence is not best-fit, though: it
+The suspicious thing is that $K=3$ doesn't win — a three-mass model *can
+mimic* many two-mass configurations by pushing the extra mass toward the
+lower prior bound or into a weakly visible location, so its best fit is at
+least as good. Evidence is not best-fit, though: it
 averages the likelihood over the model's whole prior. Extra parameters
 spread that average across vast regions of configuration space the data
 rejects, and the dilution is the tax. Complexity isn't punished by rule;

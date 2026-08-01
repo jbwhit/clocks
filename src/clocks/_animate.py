@@ -514,8 +514,9 @@ def animate_echolocation(
     """Animate the 3D echolocation filter with a slowly orbiting camera.
 
     ``observations`` must be the centered observations the filter consumes
-    (the head has no external reference). One full azimuth orbit spans the
-    whole animation. Particles have 4 columns: [x, y, z, M].
+    (the head has no external reference). The camera advances through nearly
+    one full azimuth orbit over the animation. Particles have 4 columns:
+    [x, y, z, M].
     """
     true_params = np.append(mass_config.positions[0], mass_config.masses[0])
 

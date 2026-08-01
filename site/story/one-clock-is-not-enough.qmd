@@ -33,7 +33,9 @@ independent measurements — could split the difference.
 Each additional clock at a different position samples the potential
 somewhere else. One clock pins down $M/r$; several clocks pin down how the
 field *falls off*, and the falloff is what separates distance from mass.
-Triangulation, by time dilation.
+Triangulation, by time dilation. This time the clocks also sit at a small
+perpendicular offset (`track_offset=1.0`) from the line the mass lives on
+— a geometry the next page makes standard.
 
 ```{python}
 #| code-fold: true

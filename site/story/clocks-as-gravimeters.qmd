@@ -10,9 +10,10 @@ near a mass) ticks at a rate
 
 $$\frac{d\tau}{dt} = \sqrt{1 + \frac{2\Phi}{c^2}}$$
 
-relative to a clock far from everything. The factor comes straight out of
-the time–time component of the Schwarzschild metric; we will not derive it
-here, just use it relentlessly. Deeper in a gravitational well, $\Phi$ is
+relative to a clock far from everything. The factor comes from the
+weak-field metric's time–time component; for a single spherical mass it
+reduces to the Schwarzschild result. We will not derive it here, just use it
+relentlessly. Deeper in a gravitational well, $\Phi$ is
 more negative, the square root is smaller, and the clock ticks slower. No
 exotic conditions required — it is true of every clock, everywhere, all the
 time.
@@ -21,11 +22,9 @@ time.
 
 Two anchors from the real world:
 
-- **GPS.** As the [landing page](../index.qmd) describes, satellite clocks
-  gain about 45 µs/day from sitting higher in Earth's potential and lose
-  about 7 µs/day to special-relativistic time dilation. The correction is
-  engineered into the system; without it, positioning would fail within
-  hours.
+- **GPS** (see the [landing page](../index.qmd)): the net relativistic
+  drift is engineered out of the system; without the correction,
+  positioning would fail within hours.
 - **Optical lattice clocks.** Modern clocks reach fractional stabilities
   near $10^{-18}$ — good enough to resolve the gravitational redshift from
   a *one-centimeter* height change. In 2020, Katori's group operated two

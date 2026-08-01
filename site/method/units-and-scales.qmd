@@ -5,9 +5,10 @@ title: "Units and Scales"
 ## G = c = 1, and what that buys
 
 The simulation sets $G = c = 1$. One choice of units removes two constants
-from every equation: the potential is $\Phi = -M/r$ with no $G$, the tick
-rate is $\sqrt{1 + 2\Phi}$ with no $c^2$, and positions, masses, and times
-become pure numbers. Nothing physical is lost — only bookkeeping.
+from every equation: the potential simplifies to $\Phi = -M/r$ (setting
+$G=1$), and the tick rate simplifies to $\sqrt{1 + 2\Phi}$ (setting
+$c=1$), turning positions, masses, and times into pure dimensionless
+numbers. Nothing physical is lost — only bookkeeping.
 
 ## What M = 0.8 means
 
@@ -40,12 +41,15 @@ for i, (r, rate) in enumerate(zip(distances, rates)):
 
 Read those `r/r_s` values: this is strong-field territory. A real
 observer at these separations would have larger worries than clock
-calibration.
+calibration. One more honesty note: for several masses we simply sum the
+$-M/r$ potentials, which is itself a weak-field idealization — pushed here
+into the strong field purely to make the signal visible.
 
 ## Scaling to reality
 
 At Earth's surface, $2\Phi/c^2 \approx 1.4 \times 10^{-9}$ — the dip the
-demos paint in percent is, for real planetary fields, parts per billion.
+demos paint in tens of percent is, for real planetary fields, parts per
+billion.
 Detecting *anomalies* (a buried density contrast, not the whole planet)
 means resolving fractional rate differences around $10^{-18}$ to
 $10^{-17}$, which is exactly why the

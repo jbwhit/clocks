@@ -2,8 +2,8 @@
 
 A 3x3x3 lattice of 27 clocks (the "head") senses a single point mass
 placed outside it. The head has no external time reference, so the filter
-sees only mean-centered (differential) rates. The camera orbits once over
-the animation.
+sees only mean-centered (differential) rates. The camera nearly completes
+an orbit over the animation.
 
 Demo seed and range are curated for visual clarity (disclosed in README
 and on the site page); the range study carries the quantitative argument.

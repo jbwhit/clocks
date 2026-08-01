@@ -1,4 +1,5 @@
-"""Shared multi-mass-2D scenario: demo, scan harness, and acceptance test.
+"""Shared scenario builders: the multi-mass-2D problem and the 3D
+echolocation study (demos, scan harnesses, acceptance tests).
 
 This is the problem instance whose premature-collapse failure motivated
 the annealed jitter mode (spec:

@@ -51,11 +51,12 @@ jitter modes:
   still escape a wrong mode; late in the run the jitter is as gentle as
   fixed jitter.
 
-The covariance mode has a guard worth knowing about: with fewer than two
-effective particles the weighted covariance is mathematically undefined
-(`np.cov`'s normalization $1 - \sum w_i^2$ hits zero), so the filter falls
-back to isotropic jitter for that resample rather than crashing or
-freezing.
+The covariance mode has a guard worth knowing about: with too few
+effective particles the weighted covariance degenerates (`np.cov`'s
+normalization $1 - \sum w_i^2$ reaches zero at one effective particle), so
+below two effective particles — or when the cloud has collapsed to
+near-identical clones — the filter falls back to isotropic jitter for that
+resample rather than crashing or freezing.
 
 ## Evidence
 
