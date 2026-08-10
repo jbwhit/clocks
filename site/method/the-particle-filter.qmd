@@ -2,9 +2,11 @@
 title: "The Particle Filter"
 ---
 
+::: {#sec-intro}
 This page is for the reader who wants the machinery. The implementation is
 `clocks.inference.ParticleFilter` — a few hundred lines, and everything below
 maps onto it directly.
+:::
 
 ## State
 
@@ -24,7 +26,7 @@ position out of range) — invalid particles die instantly rather than being
 clamped. Normalization happens in log space (log-sum-exp), because with
 $\sigma = 0.005$ the raw likelihoods underflow immediately.
 
-## Resampling
+## Resampling {#sec-resampling}
 
 A few sharp observations leave most particles with negligible weight. The
 **effective sample size** $\mathrm{ESS} = 1/\sum_i w_i^2$ measures the
@@ -58,7 +60,7 @@ below two effective particles — or when the cloud has collapsed to
 near-identical clones — the filter falls back to isotropic jitter for that
 resample rather than crashing or freezing.
 
-## Evidence
+## Evidence {#sec-evidence}
 
 Each update's increment $\log \sum_i w_i L_i$ is the marginal likelihood of
 that observation under the model — how well the model *predicted* the data

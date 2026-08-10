@@ -4,9 +4,10 @@ title: "Clocks as Gravimeters"
 
 ## Time runs slower downhill
 
-Everything on this site rests on one weak-field result from general
-relativity: a clock sitting at Newtonian potential $\Phi$ (which is negative
-near a mass) ticks at a rate
+Everything on this site rests on one
+[weak-field result](../method/notation-and-glossary.qmd#term-weak-field)
+from general relativity: a clock sitting at Newtonian potential $\Phi$
+(which is negative near a mass) ticks at a rate
 
 $$\frac{d\tau}{dt} = \sqrt{1 + \frac{2\Phi}{c^2}}$$
 

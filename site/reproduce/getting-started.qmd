@@ -41,7 +41,7 @@ uv run scripts/scan_echolocation_range.py   # tuning seeds; published figure use
 
 ## Use the library
 
-The same example as the repository README, executed live on this page —
+A complete simulate-then-infer round trip, executed live on this page —
 if you can read the output below, the install instructions above work:
 
 ```{python}
@@ -96,7 +96,7 @@ print(result.posterior_by_model)
 
 For fixed-K inference, pass an integer to `n_masses`; to drive the filter
 observation-by-observation (e.g. for animation), use
-`build_particle_filter` — both are documented in the
-[README](https://github.com/jbwhit/clocks#use-as-a-library).
+`build_particle_filter` — see
+[The Particle Filter](../method/the-particle-filter.qmd).
 
 Next: [Reproducibility](reproducibility.qmd) — seeds, tests, and CI.

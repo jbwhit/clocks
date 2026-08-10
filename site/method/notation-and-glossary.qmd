@@ -1,0 +1,110 @@
+---
+title: "Notation & Glossary"
+---
+
+A consolidated lookup for every symbol and term used across the site.
+Symbols defined on their source pages are still listed here — this page
+exists so you never have to hunt for where a definition first appeared.
+
+## Physics notation {#sec-physics-notation}
+
+| Symbol | Meaning | Where introduced |
+|---|---|---|
+| $\Phi$ | Newtonian gravitational potential (negative near a mass); $-M/r$ for a point mass | [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd) |
+| $G$, $c$ | Newton's constant and the speed of light; the simulation sets $G = c = 1$ | [Units and Scales](units-and-scales.qmd) |
+| $\tau$, $t$ | Proper time vs coordinate time; a clock's tick rate is $d\tau/dt$ | [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd) |
+| $r$ | Bare $r$ is always a *distance* on this site | [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd) |
+| $r_c$ | Tick rate of clock $c$ in the filter equations — same letter as distance, distinguished by the clock index | [The Particle Filter](the-particle-filter.qmd) |
+| $r_{ij}$ | Distance from clock $i$ to mass $j$ | [Into the Plane](../story/into-the-plane.qmd) |
+| $r_s$ | Schwarzschild radius, $r_s = 2M$ in simulation units | [Units and Scales](units-and-scales.qmd) |
+| $R$ | Range from the clock lattice to an exterior mass; the differential signal falls as $1/R^2$, the curvature term as $1/R^3$ | [Gravitational Echolocation](../story/gravitational-echolocation.qmd) |
+| $x$, $y$ | Mass position coordinates (subscripted $x_1, x_2$ with several masses) | [The Search in One Dimension](../story/the-search-in-one-dimension.qmd) ($x$); [Into the Plane](../story/into-the-plane.qmd) ($y$) |
+| $M$, $M_j$ | Mass (of mass $j$) | [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd) |
+| $\mu$, $\sigma_{\text{density}}$, $A$ | Center, width, and peak amplitude of a continuous Gaussian mass profile | [Beyond Point Masses](../story/beyond-point-masses.qmd) |
+
+[**Index conventions**]{#term-index-conventions} — context-dependent: $i$
+indexes clocks/evaluation points in the potential sum ($r_{ij}$) but
+*particles* in the filter equations ($w_i$, $\theta_i$); $j$ indexes
+masses; $c$ indexes clocks ($r_c$).
+
+## Inference notation {#sec-inference-notation}
+
+| Symbol | Meaning | Where introduced |
+|---|---|---|
+| $\sigma_{\text{obs}}$ | Observation noise standard deviation (0.005 in the demos); written plain $\sigma$ on the inference pages | [One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd) |
+| $N$ | Number of particles in the filter's cloud | [The Particle Filter](the-particle-filter.qmd) |
+| $w_i$ | Weight of particle $i$ (weights sum to one) | [The Particle Filter](the-particle-filter.qmd) |
+| $\theta_i$ | Particle $i$'s full parameter hypothesis, e.g. $(x, M)$ | [The Particle Filter](the-particle-filter.qmd) |
+| $K$ | Number of masses a model assumes | [How Many Masses?](../story/how-many-masses.qmd) |
+| ESS | Effective sample size, $1/\sum_i w_i^2$ | [The Particle Filter](the-particle-filter.qmd#sec-resampling) |
+| evidence, log-evidence | Marginal likelihood of the observed data under a model, accumulated observation by observation | [How Many Masses?](../story/how-many-masses.qmd) |
+
+::: {.callout-note title="Two overloaded symbols"}
+**$\sigma$** means observation noise on the inference pages but Gaussian
+profile *width* in [Beyond Point Masses](../story/beyond-point-masses.qmd)
+(which flags the reuse itself); this page writes $\sigma_{\text{obs}}$ vs
+$\sigma_{\text{density}}$ to keep them apart. **$\tau$** means proper time
+in $d\tau/dt$, but in the
+[echolocation coda](../story/gravitational-echolocation.qmd) it is a clock's
+*averaging time*: there $\sigma_y(\tau) = 10^{-16}/\sqrt{\tau}$ is the
+clock's fractional-frequency instability after averaging for time $\tau$.
+:::
+
+## Terms {#sec-terms}
+
+- [**Weak field**]{#term-weak-field} — the regime where gravity is a small
+  correction ($|2\Phi/c^2| \ll 1$) and the tick rate
+  $\sqrt{1 + 2\Phi/c^2}$ applies; see
+  [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd).
+- [**Time dilation**]{#term-time-dilation} — clocks deeper in a
+  gravitational well tick slower relative to distant ones; the measurable
+  effect this whole site is built on
+  ([Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd)).
+- [**Chronometric leveling**]{#term-chronometric-leveling} — surveying
+  height differences by comparing clock rates, as in the Tokyo Skytree
+  experiment ([Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd)).
+- [**Forward model**]{#term-forward-model} — the physics direction:
+  from a mass configuration to the clock rates it produces
+  ([Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd)).
+- [**Inverse problem**]{#term-inverse-problem} — the detection direction:
+  from noisy clock rates back to the masses that caused them
+  (concept: [One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
+- [**Mass–distance degeneracy**]{#term-degeneracy} — a small mass nearby
+  and a heavy mass far away can produce identical readings; reduced or
+  broken by sufficiently informative array geometry
+  ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
+- [**Particle filter**]{#term-particle-filter} — the site's inference
+  engine: a cloud of weighted hypotheses, reweighted by each observation
+  ([The Particle Filter](the-particle-filter.qmd)).
+- [**Prior**]{#term-prior} — what the filter assumes before any data:
+  uniform ranges for positions and masses
+  ([The Particle Filter](the-particle-filter.qmd)).
+- [**Likelihood**]{#term-likelihood} — how well a hypothesis predicts an
+  observed set of clock rates; Gaussian in the observation noise
+  ([The Particle Filter](the-particle-filter.qmd)).
+- [**Posterior**]{#term-posterior} — the belief after data. The particle
+  cloud approximates it; the cloud's spread is the filter's *claimed*
+  uncertainty ([The Search in One Dimension](../story/the-search-in-one-dimension.qmd)).
+- [**Evidence**]{#term-evidence} — the marginal likelihood a model
+  assigned to the data it actually saw; what
+  [model comparison](../story/how-many-masses.qmd) ranks
+  ([The Particle Filter](the-particle-filter.qmd#sec-evidence)).
+- [**Resampling**]{#term-resampling} — redrawing the cloud in proportion
+  to weight when the ESS collapses; systematic, stratified, or residual
+  ([The Particle Filter](the-particle-filter.qmd#sec-resampling)).
+- [**Jitter**]{#term-jitter} — small perturbation of resampled clones so
+  they don't sit on top of each other; fixed, covariance, or annealed (the
+  default) ([The Particle Filter](the-particle-filter.qmd#sec-resampling)).
+- [**Effective sample size**]{#term-ess} — $1/\sum_i w_i^2$; how many
+  particles are meaningfully alive
+  ([The Particle Filter](the-particle-filter.qmd#sec-resampling)).
+- [**Model comparison**]{#term-model-comparison} — running one filter per
+  candidate mass count $K$ and comparing evidence
+  ([How Many Masses?](../story/how-many-masses.qmd)).
+- [**Label switching**]{#term-label-switching} — with several masses the
+  posterior is symmetric under relabeling; broken by sorting, at a known
+  cost ([Two Hidden Masses](../story/two-hidden-masses.qmd)).
+- [**Observation noise**]{#term-sigma-obs} — the Gaussian noise
+  $\sigma_{\text{obs}}$ added to every clock reading; the floor that
+  makes many observations necessary
+  ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).

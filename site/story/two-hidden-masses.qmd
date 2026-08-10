@@ -16,10 +16,10 @@ problem gets qualitatively harder, not merely bigger.
 
 "Mass 1" and "mass 2" are *our* labels; the physics doesn't care. A
 hypothesis with the masses swapped predicts identical clock rates, so the
-true posterior is perfectly bimodal — and the mean of a bimodal cloud lands
+true [posterior](../method/notation-and-glossary.qmd#term-posterior) is perfectly bimodal — and the mean of a bimodal cloud lands
 meaninglessly between the modes. The library breaks the symmetry by fiat:
 particles are sorted so $x_1 < x_2$ at sampling and again after every
-resampling jitter.
+[resampling jitter](../method/the-particle-filter.qmd#sec-resampling).
 
 What this does **not** solve: when the two masses nearly share an
 x-coordinate, the sort boundary slices right through the posterior, and

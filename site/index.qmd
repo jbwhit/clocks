@@ -14,9 +14,12 @@ But flip the logic around. If gravity changes how fast a clock ticks, then a
 clock's tick rate is a *measurement of gravity*. Scatter clocks through a
 region of space, watch which ones run slow, and you can infer where the
 hidden mass is and how heavy it is, a gravity detector built from nothing
-but timekeeping. This site builds that detector: a forward model from
-general relativity, a particle filter for the inverse problem, and a series
-of increasingly hard detection puzzles.
+but timekeeping. This site builds that detector: a
+[forward model](method/notation-and-glossary.qmd#term-forward-model) from
+general relativity, a
+[particle filter](method/the-particle-filter.qmd#sec-intro) for the
+[inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
+and a series of increasingly hard detection puzzles.
 
 ![A particle filter localizing a hidden mass on a plane from clock rates alone. Clockwise from top left: the physical setup, the cloud of surviving hypotheses, the convergence of the estimates, and the observed tick rates.](assets/demo_2d.gif)
 

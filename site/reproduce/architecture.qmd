@@ -1,0 +1,101 @@
+---
+title: "Architecture"
+---
+
+A map of `src/clocks` for anyone reading or extending the code — a
+C4-inspired **module map** (modules grouped into functional clusters),
+not a formal C4 component diagram. Solid arrows mean "imports from";
+the dashed arrow is a runtime relationship. Re-exports inside
+`clocks/__init__.py` are deliberately omitted.
+
+```{mermaid}
+flowchart TB
+    subgraph contracts["Data contracts"]
+        types
+        config
+        results
+    end
+    subgraph physnoise["Physics & noise"]
+        physics
+        noise
+    end
+    subgraph infer_c["Inference"]
+        inference
+    end
+    subgraph public["Public API"]
+        api
+    end
+    subgraph vis["Visualization"]
+        viz
+        animate["_animate"]
+        panels["_panels"]
+        panels3d["_panels3d"]
+    end
+    subgraph scen["Scenario tooling"]
+        scenarios["_scenarios"]
+        echo["_echo_study"]
+    end
+    subgraph entry["Entry points"]
+        cli["_cli"]
+    end
+    scripts_node["scripts/*.py"]
+
+    config --> types
+    results --> config
+    results --> types
+    physics --> types
+    inference --> noise
+    inference --> physics
+    inference --> types
+    api --> config
+    api --> inference
+    api --> noise
+    api --> physics
+    api --> results
+    api --> types
+    viz --> animate
+    viz --> panels
+    viz --> panels3d
+    animate --> panels
+    animate --> panels3d
+    animate --> inference
+    animate --> physics
+    animate --> types
+    panels --> types
+    panels3d --> types
+    scenarios --> api
+    scenarios --> config
+    scenarios --> inference
+    scenarios --> physics
+    scenarios --> results
+    scenarios --> types
+    echo --> scenarios
+    echo --> physics
+    cli -. "runs via runpy" .-> scripts_node
+```
+
+**In words** (text equivalent of the diagram): `types` is the foundation
+nearly everything builds on — only `noise` and `_cli` stand apart.
+`config` and `results` define the public configuration and result
+dataclasses on top of it. `physics` computes clock rates from mass
+configurations; `noise` (which imports nothing from the package) models
+observation noise. `inference` — the particle filter — consumes physics,
+noise, and types. `api` ties all of it into the `simulate` / `infer` /
+`simulate_and_infer` / `build_particle_filter` entry points. `viz` is a
+pure facade re-exporting the private `_animate`, `_panels`, and
+`_panels3d` plotting modules. `_scenarios` builds shared demo/test
+scenarios on the public API; `_echo_study` adds echolocation-study
+reporting on top of it. `_cli` maps the `uv run demo-*` commands onto the
+scripts in `scripts/`, executing them with `runpy` (with an `importlib`
+fallback); `_cli.py` itself imports nothing from the library, but the
+scripts it runs do.
+
+## The public/private boundary
+
+The package's promised surface is the set of names curated in
+`clocks/__init__.py::__all__` — the API entry points, the config and
+result dataclasses, core types, and selected physics, noise, inference,
+and viz names. Entire modules are *not* the promised surface, and every
+underscore-prefixed module (`_animate`, `_panels`, `_panels3d`,
+`_scenarios`, `_echo_study`, `_cli`) is internal: import from `clocks`
+directly, not from its internals.
