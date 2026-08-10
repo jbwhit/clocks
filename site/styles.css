@@ -22,3 +22,13 @@ div.description {
   max-width: 100%;
   height: auto;
 }
+
+/* Mermaid subgraph clusters: Quarto derives their fill by lightening the
+   theme foreground. With gruvbox themes that yields white boxes on the
+   dark theme (fg is already light) and mid-gray on light. Transparent
+   fill; the theme-derived stroke is correct in both themes. !important
+   outranks the SVG-injected themeCSS. */
+.mermaid .cluster rect,
+.mermaid-js .cluster rect {
+  fill: transparent !important;
+}
