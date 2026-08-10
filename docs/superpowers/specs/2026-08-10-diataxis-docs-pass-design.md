@@ -1,7 +1,7 @@
 # Diataxis-Guided Documentation Pass — Design
 
 **Date:** 2026-08-10
-**Status:** Revised after Codex xhigh rounds 1–4 (all NEEDS REVISION → fixes applied); round 5 pending
+**Status:** APPROVED — Codex xhigh round 5 (2026-08-10): **SOUND ENOUGH TO IMPLEMENT** (no blocking findings; rounds 1–4 fixes verified)
 **Review trail:**
 Codex xhigh round 4 (2026-08-10) — verdict NEEDS REVISION. Two blockers,
 both accepted and fixed: (1) page-only link verification was one-sided
