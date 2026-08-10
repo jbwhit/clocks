@@ -8,7 +8,19 @@
 
 **Tech Stack:** Quarto (`.qmd`, Mermaid diagrams), Python 3.12+ via uv (checker script, stdlib only).
 
-**Review trail:** Codex xhigh plan round 1 (2026-08-10) — NEEDS REVISION; all seven findings accepted and fixed in this revision (location-aware checker; fence-aware README parsing; contract completeness incl. a `#sec-intro` anchor so the landing-page particle-filter link carries a fragment per spec; notation inventory step and missing entries — evidence row, R, σ_y, particle-filter term; two link-matrix rows dropped as in-page definitions; six factual wording fixes; self-contained commands with branch creation, commit trailers, and a concrete Task 5).
+**Review trail:**
+Codex xhigh plan round 2 (2026-08-10) — NEEDS REVISION; four blockers,
+all accepted and fixed: exact fragment matching both ways (a #fragment
+link no longer satisfies a page-only row); README rows section-scoped
+(`readme:<heading>`) so the pre-existing site-root link cannot satisfy
+the demo-catalog row; fence parser now handles `~~~`, fence
+length/character matching (nested fences), and multi-backtick code
+spans; the GIF-demos sentence qualified for `demo-model-comparison`.
+Round 2 verified: HTML scoping, contract arithmetic (13/25/26/31),
+inventory + new glossary entries, dropped matrix rows, the six factual
+fixes, command self-containment, and all 31 diagram edges against the
+31 real imports.
+Codex xhigh plan round 1 (2026-08-10) — NEEDS REVISION; all seven findings accepted and fixed (location-aware checker; fence-aware README parsing; contract completeness incl. a `#sec-intro` anchor so the landing-page particle-filter link carries a fragment per spec; notation inventory step and missing entries — evidence row, R, σ_y, particle-filter term; two link-matrix rows dropped as in-page definitions; six factual wording fixes; self-contained commands with branch creation, commit trailers, and a concrete Task 5).
 
 ## Global Constraints
 
@@ -263,8 +275,12 @@ SITE_BASE = "https://jbwhit.github.io/clocks/"
 
 # (scope, source, target, fragment) — source/target are html paths
 # relative to site/_output; source may also be "README.md". scope is
-# "content" or "sidebar". fragment=None means a page-only link: the
-# source link and the target file must exist, but no id is required.
+# "content", "sidebar", or "readme:<heading>" (README rows are scoped to
+# the ## section with that heading, so a pre-existing link elsewhere in
+# the file cannot satisfy them). fragment=None means a page-only link:
+# the source must contain a link to the page WITHOUT a fragment (exact
+# match — a #fragment link does not satisfy a page-only row), and the
+# target file must exist.
 CONTRACT: list[tuple[str, str, str, str | None]] = [
     # Task 1 — glossary outbound links (one per destination page)
     ("content", "method/notation-and-glossary.html", "story/clocks-as-gravimeters.html", None),
@@ -363,21 +379,45 @@ def _resolve_href(source: str, href: str) -> tuple[str, str | None] | None:
     return "/".join(parts), (parsed.fragment or None)
 
 
-def _readme_links() -> set[tuple[str, str | None]]:
-    """Site-internal links in README.md, skipping fenced/inline code."""
-    links: set[tuple[str, str | None]] = set()
-    in_fence = False
+_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
+# A run of backticks not adjacent to further backticks, its span, and the
+# matching closing run of the same length — a CommonMark-ish code span.
+_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)")
+
+
+def _readme_links() -> set[tuple[str, str, str | None]]:
+    """(section, target, fragment) links in README.md.
+
+    Fence-aware: skips ``` and ~~~ fenced blocks (closers must match the
+    opener's character and be at least as long, so an outer ````-fence
+    swallows inner ``` lines) and strips inline code spans of any
+    delimiter length. Links are tagged with the ## section heading they
+    appear under, so contract rows can require a link in a specific
+    section.
+    """
+    links: set[tuple[str, str, str | None]] = set()
+    fence: str | None = None
+    section = ""
     for line in README.read_text(encoding="utf-8").splitlines():
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
+        match = _FENCE_RE.match(line.lstrip())
+        if fence is None:
+            if match:
+                fence = match.group(1)
+                continue
+        else:
+            if match and match.group(1)[0] == fence[0] and len(
+                match.group(1)
+            ) >= len(fence):
+                fence = None
             continue
-        if in_fence:
+        if line.startswith("## "):
+            section = line[3:].strip()
             continue
-        clean = re.sub(r"`[^`]*`", "", line)
+        clean = _CODE_SPAN_RE.sub("", line)
         for url in re.findall(r"\]\(([^)\s]+)\)", clean):
             mapped = _map_site_url(url)
             if mapped is not None:
-                links.add(mapped)
+                links.add((section, *mapped))
     return links
 
 
@@ -398,7 +438,8 @@ def _load(rel: str) -> _PageIndex | None:
 
 def _source_links(scope: str, source: str) -> set[tuple[str, str | None]] | None:
     if source == "README.md":
-        return _readme_links()
+        section = scope.removeprefix("readme:")
+        return {(t, f) for s, t, f in _readme_links() if s == section}
     page = _load(source)
     if page is None:
         return None
@@ -422,11 +463,9 @@ def main() -> int:
         if links is None:
             failures.append(f"{label}: source file missing")
             continue
-        found = any(
-            t == target and (fragment is None or f == fragment)
-            for t, f in links
-        )
-        if not found:
+        # Exact fragment match both ways: a page-only row (fragment=None)
+        # is NOT satisfied by a #fragment link to the same page.
+        if (target, fragment) not in links:
             failures.append(f"{label}: no source link found")
     if failures:
         print("Link contract failures:", file=sys.stderr)
@@ -812,9 +851,10 @@ uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
 
 ![2D inference demo](assets/demo_2d.gif)
 
-The GIF demos animate the physical setup, the particle cloud converging,
-and the estimates' uncertainty; `demo-density` produces a static
-comparison figure. All seven, with commentary:
+Most GIF demos animate the physical setup, the particle cloud converging,
+and the estimates' uncertainty; `demo-model-comparison` instead tracks
+the posterior probability over candidate mass counts, and `demo-density`
+produces a static comparison figure. All seven, with commentary:
 [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The
 echolocation range study behind the site's final page:
 `scripts/scan_echolocation_range.py`.
@@ -864,11 +904,13 @@ observation-by-observation (e.g. for animation), use
 - [ ] **Step 5: Append the Task 4 rows to CONTRACT**
 
 ```python
-    # Task 4 — README → site links and getting-started repoint
-    ("content", "README.md", "reproduce/getting-started.html", None),
-    ("content", "README.md", "method/the-particle-filter.html", None),
-    ("content", "README.md", "index.html", None),
-    ("content", "README.md", "reproduce/architecture.html", None),
+    # Task 4 — README → site links (section-scoped, so the pre-existing
+    # site-root link at the top of the README cannot satisfy the
+    # demo-catalog row) and the getting-started repoint
+    ("readme:Use as a library", "README.md", "reproduce/getting-started.html", None),
+    ("readme:Use as a library", "README.md", "method/the-particle-filter.html", None),
+    ("readme:Run the demos", "README.md", "index.html", None),
+    ("readme:Project structure", "README.md", "reproduce/architecture.html", None),
     ("content", "reproduce/getting-started.html", "method/the-particle-filter.html", None),
 ```
 
