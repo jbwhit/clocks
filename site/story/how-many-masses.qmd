@@ -18,7 +18,7 @@ predicted it win.
 
 The suspicious thing is that $K=3$ doesn't win — a three-mass model *can
 mimic* many two-mass configurations by pushing the extra mass toward the
-lower prior bound or into a weakly visible location, so its best fit is at
+lower [prior](../method/notation-and-glossary.qmd#term-prior) bound or into a weakly visible location, so its best fit is at
 least as good. Evidence is not best-fit, though: it
 averages the likelihood over the model's whole prior. Extra parameters
 spread that average across vast regions of configuration space the data

@@ -18,7 +18,7 @@ exists so you never have to hunt for where a definition first appeared.
 | $r_{ij}$ | Distance from clock $i$ to mass $j$ | [Into the Plane](../story/into-the-plane.qmd) |
 | $r_s$ | Schwarzschild radius, $r_s = 2M$ in simulation units | [Units and Scales](units-and-scales.qmd) |
 | $R$ | Range from the clock lattice to an exterior mass; the differential signal falls as $1/R^2$, the curvature term as $1/R^3$ | [Gravitational Echolocation](../story/gravitational-echolocation.qmd) |
-| $x$, $y$ | Mass position coordinates (subscripted $x_1, x_2$ with several masses) | [The Search in One Dimension](../story/the-search-in-one-dimension.qmd) |
+| $x$, $y$ | Mass position coordinates (subscripted $x_1, x_2$ with several masses) | [The Search in One Dimension](../story/the-search-in-one-dimension.qmd) ($x$); [Into the Plane](../story/into-the-plane.qmd) ($y$) |
 | $M$, $M_j$ | Mass (of mass $j$) | [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd) |
 | $\mu$, $\sigma_{\text{density}}$, $A$ | Center, width, and peak amplitude of a continuous Gaussian mass profile | [Beyond Point Masses](../story/beyond-point-masses.qmd) |
 
@@ -68,7 +68,7 @@ clock's fractional-frequency instability after averaging for time $\tau$.
   ([Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd)).
 - [**Inverse problem**]{#term-inverse-problem} — the detection direction:
   from noisy clock rates back to the masses that caused them
-  ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
+  (concept: [One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
 - [**Mass–distance degeneracy**]{#term-degeneracy} — a small mass nearby
   and a heavy mass far away can produce identical readings; reduced or
   broken by sufficiently informative array geometry

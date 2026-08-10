@@ -195,6 +195,13 @@ CONTRACT: list[tuple[str, str, str, str | None]] = [
         "method/the-particle-filter.html",
         None,
     ),
+    # Final-review fix: prior link on how-many-masses
+    (
+        "content",
+        "story/how-many-masses.html",
+        "method/notation-and-glossary.html",
+        "term-prior",
+    ),
 ]
 
 _VOID = {
