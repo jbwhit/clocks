@@ -43,6 +43,8 @@ website:
             href: method/the-particle-filter.qmd
           - text: "Units and Scales"
             href: method/units-and-scales.qmd
+          - text: "Notation & Glossary"
+            href: method/notation-and-glossary.qmd
       - section: "Part 3 — Reproduce"
         contents:
           - text: "Getting Started"
