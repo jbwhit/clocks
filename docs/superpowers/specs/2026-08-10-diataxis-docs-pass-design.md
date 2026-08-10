@@ -1,132 +1,207 @@
 # Diataxis-Guided Documentation Pass — Design
 
 **Date:** 2026-08-10
-**Status:** Draft — pending Codex xhigh review
-**Review:** Codex xhigh verdict to be recorded here (no PR yet at spec stage)
+**Status:** Revised after Codex xhigh round 1 (NEEDS REVISION → fixes applied); round 2 pending
+**Review trail:** Codex xhigh round 1 (2026-08-10) — verdict NEEDS REVISION.
+Blocking issues (all accepted and fixed below): incorrect/ambiguous notation
+plan, incorrect dependency graph (noise→types edge was false; `_panels*`
+edges missing), README slimming would falsify `getting-started.qmd` claims,
+ineffective link verification, commit order incompatible with independently
+renderable commits. Framing fixes also accepted: "Getting Started" is a
+quickstart/how-to (not a Diataxis tutorial), quadrants are not completeness
+boxes, "C4 Level 3" relabeled "C4-inspired module map", marginal reader made
+concrete. One pushback: per-commit Python gate retained (suite is ~12 s;
+standing repo policy) — see Verification.
 
 ## Goal
 
-Improve the "GPS in Reverse" site for its marginal reader — the
-physics-curious visitor — using Diataxis as an audit lens (not a navigation
-scheme), plus one C4-Level-3-style component diagram for the secondary
-contributor audience.
+Improve the "GPS in Reverse" site for its marginal reader using Diataxis as
+an audit lens (not a navigation scheme), plus one C4-inspired module map for
+the secondary contributor audience.
+
+**Marginal reader:** physics-curious site visitor — comfortable with algebra
+and reading plots; no Bayesian/SMC vocabulary assumed; does not need to run
+or read Python to follow the story.
 
 ## Background / audit findings
 
-The site is already implicitly Diataxis-shaped:
-
 - **Part 1 — The Story** (8 pages) is understanding-oriented explanation and
   is the site's identity. It must not be restructured.
-- **Part 2 — Under the Hood** is explanation with reference elements
-  (`the-particle-filter.qmd` maps prose onto `clocks.inference.ParticleFilter`;
-  `units-and-scales.qmd` is reference material).
-- **Part 3 — Reproduce** covers the tutorial quadrant (`getting-started.qmd`)
-  plus reproducibility notes.
+- **Part 2 — Under the Hood** is explanation with reference elements.
+- **Part 3 — Reproduce** is quickstart/how-to material
+  (`getting-started.qmd` is not a Diataxis tutorial — no managed learning
+  arc — and does not need to become one).
 
-For the physics-curious reader, the missing "reference" quadrant is not API
-docs — it is the material a reader flips back to mid-read: notation, symbols,
-and terms of art. API reference (quartodoc) and how-to guides serve library
-users and are explicitly **out of scope** for this pass.
+The motivating gap is concrete, not quadrant-filling: mid-read, the visitor
+has no lookup aid for symbols and terms of art. API reference (quartodoc)
+and consumer how-to guides serve library users and are **out of scope**.
 
 ## Changes
 
-### 1. Story → method cross-links
+Sections below are ordered by dependency, not priority; the commit plan
+follows this order so every commit renders with no dangling link targets.
 
-On **first mention in each story page**, link terms to the matching section
-in Part 2:
-
-- *particle filter*, *resampling*, *effective sample size / ESS*, *jitter*
-  → anchors in `method/the-particle-filter.qmd`
-- *simulation units*, G = c = 1, scales → `method/units-and-scales.qmd`
-- Lighter terms of art (posterior, prior, weak field, likelihood, model
-  comparison) → entries on the new notation/glossary page (see §2)
-
-Rules:
-
-- One link per term per page; no link farms.
-- Quarto auto-generates heading IDs; add explicit `{#sec-...}` anchors only
-  where a needed target has no heading.
-- Do not alter the prose voice — links are added to existing wording; text
-  edits only where a term must be introduced to be linkable.
-
-### 2. Notation & Glossary page
+### 1. Notation & Glossary page (land first — link target for §2)
 
 New file: `site/method/notation-and-glossary.qmd`, added to the Part 2
 sidebar (after Units and Scales).
 
-Content (target: one screen, roughly 60–90 lines):
+**Implementation step 0 — notation inventory.** Before writing the page,
+inventory the notation actually displayed across all site pages (story,
+method, index). The tables below are the expected shape; the inventory is
+authoritative. Inclusion criterion: any symbol or term a reader meets in a
+story page or the landing page without a same-page definition; method-page-
+only notation (e.g. per-particle weight subscripts) is included only where
+the method pages are linked from story text.
 
-- **Symbols table:** Φ (potential), σ (observation noise), N (particles),
-  ESS, w (weights), θ (parameter hypothesis), K (number of masses),
-  M (mass), r (tick rate). Columns: symbol, meaning, where introduced
-  (link).
-- **Terms list:** weak field, time dilation, posterior, prior, likelihood,
-  resampling (systematic/stratified/residual), jitter (incl. annealed),
-  effective sample size, model comparison, degeneracy. One-line definitions,
-  each linking to its fuller treatment in a story or method page.
+Content:
 
-This page is the glossary link target for story pages (§1).
+- **Physics notation table:** Φ (potential), G, c (set to 1 in simulation
+  units), τ vs t (proper vs coordinate time), tick rate (dτ/dt; written
+  r_c per clock c in the particle-filter equations), r (distance — note
+  the site uses r for distance, never for rate), r_s (Schwarzschild
+  radius), x, y (positions), M (mass), μ, A, σ_density (Gaussian density
+  center, amplitude, width).
+- **Inference notation table:** σ_obs (observation noise), N (particle
+  count), w (particle weight), θ (parameter hypothesis), K (number of
+  masses), ESS, evidence / log-evidence.
+- **σ disambiguation:** the site overloads σ (observation noise in the
+  inference material; Gaussian profile width in Beyond Point Masses, which
+  itself flags the overload). The glossary distinguishes σ_obs vs
+  σ_density and notes the source pages' shorthand.
+- **Terms list:** weak field, time dilation, forward model, inverse
+  problem, posterior, prior, likelihood, evidence, resampling
+  (systematic/stratified/residual), jitter (incl. annealed), effective
+  sample size, model comparison, degeneracy. One-line definitions, each
+  linking to its fuller treatment.
+- **Anchors:** every term gets a stable explicit ID (`#term-posterior`,
+  `#term-jitter`, …). Story links target these fragments; auto-generated
+  IDs are not relied on for cross-page links. Where §2 links target method
+  pages, add explicit `{#sec-...}` IDs there too.
 
-### 3. Architecture page
+Size/format criterion (verifiable): two compact tables plus a terms list;
+every entry ≤ 2 lines rendered at desktop width; page renders legibly at
+mobile width; no prose sections.
+
+### 2. Story → method/glossary cross-links
+
+Scope: the eight story pages **and** `index.qmd` (the landing page
+introduces *forward model*, *inverse problem*, and *particle filter* before
+the story starts).
+
+Link targets:
+
+- Filter machinery (*particle filter*, *resampling*, *ESS*, *jitter*) →
+  explicit anchors in `method/the-particle-filter.qmd`.
+- Units/scales (*simulation units*, G = c = 1) →
+  `method/units-and-scales.qmd`.
+- Terms of art (*posterior*, *prior*, *likelihood*, *weak field*,
+  *degeneracy*, *model comparison*, …) → `#term-*` anchors on the glossary.
+
+Linking rule (replaces "first mention"):
+
+- Link the first **unexplained** occurrence of a term on a page **only if
+  no nearby existing link already serves the reader** — several story
+  pages already link the particle-filter and units pages in the same
+  passage where the terms appear; those existing links count.
+- At most one link to the same destination per page.
+- Never alter prose or introduce jargon to create a linking opportunity;
+  links attach to existing wording only.
+
+**Link contract (verification artifact):** implementation produces an
+explicit matrix — source page × linked term × target fragment — checked
+into the PR description. Verification checks every fragment in that matrix
+exists in the rendered HTML (see Verification).
+
+### 3. Architecture page — C4-inspired module map
 
 New file: `site/reproduce/architecture.qmd`, added to the Part 3 sidebar
 (after Reproducibility). Contributor-facing; lives in "Reproduce" — no new
 Part 4.
 
-Content:
+This is a **module dependency map, C4-inspired** — not a C4 component
+diagram (C4 warns that modules/packages are not normally components). One
+Mermaid diagram, modules grouped into functional clusters:
 
-- One Mermaid component diagram (C4 Level 3 in spirit; no C4 tooling or
-  notation ceremony) of `src/clocks`, drawn from the **actual import
-  graph** (verified 2026-08-10):
-  - `types` is the foundation (imported by nearly everything).
-  - `physics`, `noise` → `types` (noise does not import physics).
-  - `inference` → `noise`, `physics`, `types`.
-  - `config` → `types`; `results` → `config`, `types`.
-  - `api` → `config`, `inference`, `noise`, `physics`, `results`, `types`.
-  - `viz` is a pure facade re-exporting `_animate`, `_panels`, `_panels3d`;
-    `_animate` → `_panels`, `_panels3d`, `inference`, `physics`, `types`.
-  - `_scenarios` → `api`, `config`, `inference`, `physics`, `results`,
-    `types` (shared by demos, scan harnesses, tests);
-    `_echo_study` → `_scenarios`, `physics`.
-  - `_cli` runs `scripts/*.py` via `runpy` (no library imports) — entry
-    points for `uv run demo-*`.
-- Short prose walk of the public/private boundary: public surface is
-  `clocks.__init__` (api + config + results + types + viz + selected
-  physics/noise/inference names); underscore modules are internal.
-- Diagram must render in both light and dark site themes (Quarto handles
-  Mermaid theming; verify visually in the rendered output).
+- **Data contracts:** `types` (foundation), `config` → `types`,
+  `results` → `config`, `types`.
+- **Physics & noise:** `physics` → `types`; `noise` (imports NumPy only —
+  no internal deps).
+- **Inference:** `inference` → `noise`, `physics`, `types`.
+- **Public API:** `api` → `config`, `inference`, `noise`, `physics`,
+  `results`, `types`.
+- **Visualization:** `viz` (pure facade) re-exports `_animate`, `_panels`,
+  `_panels3d`; `_animate` → `_panels`, `_panels3d`, `inference`,
+  `physics`, `types`; `_panels` → `types`; `_panels3d` → `types`.
+- **Scenario tooling:** `_scenarios` → `api`, `config`, `inference`,
+  `physics`, `results`, `types`; `_echo_study` → `_scenarios`, `physics`.
+- **Entry points:** `_cli` runs `scripts/*.py` via `runpy` (with an
+  `importlib` fallback); `_cli.py` itself has no library imports, but the
+  scripts it runs do.
 
-### 4. README slimming
+Diagram rules: import edges and the runtime "runs scripts" edge use
+visually distinct styles with a legend; arrow direction = "depends on";
+`__init__` re-export edges are deliberately omitted (stated in a caption).
+The diagram gets a text summary (accessibility + non-rendering fallback).
+
+Prose: a short walk of the public/private boundary — the public surface is
+the set of names curated in `clocks/__init__.py::__all__` (modules
+themselves are not the promised surface); underscore modules are internal.
+
+Checks: renders in light and dark themes and at mobile width.
+
+### 4. README slimming (+ getting-started.qmd consistency)
 
 - Replace the "Use as a library" API walkthrough (both code blocks) with a
   2–3 sentence summary plus a link to the site.
-- Compress the per-demo catalog (six GIF embeds + descriptions) to the
-  command list with one representative GIF, linking to the site for the
-  rest.
-- "Project structure" section: keep the top-level listing but point to the
-  new architecture page for the dependency picture.
+- All **seven** demo commands remain listed; the **seven** embeds (six
+  GIFs + the density PNG) compress to one representative asset with a link
+  to the site for the rest.
+- "Project structure": keep the top-level listing; point to the new
+  architecture page for the dependency picture.
 - Keep: intro, setup, run-tests sections unchanged.
+- **Required consistency fixes in `site/reproduce/getting-started.qmd`:**
+  it currently claims its example is "the same example as the repository
+  README" and links the README for fixed-K inference and
+  `build_particle_filter`. After the cut both claims are false. Reword the
+  first (the page's live example stands on its own); repoint the second at
+  the particle-filter method page (and, if the walkthrough content is
+  worth keeping verbatim, this page — not the README — is its home).
 
 ## Out of scope
 
 - Sidebar/nav restructure into Diataxis quadrant names.
-- quartodoc / generated API reference.
-- How-to guides for library consumers.
-- C4 Levels 1, 2, 4.
+- quartodoc / generated API reference; consumer how-to guides.
+- C4 context/container/code diagrams or C4 notation ceremony.
 - Any change to Python source or tests.
 
 ## Verification
 
-- `quarto render` (from `site/`) completes clean; index.qmd executes real
-  Python, so the build is a genuine gate.
-- Grep rendered `_output/` for links to the two new pages; confirm no
-  broken relative links (spot-check anchors added in §1).
-- Visual check of the Mermaid diagram in light and dark themes.
-- Standard repo gate before each commit: `uv run ruff format --check .`,
-  `uv run ruff check .`, `uv run pytest` (docs-only change; suite must
-  stay green regardless).
+- **Render gate (per commit):** `uv run --frozen quarto render` from
+  `site/` — exactly matching the deploy workflow
+  (`.github/workflows/site.yml`). Note: site rendering is not a PR CI
+  gate (only a main-branch deploy step), so this local render **is** the
+  gate and is mandatory per commit.
+- **Link contract:** for every row of the §2 matrix plus every glossary
+  `#term-*` and method `{#sec-...}` anchor, assert the fragment ID exists
+  in the rendered HTML of the target page (scripted grep over `_output/`).
+  Presence of sidebar URLs proves nothing and is not used as evidence.
+- **Visual:** glossary and architecture pages checked in light and dark
+  themes and at a narrow/mobile viewport; Mermaid diagram has a text
+  summary.
+- **Repo gate:** `uv run ruff format --check .`, `uv run ruff check .`,
+  `uv run pytest` before each push. (Codex round 1 suggested once-per-PR
+  as proportionate; retained per-push because the suite runs in ~12 s and
+  this is standing repo policy.)
 
 ## Implementation shape
 
-Single feature branch (`claude-diataxis-docs-pass`), one PR, roughly four
-commits mirroring §§1–4. Each commit independently renderable.
+Single feature branch (`claude-diataxis-docs-pass`), one PR, four commits
+in dependency order — each independently renderable with no dangling link
+targets:
+
+1. Glossary page + explicit method-page anchors (§1) — all link targets
+   exist first.
+2. Story/landing cross-links (§2).
+3. Architecture page (§3).
+4. README slimming + getting-started consistency fixes (§4).
