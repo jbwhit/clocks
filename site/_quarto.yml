@@ -51,6 +51,8 @@ website:
             href: reproduce/getting-started.qmd
           - text: "Reproducibility"
             href: reproduce/reproducibility.qmd
+          - text: "Architecture"
+            href: reproduce/architecture.qmd
 
   page-footer:
     left: "&copy; Jonathan Whitmore"

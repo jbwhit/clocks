@@ -180,6 +180,8 @@ CONTRACT: list[tuple[str, str, str, str | None]] = [
         "method/the-particle-filter.html",
         "sec-evidence",
     ),
+    # Task 3 — architecture page sidebar entry
+    ("sidebar", "index.html", "reproduce/architecture.html", None),
 ]
 
 _VOID = {
