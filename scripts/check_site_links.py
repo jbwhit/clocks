@@ -182,6 +182,19 @@ CONTRACT: list[tuple[str, str, str, str | None]] = [
     ),
     # Task 3 — architecture page sidebar entry
     ("sidebar", "index.html", "reproduce/architecture.html", None),
+    # Task 4 — README → site links (section-scoped, so the pre-existing
+    # site-root link at the top of the README cannot satisfy the
+    # demo-catalog row) and the getting-started repoint
+    ("readme:Use as a library", "README.md", "reproduce/getting-started.html", None),
+    ("readme:Use as a library", "README.md", "method/the-particle-filter.html", None),
+    ("readme:Run the demos", "README.md", "index.html", None),
+    ("readme:Project structure", "README.md", "reproduce/architecture.html", None),
+    (
+        "content",
+        "reproduce/getting-started.html",
+        "method/the-particle-filter.html",
+        None,
+    ),
 ]
 
 _VOID = {

@@ -24,144 +24,38 @@ uv sync
 
 ## Use as a library
 
-The package exposes stable end-to-end entry points for simulation and inference:
-
-```python
-import numpy as np
-
-from clocks import (
-    ClockArray,
-    InferenceConfig,
-    MassConfig,
-    NoiseConfig,
-    PriorConfig,
-    SimulationConfig,
-    infer,
-    simulate,
-)
-
-clock_array = ClockArray(
-    positions=np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]]),
-    track_offset=1.0,
-)
-ground_truth = MassConfig(
-    positions=np.array([[-2.0], [3.0]]),
-    masses=np.array([0.6, 0.4]),
-)
-
-simulation = simulate(
-    SimulationConfig(
-        clock_array=clock_array,
-        ground_truth=ground_truth,
-        noise=NoiseConfig(observation_std=0.005),
-        n_observations=40,
-        seed=42,
-    )
-)
-
-result = infer(
-    simulation.observations,
-    InferenceConfig(
-        clock_array=clock_array,
-        noise=NoiseConfig(observation_std=0.005),
-        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
-        n_particles=1500,
-        n_masses=(1, 2, 3),
-        seed=42,
-    ),
-)
-
-print(result.best_model)
-print(result.posterior_by_model)
-```
-
-For fixed-K inference, pass an integer to `n_masses` instead of a tuple. Model-comparison results (`n_masses` as a tuple) expose `best_model` and `posterior_by_model`; fixed-K results (`n_masses` as an int) expose a posterior summary instead (`posterior_mean`, `posterior_std`, `history`).
-
-To drive the filter observation-by-observation (e.g. for custom animation),
-build the same filter `infer` uses internally:
-
-```python
-from clocks import build_particle_filter
-
-fixed_k_config = InferenceConfig(
-    clock_array=clock_array,
-    noise=NoiseConfig(observation_std=0.005),
-    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
-    n_particles=1500,
-    n_masses=2,
-    seed=42,
-)
-pf = build_particle_filter(fixed_k_config)
-for obs in simulation.observations:
-    pf.update(obs)
-print(pf.estimate())
-```
+The package exposes stable end-to-end entry points — `simulate`, `infer`,
+and `simulate_and_infer` — configured via public dataclasses
+(`SimulationConfig`, `InferenceConfig`, ...), plus `build_particle_filter`
+for driving the filter observation-by-observation. A complete
+simulate-then-infer round trip runs live on the site's
+[Getting Started](https://jbwhit.github.io/clocks/reproduce/getting-started.html)
+page, and the filter machinery is documented in
+[The Particle Filter](https://jbwhit.github.io/clocks/method/the-particle-filter.html).
 
 ## Run the demos
 
-**1D** — 3 clocks on a line, infer (x, M):
+Six animated demos and one static figure:
 
 ```bash
-uv run demo-1d    # → output/demo_1d.gif
-```
-
-![1D inference demo](assets/demo_1d.gif)
-
-**2D** — 8 clocks on a plane, infer (x, y, M):
-
-```bash
-uv run demo-2d    # → output/demo_2d.gif
+uv run demo-1d                  # → output/demo_1d.gif
+uv run demo-2d                  # → output/demo_2d.gif
+uv run demo-multi-mass          # → output/demo_multi_mass.gif
+uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.gif
+uv run demo-model-comparison    # → output/demo_model_comparison.gif
+uv run demo-density             # → output/demo_density.png
+uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
 ```
 
 ![2D inference demo](assets/demo_2d.gif)
 
-Each produces an animated GIF showing a 2×2 dashboard: physical setup, particle cloud converging on the true parameters, observed clock rates, and convergence history with uncertainty bands.
-
-**Multi-mass (1D)** — 5 clocks, infer 2 masses simultaneously (x₁, x₂, M₁, M₂):
-
-```bash
-uv run demo-multi-mass    # → output/demo_multi_mass.gif
-```
-
-![Multi-mass inference demo](assets/demo_multi_mass.gif)
-
-**Multi-mass (2D)** — 10 random clocks on a plane, infer 2 masses (x₁, y₁, x₂, y₂, M₁, M₂):
-
-```bash
-uv run demo-multi-mass-2d    # → output/demo_multi_mass_2d.gif
-```
-
-![Multi-mass 2D inference demo](assets/demo_multi_mass_2d.gif)
-
-**Model comparison** — 5 clocks, 2 hidden masses, infer K:
-
-```bash
-uv run demo-model-comparison    # → output/demo_model_comparison.gif
-```
-
-![Model comparison demo](assets/demo_model_comparison.gif)
-
-Runs parallel particle filters for K=1..3 masses and tracks posterior probabilities. The correct model (K=2) is identified within a few observations.
-
-**Gaussian density** — 5 clocks, infer a continuous mass distribution (μ, σ, amplitude):
-
-```bash
-uv run demo-density    # → output/demo_density.png
-```
-
-![Gaussian density demo](assets/demo_density.png)
-
-**3D echolocation** — a 3×3×3 "head" of 27 clocks senses a single
-*exterior* mass from differential (mean-centered) rates only — the head
-has no outside time reference. Demo seed/range are curated for clarity;
-`scripts/scan_echolocation_range.py` runs the uncurated resolution-vs-range
-study behind the site page:
-
-```bash
-uv run demo-echolocation-3d    # → output/demo_echolocation_3d.gif
-```
-
-![3D echolocation demo](assets/demo_echolocation_3d.gif)
+Most GIF demos animate the physical setup, the particle cloud converging,
+and the estimates' uncertainty; `demo-model-comparison` instead tracks
+the posterior probability over candidate mass counts, and `demo-density`
+produces a static comparison figure. All seven, with commentary:
+[jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The
+echolocation range study behind the site's final page:
+`scripts/scan_echolocation_range.py`.
 
 ## Run tests
 
@@ -202,3 +96,6 @@ tests/
     Unit, scenario, visualization, echo-study, and slow acceptance tests —
     see `tests/` for the current inventory.
 ```
+
+Dependency structure and the public/private boundary:
+[Architecture](https://jbwhit.github.io/clocks/reproduce/architecture.html).
