@@ -65,7 +65,7 @@ longer shared — and the other four clocks disagree more strongly. The
 disagreement carries the information.
 
 ::: {.callout-note title="The noise floor"}
-With observation noise $\sigma$, the array can only distinguish
+With [observation noise $\sigma$](../method/notation-and-glossary.qmd#term-sigma-obs), the array can only distinguish
 configurations whose rate profiles differ by more than roughly $\sigma$.
 That is why every demo on this site feeds the filter *many* noisy
 observations rather than one perfect one: each new reading shrinks the set

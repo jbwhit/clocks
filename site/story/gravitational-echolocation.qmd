@@ -68,7 +68,7 @@ slightly correlated — every centered rate shares the subtracted average.
 The filter nonetheless keeps the simpler independent-noise likelihood,
 which is harmless here: on centered residuals the two likelihoods differ
 only by a constant that cancels out of the particle weights. (Only the
-absolute evidence normalization shifts, and nothing on this page uses it.)
+absolute [evidence normalization](../method/the-particle-filter.qmd#sec-evidence) shifts, and nothing on this page uses it.)
 
 ## Watching the head lock on
 

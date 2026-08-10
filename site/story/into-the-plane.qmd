@@ -5,8 +5,8 @@ title: "Into the Plane"
 ## Same physics, more geometry
 
 Nothing in the forward model or the filter knows about dimensions. The
-potential sums $-M_j/r_{ij}$ over whatever coordinates you hand it; only
-the prior gains a column when the mass can hide in a plane instead of on a
+potential sums [$-M_j/r_{ij}$](../method/notation-and-glossary.qmd#term-index-conventions) over whatever coordinates you hand it; only
+the [prior](../method/notation-and-glossary.qmd#term-prior) gains a column when the mass can hide in a plane instead of on a
 line. The interesting changes are *geometric*:
 
 - The eight clocks are scattered **asymmetrically** across the region. A

@@ -112,6 +112,74 @@ CONTRACT: list[tuple[str, str, str, str | None]] = [
     ),
     # Task 1 — sidebar entry
     ("sidebar", "index.html", "method/notation-and-glossary.html", None),
+    # Task 2 — story/landing cross-links
+    ("content", "index.html", "method/the-particle-filter.html", "sec-intro"),
+    (
+        "content",
+        "index.html",
+        "method/notation-and-glossary.html",
+        "term-forward-model",
+    ),
+    (
+        "content",
+        "index.html",
+        "method/notation-and-glossary.html",
+        "term-inverse-problem",
+    ),
+    (
+        "content",
+        "story/clocks-as-gravimeters.html",
+        "method/notation-and-glossary.html",
+        "term-weak-field",
+    ),
+    (
+        "content",
+        "story/one-clock-is-not-enough.html",
+        "method/notation-and-glossary.html",
+        "term-sigma-obs",
+    ),
+    (
+        "content",
+        "story/into-the-plane.html",
+        "method/notation-and-glossary.html",
+        "term-prior",
+    ),
+    (
+        "content",
+        "story/into-the-plane.html",
+        "method/notation-and-glossary.html",
+        "term-index-conventions",
+    ),
+    (
+        "content",
+        "story/two-hidden-masses.html",
+        "method/the-particle-filter.html",
+        "sec-resampling",
+    ),
+    (
+        "content",
+        "story/two-hidden-masses.html",
+        "method/notation-and-glossary.html",
+        "term-posterior",
+    ),
+    (
+        "content",
+        "story/beyond-point-masses.html",
+        "method/notation-and-glossary.html",
+        "term-sigma-obs",
+    ),
+    (
+        "content",
+        "story/beyond-point-masses.html",
+        "method/the-particle-filter.html",
+        "sec-resampling",
+    ),
+    (
+        "content",
+        "story/gravitational-echolocation.html",
+        "method/the-particle-filter.html",
+        "sec-evidence",
+    ),
 ]
 
 _VOID = {

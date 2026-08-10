@@ -9,7 +9,7 @@ aquifers, anything extended. The same machinery handles them: replace the
 point-mass forward model with one that integrates the potential over a
 continuous profile. Here, a Gaussian density with three parameters —
 center $\mu$, width $\sigma$ (the profile's own width here, not the
-observation noise from earlier pages), and peak amplitude $A$ — and the
+[observation noise](../method/notation-and-glossary.qmd#term-sigma-obs) from earlier pages), and peak amplitude $A$ — and the
 identical particle filter on top.
 
 ![The density demo. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
@@ -53,7 +53,7 @@ denser one can produce nearly identical potentials at a handful of clock
 positions. This is the same inverse-problem pattern as the
 [mass–distance degeneracy](one-clock-is-not-enough.qmd): different physical
 profiles map to nearly identical clock-rate data. The
-library's covariance-shaped jitter mode exists for exactly this kind of
+library's [covariance-shaped jitter mode](../method/the-particle-filter.qmd#sec-resampling) exists for exactly this kind of
 correlated posterior — it lets the particle cloud slide *along* the ridge
 instead of scattering off it (the demo here uses the annealed default;
 covariance jitter is the specialist tool when the ridge is the whole
