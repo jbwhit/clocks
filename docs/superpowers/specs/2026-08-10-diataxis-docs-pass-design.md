@@ -1,8 +1,14 @@
 # Diataxis-Guided Documentation Pass — Design
 
 **Date:** 2026-08-10
-**Status:** Revised after Codex xhigh rounds 1–3 (all NEEDS REVISION → fixes applied); round 4 pending
+**Status:** Revised after Codex xhigh rounds 1–4 (all NEEDS REVISION → fixes applied); round 5 pending
 **Review trail:**
+Codex xhigh round 4 (2026-08-10) — verdict NEEDS REVISION. Two blockers,
+both accepted and fixed: (1) page-only link verification was one-sided
+(target existence only) — both classes now check the source side too;
+(2) the §2 matrix demanded a fragment for every row — target is now "page
+plus optional fragment", and the checker's scope covers all three README →
+site links added by §4.
 Codex xhigh round 3 (2026-08-10) — verdict NEEDS REVISION. Three blockers,
 all accepted and fixed: (1) index conventions were self-contradictory
 (i = particles vs i = clock in r_ij) — glossary now declares index roles
@@ -136,9 +142,10 @@ Linking rule (replaces "first mention"):
   links attach to existing wording only.
 
 **Link contract (verification artifact):** implementation produces an
-explicit matrix — source page × linked term × target fragment — checked
-into the PR description. Verification checks every fragment in that matrix
-exists in the rendered HTML (see Verification).
+explicit matrix — source page × linked term × target page **plus optional
+fragment** (units-and-scales links are page-only; glossary and
+particle-filter links carry fragments) — checked into the PR description.
+Verification checks every row bidirectionally (see Verification).
 
 ### 3. Architecture page — C4-inspired module map
 
@@ -212,12 +219,13 @@ Checks: renders in light and dark themes and at mobile width.
 - **Link contract:** verification is bidirectional and covers **every
   internal link added or changed by this pass** — the §2 matrix rows,
   glossary outbound links, the getting-started replacement link, the two
-  new sidebar entries, and the README architecture link. Two link
-  classes: **fragment links** require (a) the rendered source contains an
-  `href` resolving to the intended target page and fragment, and (b) the
-  target HTML contains that exact `id`; **page-only links** (README →
-  architecture, sidebar entries) require the resolved target HTML file to
-  exist. Sources rendered by Quarto are checked in `_output/`; the README
+  new sidebar entries, and **every README → site link added by §4** (the
+  library-summary link, the demo-catalog link, and the architecture
+  link). Both link classes check both sides: (a) the source (rendered
+  HTML, or Markdown for the README) contains a link resolving to the
+  intended target page — a missing source link is a failure; and (b) for
+  **fragment links** the target HTML contains that exact `id`, while for
+  **page-only links** the resolved target HTML file exists. Sources rendered by Quarto are checked in `_output/`; the README
   is **not** rendered there (Quarto renders only `site/*.qmd`), so its
   links are parsed from the Markdown source and their published site URLs
   mapped to local `_output/` paths. Implemented as a small
