@@ -1,8 +1,16 @@
 # Diataxis-Guided Documentation Pass — Design
 
 **Date:** 2026-08-10
-**Status:** Revised after Codex xhigh rounds 1–2 (both NEEDS REVISION → fixes applied); round 3 pending
+**Status:** Revised after Codex xhigh rounds 1–3 (all NEEDS REVISION → fixes applied); round 4 pending
 **Review trail:**
+Codex xhigh round 3 (2026-08-10) — verdict NEEDS REVISION. Three blockers,
+all accepted and fixed: (1) index conventions were self-contradictory
+(i = particles vs i = clock in r_ij) — glossary now declares index roles
+context-dependent; (2) README is not rendered into `_output/`, so its links
+are checked from Markdown source with URL→local mapping; (3) link contract
+now distinguishes fragment links (require exact target `id`) from page-only
+links (require target file), and adds the sidebar entries to scope. Stale
+gate-frequency sentence removed (per-commit confirmed by Jonathan).
 Codex xhigh round 2 (2026-08-10) — verdict NEEDS REVISION. Three blockers,
 all accepted and fixed: (1) notation plan contradicted the site (bare r =
 distance vs indexed r_c = tick rate; τ overloaded as proper time and as
@@ -69,10 +77,13 @@ Content:
 - **Physics notation table:** Φ (potential), G, c (set to 1 in simulation
   units), τ vs t (proper vs coordinate time), tick rate (dτ/dt), bare r
   (distance) vs indexed r_c (tick rate of clock c in the particle-filter
-  equations — same letter, distinguished by the index), r_ij (clock–mass
-  distance), M and indexed M_j (masses), index conventions (i particles,
-  j masses, c clocks), r_s (Schwarzschild radius), x, y (positions), μ, A,
-  σ_density (Gaussian density center, amplitude, width).
+  equations — same letter, distinguished by the index), r_ij (distance
+  from clock i to mass j), M and indexed M_j (masses), index conventions
+  — declared **context-dependent**: i indexes clocks/evaluation points in
+  the potential sum (r_ij) but particles in the filter equations (w_i,
+  θ_i); j indexes masses; c indexes clocks in r_c — r_s (Schwarzschild
+  radius), x, y (positions), μ, A, σ_density (Gaussian density center,
+  amplitude, width).
 - **Inference notation table:** σ_obs (observation noise), N (particle
   count), w (particle weight), θ (parameter hypothesis), K (number of
   masses), ESS, evidence / log-evidence.
@@ -200,21 +211,26 @@ Checks: renders in light and dark themes and at mobile width.
   gate and is mandatory per commit.
 - **Link contract:** verification is bidirectional and covers **every
   internal link added or changed by this pass** — the §2 matrix rows,
-  glossary outbound links, the getting-started replacement link, and the
-  README architecture link. For each: (a) the rendered **source** page
-  contains an `href` resolving to the intended target page and fragment;
-  (b) the **target** HTML contains that exact `id`. Implemented as a small
-  HTML-parser-based checker (e.g. a PEP 723 script using
-  BeautifulSoup/stdlib `html.parser` over `_output/`), not regex grep.
-  Presence of sidebar URLs proves nothing and is not used as evidence.
+  glossary outbound links, the getting-started replacement link, the two
+  new sidebar entries, and the README architecture link. Two link
+  classes: **fragment links** require (a) the rendered source contains an
+  `href` resolving to the intended target page and fragment, and (b) the
+  target HTML contains that exact `id`; **page-only links** (README →
+  architecture, sidebar entries) require the resolved target HTML file to
+  exist. Sources rendered by Quarto are checked in `_output/`; the README
+  is **not** rendered there (Quarto renders only `site/*.qmd`), so its
+  links are parsed from the Markdown source and their published site URLs
+  mapped to local `_output/` paths. Implemented as a small
+  HTML/Markdown-parser-based checker (e.g. a PEP 723 script using stdlib
+  `html.parser`), not regex grep. Presence of sidebar URLs on unrelated
+  pages proves nothing and is not used as evidence for §2 links.
 - **Visual:** glossary and architecture pages checked in light and dark
   themes and at a narrow/mobile viewport; Mermaid diagram has a text
   summary.
 - **Repo gate:** `uv run ruff format --check .`, `uv run ruff check .`,
   `uv run pytest` before **each commit**. (Codex round 1 suggested
-  once-per-PR as proportionate; retained per-commit because the suite runs
-  in ~12 s and this is standing repo policy. Gate-frequency choice flagged
-  to Jonathan; flip to once-per-PR here if he prefers.)
+  once-per-PR as proportionate; per-commit confirmed by Jonathan
+  2026-08-10 — suite runs in ~12 s and this is standing repo policy.)
 
 ## Implementation shape
 
