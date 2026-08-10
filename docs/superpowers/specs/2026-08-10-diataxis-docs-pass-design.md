@@ -1,8 +1,18 @@
 # Diataxis-Guided Documentation Pass — Design
 
 **Date:** 2026-08-10
-**Status:** Revised after Codex xhigh round 1 (NEEDS REVISION → fixes applied); round 2 pending
-**Review trail:** Codex xhigh round 1 (2026-08-10) — verdict NEEDS REVISION.
+**Status:** Revised after Codex xhigh rounds 1–2 (both NEEDS REVISION → fixes applied); round 3 pending
+**Review trail:**
+Codex xhigh round 2 (2026-08-10) — verdict NEEDS REVISION. Three blockers,
+all accepted and fixed: (1) notation plan contradicted the site (bare r =
+distance vs indexed r_c = tick rate; τ overloaded as proper time and as
+averaging time in the echolocation stability model; r_ij/M_j/index roles
+missing; inclusion criterion contradicted the tables — glossary is now
+explicitly a consolidated lookup); (2) link verification was one-sided —
+now bidirectional (source href + target id) over all links added by the
+pass, via an HTML-parser checker; (3) gate frequency said "per push" while
+the trail said "per commit" — now consistently per commit.
+Codex xhigh round 1 (2026-08-10) — verdict NEEDS REVISION.
 Blocking issues (all accepted and fixed below): incorrect/ambiguous notation
 plan, incorrect dependency graph (noise→types edge was false; `_panels*`
 edges missing), README slimming would falsify `getting-started.qmd` claims,
@@ -49,26 +59,32 @@ sidebar (after Units and Scales).
 **Implementation step 0 — notation inventory.** Before writing the page,
 inventory the notation actually displayed across all site pages (story,
 method, index). The tables below are the expected shape; the inventory is
-authoritative. Inclusion criterion: any symbol or term a reader meets in a
-story page or the landing page without a same-page definition; method-page-
-only notation (e.g. per-particle weight subscripts) is included only where
-the method pages are linked from story text.
+authoritative. The glossary is a **consolidated lookup**: a symbol defined
+on its source page still belongs here — same-page definition does not
+exclude it. Omit only notation that is purely local to a single method-page
+derivation and never surfaces in story text.
 
 Content:
 
 - **Physics notation table:** Φ (potential), G, c (set to 1 in simulation
-  units), τ vs t (proper vs coordinate time), tick rate (dτ/dt; written
-  r_c per clock c in the particle-filter equations), r (distance — note
-  the site uses r for distance, never for rate), r_s (Schwarzschild
-  radius), x, y (positions), M (mass), μ, A, σ_density (Gaussian density
-  center, amplitude, width).
+  units), τ vs t (proper vs coordinate time), tick rate (dτ/dt), bare r
+  (distance) vs indexed r_c (tick rate of clock c in the particle-filter
+  equations — same letter, distinguished by the index), r_ij (clock–mass
+  distance), M and indexed M_j (masses), index conventions (i particles,
+  j masses, c clocks), r_s (Schwarzschild radius), x, y (positions), μ, A,
+  σ_density (Gaussian density center, amplitude, width).
 - **Inference notation table:** σ_obs (observation noise), N (particle
   count), w (particle weight), θ (parameter hypothesis), K (number of
   masses), ESS, evidence / log-evidence.
-- **σ disambiguation:** the site overloads σ (observation noise in the
-  inference material; Gaussian profile width in Beyond Point Masses, which
-  itself flags the overload). The glossary distinguishes σ_obs vs
-  σ_density and notes the source pages' shorthand.
+- **Overload disambiguation:** the site overloads two symbols and the
+  glossary must surface both, noting each source page's shorthand:
+  - σ — observation noise in the inference material vs Gaussian profile
+    width in Beyond Point Masses (which itself flags the overload):
+    glossary uses σ_obs vs σ_density.
+  - τ — proper time in dτ/dt (Clocks as Gravimeters) vs clock averaging/
+    integration time in the σ_y(τ) = 10⁻¹⁶/√τ stability model
+    (Gravitational Echolocation coda): glossary lists both meanings
+    explicitly.
 - **Terms list:** weak field, time dilation, forward model, inverse
   problem, posterior, prior, likelihood, evidence, resampling
   (systematic/stratified/residual), jitter (incl. annealed), effective
@@ -104,7 +120,7 @@ Linking rule (replaces "first mention"):
   no nearby existing link already serves the reader** — several story
   pages already link the particle-filter and units pages in the same
   passage where the terms appear; those existing links count.
-- At most one link to the same destination per page.
+- At most one link to the same page-and-fragment target per page.
 - Never alter prose or introduce jargon to create a linking opportunity;
   links attach to existing wording only.
 
@@ -182,17 +198,23 @@ Checks: renders in light and dark themes and at mobile width.
   (`.github/workflows/site.yml`). Note: site rendering is not a PR CI
   gate (only a main-branch deploy step), so this local render **is** the
   gate and is mandatory per commit.
-- **Link contract:** for every row of the §2 matrix plus every glossary
-  `#term-*` and method `{#sec-...}` anchor, assert the fragment ID exists
-  in the rendered HTML of the target page (scripted grep over `_output/`).
+- **Link contract:** verification is bidirectional and covers **every
+  internal link added or changed by this pass** — the §2 matrix rows,
+  glossary outbound links, the getting-started replacement link, and the
+  README architecture link. For each: (a) the rendered **source** page
+  contains an `href` resolving to the intended target page and fragment;
+  (b) the **target** HTML contains that exact `id`. Implemented as a small
+  HTML-parser-based checker (e.g. a PEP 723 script using
+  BeautifulSoup/stdlib `html.parser` over `_output/`), not regex grep.
   Presence of sidebar URLs proves nothing and is not used as evidence.
 - **Visual:** glossary and architecture pages checked in light and dark
   themes and at a narrow/mobile viewport; Mermaid diagram has a text
   summary.
 - **Repo gate:** `uv run ruff format --check .`, `uv run ruff check .`,
-  `uv run pytest` before each push. (Codex round 1 suggested once-per-PR
-  as proportionate; retained per-push because the suite runs in ~12 s and
-  this is standing repo policy.)
+  `uv run pytest` before **each commit**. (Codex round 1 suggested
+  once-per-PR as proportionate; retained per-commit because the suite runs
+  in ~12 s and this is standing repo policy. Gate-frequency choice flagged
+  to Jonathan; flip to once-per-PR here if he prefers.)
 
 ## Implementation shape
 
