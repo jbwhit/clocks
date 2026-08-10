@@ -4,22 +4,26 @@
 
 **Goal:** Add a notation/glossary page, story→method cross-links, an architecture page, and a slimmed README to the "GPS in Reverse" Quarto site, per the approved spec `docs/superpowers/specs/2026-08-10-diataxis-docs-pass-design.md`.
 
-**Architecture:** Four content changes to `site/` and `README.md`, landed in dependency order so every commit renders with no dangling link targets. A stdlib-only checker script (`scripts/check_site_links.py`) holds the link contract as data and verifies every added link bidirectionally against the rendered `_output/`; its contract grows with each task.
+**Architecture:** Four content changes to `site/` and `README.md`, landed in dependency order so every commit renders with no dangling link targets. A stdlib-only checker script (`scripts/check_site_links.py`) holds the link contract as data and verifies every added link bidirectionally against the rendered `_output/`; its contract grows with each task. The checker is location-aware: content links are only counted inside Quarto's `main#quarto-document-content`, sidebar rows only inside `nav#quarto-sidebar` — otherwise the site-wide sidebar would satisfy nearly every row trivially.
 
 **Tech Stack:** Quarto (`.qmd`, Mermaid diagrams), Python 3.12+ via uv (checker script, stdlib only).
 
+**Review trail:** Codex xhigh plan round 1 (2026-08-10) — NEEDS REVISION; all seven findings accepted and fixed in this revision (location-aware checker; fence-aware README parsing; contract completeness incl. a `#sec-intro` anchor so the landing-page particle-filter link carries a fragment per spec; notation inventory step and missing entries — evidence row, R, σ_y, particle-filter term; two link-matrix rows dropped as in-page definitions; six factual wording fixes; self-contained commands with branch creation, commit trailers, and a concrete Task 5).
+
 ## Global Constraints
 
-- Branch: `claude-diataxis-docs-pass` (from `main`).
-- Every commit message ends with a `Co-Authored-By:` trailer naming the model actually authoring it, plus the `Claude-Session:` trailer if the harness provides one.
+- Branch: `claude-diataxis-docs-pass` (created from up-to-date `main` in Task 1 Step 0).
+- Every commit message ends with a `Co-Authored-By:` trailer naming the model actually authoring it (the harness tells you which you are — never hardcode), plus the `Claude-Session:` trailer if the harness provides one. The commit commands below show a `<model trailer>` placeholder — substitute your actual identity.
 - **Per-commit gate (all three, in order, before every commit):**
   1. Render: `cd site && uv run --frozen quarto render` — must complete with no errors.
   2. Link contract: `uv run python scripts/check_site_links.py` (from repo root) — must exit 0 (from Task 1 onward).
   3. Repo gate: `uv run ruff format --check .` AND `uv run ruff check .` AND `uv run pytest` (190 passing, 2 deselected as of plan date) — all green.
-- No changes to `src/clocks/` or `tests/` (spec: out of scope). `scripts/check_site_links.py` is the only Python file added.
-- Prose voice on story pages must not change: cross-links attach to existing wording; never add or reword sentences to create a linking opportunity (exceptions listed explicitly in Task 2 are the *only* text changes).
+- After writing or editing `scripts/check_site_links.py`, run `uv run ruff format scripts/check_site_links.py` before the gate — long CONTRACT rows exceed the 88-char limit as typed.
+- No changes to `src/clocks/` or `tests/` (spec: out of scope), **except** the two heading anchors and one intro span added to `site/method/the-particle-filter.qmd` (a site file, not library code). `scripts/check_site_links.py` is the only Python file added.
+- Prose voice on story pages must not change: cross-links attach to existing wording; never add or reword sentences to create a linking opportunity. The only text edits outside link-wrapping are those written out verbatim in Tasks 1, 3, and 4.
 - Published-site base URL for README links: `https://jbwhit.github.io/clocks/`.
 - The rendered site output dir is `site/_output/` (gitignored — never commit it).
+- The shell's cwd can reset between calls — begin every git step with an explicit `cd` to the repo root.
 
 ---
 
@@ -28,31 +32,70 @@
 **Files:**
 - Create: `site/method/notation-and-glossary.qmd`
 - Create: `scripts/check_site_links.py`
-- Modify: `site/method/the-particle-filter.qmd` (two heading anchors)
+- Modify: `site/method/the-particle-filter.qmd` (two heading anchors + one intro anchor)
 - Modify: `site/_quarto.yml` (one sidebar entry)
 
 **Interfaces:**
-- Produces: glossary anchors `#term-weak-field`, `#term-time-dilation`, `#term-forward-model`, `#term-inverse-problem`, `#term-degeneracy`, `#term-prior`, `#term-likelihood`, `#term-posterior`, `#term-evidence`, `#term-resampling`, `#term-jitter`, `#term-ess`, `#term-model-comparison`, `#term-label-switching`, `#term-chronometric-leveling`, `#term-sigma-obs`, `#term-index-conventions` (Task 2 links to these — names must match exactly).
-- Produces: method anchors `#sec-resampling`, `#sec-evidence` on `the-particle-filter.qmd`.
-- Produces: `scripts/check_site_links.py` with a module-level `CONTRACT` list that Tasks 2–4 append rows to.
+- Produces: glossary anchors `#term-weak-field`, `#term-time-dilation`, `#term-chronometric-leveling`, `#term-forward-model`, `#term-inverse-problem`, `#term-degeneracy`, `#term-particle-filter`, `#term-prior`, `#term-likelihood`, `#term-posterior`, `#term-evidence`, `#term-resampling`, `#term-jitter`, `#term-ess`, `#term-model-comparison`, `#term-label-switching`, `#term-sigma-obs`, `#term-index-conventions` (Task 2 links to a subset — names must match exactly).
+- Produces: method anchors `#sec-intro`, `#sec-resampling`, `#sec-evidence` on `the-particle-filter.qmd`.
+- Produces: `scripts/check_site_links.py` with a module-level `CONTRACT` list that Tasks 2–4 append rows to. Row shape: `(scope, source, target, fragment)` where scope is `"content"` or `"sidebar"`.
 
-- [ ] **Step 1: Add explicit anchors to the particle-filter page**
+- [ ] **Step 0: Create the branch**
 
-In `site/method/the-particle-filter.qmd`, change exactly two headings:
+```bash
+cd /Users/jonathan/projects/clocks
+git checkout main && git pull --no-rebase --ff-only
+git checkout -b claude-diataxis-docs-pass
+```
+
+- [ ] **Step 1: Verify the notation inventory**
+
+The glossary tables below were drafted from a full read of every site
+page (spec "implementation step 0"). Re-verify before writing the page:
+
+```bash
+grep -ohE '\$[^$]+\$' site/index.qmd site/story/*.qmd site/method/*.qmd site/reproduce/*.qmd | sort -u
+```
+
+Every symbol in the output must appear in the glossary tables below or be
+a one-off expression built from symbols that do (e.g. $2\Phi/c^2$,
+$10^{-16}/\sqrt{\tau}$, $\sqrt{1+2\Phi}$). If you find a standalone
+symbol the tables miss, add a row for it following the same format — the
+inventory is authoritative, per the spec.
+
+- [ ] **Step 2: Add explicit anchors to the particle-filter page**
+
+In `site/method/the-particle-filter.qmd`, make three edits:
+
+Wrap the intro paragraph (starting "This page is for the reader…") in an
+anchored div:
+
+```markdown
+::: {#sec-intro}
+This page is for the reader who wants the machinery. The implementation is
+`clocks.inference.ParticleFilter` — a few hundred lines, and everything below
+maps onto it directly.
+:::
+```
+
+Change `## Resampling` to:
 
 ```markdown
 ## Resampling {#sec-resampling}
 ```
-(replaces `## Resampling`)
+
+Change `## Evidence` to:
 
 ```markdown
 ## Evidence {#sec-evidence}
 ```
-(replaces `## Evidence`)
 
-- [ ] **Step 2: Create the glossary page**
+- [ ] **Step 3: Create the glossary page**
 
-Create `site/method/notation-and-glossary.qmd` with exactly this content:
+Create `site/method/notation-and-glossary.qmd` with the content below
+(drafted from the Step 1 inventory; if the Step 7 visual check finds an
+entry exceeding two rendered lines, trim that entry's wording — never
+drop entries):
 
 ````markdown
 ---
@@ -74,6 +117,7 @@ exists so you never have to hunt for where a definition first appeared.
 | $r_c$ | Tick rate of clock $c$ in the filter equations — same letter as distance, distinguished by the clock index | [The Particle Filter](the-particle-filter.qmd) |
 | $r_{ij}$ | Distance from clock $i$ to mass $j$ | [Into the Plane](../story/into-the-plane.qmd) |
 | $r_s$ | Schwarzschild radius, $r_s = 2M$ in simulation units | [Units and Scales](units-and-scales.qmd) |
+| $R$ | Range from the clock lattice to an exterior mass; the differential signal falls as $1/R^2$, the curvature term as $1/R^3$ | [Gravitational Echolocation](../story/gravitational-echolocation.qmd) |
 | $x$, $y$ | Mass position coordinates (subscripted $x_1, x_2$ with several masses) | [The Search in One Dimension](../story/the-search-in-one-dimension.qmd) |
 | $M$, $M_j$ | Mass (of mass $j$) | [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd) |
 | $\mu$, $\sigma_{\text{density}}$, $A$ | Center, width, and peak amplitude of a continuous Gaussian mass profile | [Beyond Point Masses](../story/beyond-point-masses.qmd) |
@@ -93,6 +137,7 @@ masses; $c$ indexes clocks ($r_c$).
 | $\theta_i$ | Particle $i$'s full parameter hypothesis, e.g. $(x, M)$ | [The Particle Filter](the-particle-filter.qmd) |
 | $K$ | Number of masses a model assumes | [How Many Masses?](../story/how-many-masses.qmd) |
 | ESS | Effective sample size, $1/\sum_i w_i^2$ | [The Particle Filter](the-particle-filter.qmd#sec-resampling) |
+| evidence, log-evidence | Marginal likelihood of the observed data under a model, accumulated observation by observation | [How Many Masses?](../story/how-many-masses.qmd) |
 
 ::: {.callout-note title="Two overloaded symbols"}
 **$\sigma$** means observation noise on the inference pages but Gaussian
@@ -101,7 +146,8 @@ profile *width* in [Beyond Point Masses](../story/beyond-point-masses.qmd)
 $\sigma_{\text{density}}$ to keep them apart. **$\tau$** means proper time
 in $d\tau/dt$, but in the
 [echolocation coda](../story/gravitational-echolocation.qmd) it is a clock's
-*averaging time* in the stability model $\sigma_y(\tau) = 10^{-16}/\sqrt{\tau}$.
+*averaging time*: there $\sigma_y(\tau) = 10^{-16}/\sqrt{\tau}$ is the
+clock's fractional-frequency instability after averaging for time $\tau$.
 :::
 
 ## Terms {#sec-terms}
@@ -124,19 +170,23 @@ in $d\tau/dt$, but in the
   from noisy clock rates back to the masses that caused them
   ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
 - [**Mass–distance degeneracy**]{#term-degeneracy} — a small mass nearby
-  and a heavy mass far away can produce identical readings; broken by
-  array geometry ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
+  and a heavy mass far away can produce identical readings; reduced or
+  broken by sufficiently informative array geometry
+  ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
+- [**Particle filter**]{#term-particle-filter} — the site's inference
+  engine: a cloud of weighted hypotheses, reweighted by each observation
+  ([The Particle Filter](the-particle-filter.qmd)).
 - [**Prior**]{#term-prior} — what the filter assumes before any data:
   uniform ranges for positions and masses
   ([The Particle Filter](the-particle-filter.qmd)).
 - [**Likelihood**]{#term-likelihood} — how well a hypothesis predicts an
   observed set of clock rates; Gaussian in the observation noise
   ([The Particle Filter](the-particle-filter.qmd)).
-- [**Posterior**]{#term-posterior} — the belief after data; the particle
-  cloud *is* the posterior, its spread the calibrated uncertainty
-  ([The Search in One Dimension](../story/the-search-in-one-dimension.qmd)).
-- [**Evidence**]{#term-evidence} — the probability a model assigned to the
-  data it actually saw; what
+- [**Posterior**]{#term-posterior} — the belief after data. The particle
+  cloud approximates it; the cloud's spread is the filter's *claimed*
+  uncertainty ([The Search in One Dimension](../story/the-search-in-one-dimension.qmd)).
+- [**Evidence**]{#term-evidence} — the marginal likelihood a model
+  assigned to the data it actually saw; what
   [model comparison](../story/how-many-masses.qmd) ranks
   ([The Particle Filter](the-particle-filter.qmd#sec-evidence)).
 - [**Resampling**]{#term-resampling} — redrawing the cloud in proportion
@@ -160,7 +210,7 @@ in $d\tau/dt$, but in the
   ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
 ````
 
-- [ ] **Step 3: Add the sidebar entry**
+- [ ] **Step 4: Add the sidebar entry**
 
 In `site/_quarto.yml`, under `section: "Part 2 — Under the Hood"`, after
 the Units and Scales entry, add:
@@ -170,9 +220,10 @@ the Units and Scales entry, add:
             href: method/notation-and-glossary.qmd
 ```
 
-- [ ] **Step 4: Write the link checker script**
+- [ ] **Step 5: Write the link checker script**
 
-Create `scripts/check_site_links.py` with exactly this content:
+Create `scripts/check_site_links.py` with exactly this content, then run
+`uv run ruff format scripts/check_site_links.py`:
 
 ```python
 """Check the documentation link contract for the rendered site.
@@ -183,6 +234,13 @@ For each contract row the SOURCE must contain a link resolving to the
 target page (and fragment, if given), and the TARGET file must exist
 (and contain the fragment id, if given). A missing source link is a
 failure.
+
+Rows are scoped: "content" rows only count links inside Quarto's
+main#quarto-document-content element (the site-wide sidebar would
+otherwise satisfy nearly every row trivially); "sidebar" rows only count
+links inside nav#quarto-sidebar. README.md sources are parsed as
+Markdown, fence-aware, with published-site URLs mapped onto _output
+paths.
 
 Run from the repo root, after rendering the site:
 
@@ -203,47 +261,78 @@ OUTPUT = ROOT / "site" / "_output"
 README = ROOT / "README.md"
 SITE_BASE = "https://jbwhit.github.io/clocks/"
 
-# (source, target, fragment) — source/target are html paths relative to
-# site/_output; source may also be "README.md" (parsed as Markdown, with
-# published-site URLs mapped onto _output paths). fragment=None means a
-# page-only link: the source link and the target file must exist, but no
-# id is required.
-CONTRACT: list[tuple[str, str, str | None]] = [
+# (scope, source, target, fragment) — source/target are html paths
+# relative to site/_output; source may also be "README.md". scope is
+# "content" or "sidebar". fragment=None means a page-only link: the
+# source link and the target file must exist, but no id is required.
+CONTRACT: list[tuple[str, str, str, str | None]] = [
     # Task 1 — glossary outbound links (one per destination page)
-    ("method/notation-and-glossary.html", "story/clocks-as-gravimeters.html", None),
-    ("method/notation-and-glossary.html", "story/one-clock-is-not-enough.html", None),
-    ("method/notation-and-glossary.html", "story/the-search-in-one-dimension.html", None),
-    ("method/notation-and-glossary.html", "story/into-the-plane.html", None),
-    ("method/notation-and-glossary.html", "story/two-hidden-masses.html", None),
-    ("method/notation-and-glossary.html", "story/how-many-masses.html", None),
-    ("method/notation-and-glossary.html", "story/beyond-point-masses.html", None),
-    ("method/notation-and-glossary.html", "story/gravitational-echolocation.html", None),
-    ("method/notation-and-glossary.html", "method/units-and-scales.html", None),
-    ("method/notation-and-glossary.html", "method/the-particle-filter.html", "sec-resampling"),
-    ("method/notation-and-glossary.html", "method/the-particle-filter.html", "sec-evidence"),
-    # Task 1 — sidebar entry (checked on the landing page)
-    ("index.html", "method/notation-and-glossary.html", None),
+    ("content", "method/notation-and-glossary.html", "story/clocks-as-gravimeters.html", None),
+    ("content", "method/notation-and-glossary.html", "story/one-clock-is-not-enough.html", None),
+    ("content", "method/notation-and-glossary.html", "story/the-search-in-one-dimension.html", None),
+    ("content", "method/notation-and-glossary.html", "story/into-the-plane.html", None),
+    ("content", "method/notation-and-glossary.html", "story/two-hidden-masses.html", None),
+    ("content", "method/notation-and-glossary.html", "story/how-many-masses.html", None),
+    ("content", "method/notation-and-glossary.html", "story/beyond-point-masses.html", None),
+    ("content", "method/notation-and-glossary.html", "story/gravitational-echolocation.html", None),
+    ("content", "method/notation-and-glossary.html", "method/units-and-scales.html", None),
+    ("content", "method/notation-and-glossary.html", "method/the-particle-filter.html", None),
+    ("content", "method/notation-and-glossary.html", "method/the-particle-filter.html", "sec-resampling"),
+    ("content", "method/notation-and-glossary.html", "method/the-particle-filter.html", "sec-evidence"),
+    # Task 1 — sidebar entry
+    ("sidebar", "index.html", "method/notation-and-glossary.html", None),
 ]
+
+_VOID = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "source", "track", "wbr",
+}
 
 
 class _PageIndex(HTMLParser):
-    """Collect all href values and element ids from one HTML page."""
+    """Collect element ids plus hrefs, scoped to content vs sidebar."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.hrefs: set[str] = set()
+        self.content_hrefs: set[str] = set()
+        self.sidebar_hrefs: set[str] = set()
         self.ids: set[str] = set()
+        self._stack: list[str] = []
+        self._content_depth: int | None = None
+        self._sidebar_depth: int | None = None
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
     ) -> None:
-        for name, value in attrs:
-            if value is None:
-                continue
-            if name == "href":
-                self.hrefs.add(value)
-            elif name == "id":
-                self.ids.add(value)
+        attr_map = dict(attrs)
+        el_id = attr_map.get("id")
+        if el_id:
+            self.ids.add(el_id)
+        if tag not in _VOID:
+            self._stack.append(tag)
+            if el_id == "quarto-document-content" and self._content_depth is None:
+                self._content_depth = len(self._stack)
+            if el_id == "quarto-sidebar" and self._sidebar_depth is None:
+                self._sidebar_depth = len(self._stack)
+        href = attr_map.get("href")
+        if href:
+            depth = len(self._stack)
+            if self._content_depth is not None and depth >= self._content_depth:
+                self.content_hrefs.add(href)
+            if self._sidebar_depth is not None and depth >= self._sidebar_depth:
+                self.sidebar_hrefs.add(href)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _VOID:
+            return
+        while self._stack:
+            top = self._stack.pop()
+            if self._content_depth is not None and len(self._stack) < self._content_depth:
+                self._content_depth = None
+            if self._sidebar_depth is not None and len(self._stack) < self._sidebar_depth:
+                self._sidebar_depth = None
+            if top == tag:
+                break
 
 
 def _map_site_url(url: str) -> tuple[str, str | None] | None:
@@ -257,9 +346,7 @@ def _map_site_url(url: str) -> tuple[str, str | None] | None:
     return rel, (parsed.fragment or None)
 
 
-def _resolve_href(
-    source: str, href: str
-) -> tuple[str, str | None] | None:
+def _resolve_href(source: str, href: str) -> tuple[str, str | None] | None:
     """Resolve one href from `source` to an _output-relative target."""
     parsed = urlparse(href)
     if parsed.scheme in ("http", "https"):
@@ -276,15 +363,22 @@ def _resolve_href(
     return "/".join(parts), (parsed.fragment or None)
 
 
-def _source_links(source: str) -> set[tuple[str, str | None]] | None:
-    """All resolved internal links in a source (HTML page or README)."""
-    if source == "README.md":
-        urls = re.findall(r"\]\(([^)\s]+)\)", README.read_text(encoding="utf-8"))
-        return {m for u in urls if (m := _map_site_url(u)) is not None}
-    page = _load(source)
-    if page is None:
-        return None
-    return {m for h in page.hrefs if (m := _resolve_href(source, h)) is not None}
+def _readme_links() -> set[tuple[str, str | None]]:
+    """Site-internal links in README.md, skipping fenced/inline code."""
+    links: set[tuple[str, str | None]] = set()
+    in_fence = False
+    for line in README.read_text(encoding="utf-8").splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        clean = re.sub(r"`[^`]*`", "", line)
+        for url in re.findall(r"\]\(([^)\s]+)\)", clean):
+            mapped = _map_site_url(url)
+            if mapped is not None:
+                links.add(mapped)
+    return links
 
 
 _cache: dict[str, _PageIndex | None] = {}
@@ -302,17 +396,29 @@ def _load(rel: str) -> _PageIndex | None:
     return _cache[rel]
 
 
+def _source_links(scope: str, source: str) -> set[tuple[str, str | None]] | None:
+    if source == "README.md":
+        return _readme_links()
+    page = _load(source)
+    if page is None:
+        return None
+    hrefs = page.sidebar_hrefs if scope == "sidebar" else page.content_hrefs
+    return {m for h in hrefs if (m := _resolve_href(source, h)) is not None}
+
+
 def main() -> int:
     failures: list[str] = []
-    for source, target, fragment in CONTRACT:
-        label = f"{source} -> {target}" + (f"#{fragment}" if fragment else "")
+    for scope, source, target, fragment in CONTRACT:
+        label = f"[{scope}] {source} -> {target}" + (
+            f"#{fragment}" if fragment else ""
+        )
         target_page = _load(target)
         if target_page is None:
             failures.append(f"{label}: target file missing")
             continue
         if fragment is not None and fragment not in target_page.ids:
             failures.append(f"{label}: id '{fragment}' missing in target")
-        links = _source_links(source)
+        links = _source_links(scope, source)
         if links is None:
             failures.append(f"{label}: source file missing")
             continue
@@ -335,34 +441,37 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-After writing the script (and after every later CONTRACT edit), run
-`uv run ruff format scripts/check_site_links.py` — the long CONTRACT rows
-exceed the 88-char line limit as typed, and the format --check gate would
-otherwise fail.
-
-- [ ] **Step 5: Render and run the checker — expect it to pass**
+- [ ] **Step 6: Render and run the checker — expect it to pass**
 
 ```bash
-cd site && uv run --frozen quarto render && cd ..
-uv run python scripts/check_site_links.py
+cd /Users/jonathan/projects/clocks/site && uv run --frozen quarto render
+cd /Users/jonathan/projects/clocks && uv run python scripts/check_site_links.py
 ```
-Expected: render completes; checker prints `Link contract OK: 12 rows checked.`
+Expected: render completes; checker prints `Link contract OK: 13 rows checked.`
 If any row fails, fix the glossary/anchors (not the checker) unless the
-checker itself has a bug.
+checker itself has a bug. Note the glossary's page-only particle-filter
+row is satisfied by its $N$ / $w_i$ / prior / likelihood entry links.
 
-- [ ] **Step 6: Visual check**
+- [ ] **Step 7: Visual check**
 
 Open `site/_output/method/notation-and-glossary.html` in a browser: check
 light and dark themes and a narrow (~400px) window. Every entry ≤ 2
-rendered lines at desktop width; tables scroll or wrap at mobile width
-without horizontal page scroll.
+rendered lines at desktop width (trim wording if not — never drop
+entries); tables scroll or wrap at mobile width without horizontal page
+scroll.
 
-- [ ] **Step 7: Repo gate, commit, push**
+- [ ] **Step 8: Repo gate, commit, push**
 
 ```bash
+cd /Users/jonathan/projects/clocks
 uv run ruff format --check . && uv run ruff check . && uv run pytest
 git add site/method/notation-and-glossary.qmd site/method/the-particle-filter.qmd site/_quarto.yml scripts/check_site_links.py
-git commit -m "Add notation & glossary page with stable anchors and link checker"
+git commit -m "$(cat <<'EOF'
+Add notation & glossary page with stable anchors and link checker
+
+<model trailer>
+EOF
+)"
 git push -u origin claude-diataxis-docs-pass
 ```
 
@@ -374,46 +483,51 @@ git push -u origin claude-diataxis-docs-pass
 - Modify: `site/index.qmd`
 - Modify: `site/story/clocks-as-gravimeters.qmd`
 - Modify: `site/story/one-clock-is-not-enough.qmd`
-- Modify: `site/story/the-search-in-one-dimension.qmd`
 - Modify: `site/story/into-the-plane.qmd`
 - Modify: `site/story/two-hidden-masses.qmd`
-- Modify: `site/story/how-many-masses.qmd`
 - Modify: `site/story/beyond-point-masses.qmd`
 - Modify: `site/story/gravitational-echolocation.qmd`
 - Modify: `scripts/check_site_links.py` (append CONTRACT rows)
 
 **Interfaces:**
-- Consumes: glossary `#term-*` anchors and method `#sec-*` anchors from Task 1 (exact names listed there).
+- Consumes: glossary `#term-*` anchors and method `#sec-intro`, `#sec-resampling`, `#sec-evidence` anchors from Task 1 (exact names listed there).
 
-Each edit below wraps existing words in a link — no wording changes. The
-link matrix (also the PR-description artifact):
+Each edit wraps existing words in a link — no wording changes. The link
+matrix (also the PR-description artifact), 12 rows:
 
 | Source page | Linked text (existing words) | Target |
 |---|---|---|
-| index.qmd | "particle filter" (in "a particle filter for the inverse problem") | `method/the-particle-filter.qmd` |
+| index.qmd | "particle filter" (in "a particle filter for the inverse problem") | `method/the-particle-filter.qmd#sec-intro` |
 | index.qmd | "forward model" (in "a forward model from general relativity") | `method/notation-and-glossary.qmd#term-forward-model` |
 | index.qmd | "inverse problem" (same sentence) | `method/notation-and-glossary.qmd#term-inverse-problem` |
 | clocks-as-gravimeters.qmd | "weak-field result" (first sentence) | `../method/notation-and-glossary.qmd#term-weak-field` |
 | one-clock-is-not-enough.qmd | "observation noise $\sigma$" (noise-floor callout) | `../method/notation-and-glossary.qmd#term-sigma-obs` |
-| the-search-in-one-dimension.qmd | "posterior" (in "The cloud *is* the posterior") | `../method/notation-and-glossary.qmd#term-posterior` |
 | into-the-plane.qmd | "prior" (in "only the prior gains a column") | `../method/notation-and-glossary.qmd#term-prior` |
 | into-the-plane.qmd | "$-M_j/r_{ij}$" (in "The potential sums $-M_j/r_{ij}$") | `../method/notation-and-glossary.qmd#term-index-conventions` |
 | two-hidden-masses.qmd | "resampling jitter" (in "after every resampling jitter") | `../method/the-particle-filter.qmd#sec-resampling` |
 | two-hidden-masses.qmd | "posterior" (in "the true posterior is perfectly bimodal") | `../method/notation-and-glossary.qmd#term-posterior` |
-| how-many-masses.qmd | "evidence" (the bolded "**evidence**" in the first paragraph — link text inside the bold) | `../method/the-particle-filter.qmd#sec-evidence` |
 | beyond-point-masses.qmd | "observation noise" (in "not the observation noise from earlier pages") | `../method/notation-and-glossary.qmd#term-sigma-obs` |
 | beyond-point-masses.qmd | "covariance-shaped jitter mode" | `../method/the-particle-filter.qmd#sec-resampling` |
 | gravitational-echolocation.qmd | "evidence normalization" (in "Only the absolute evidence normalization shifts") | `../method/the-particle-filter.qmd#sec-evidence` |
 
-Deliberately **not** linked (existing nearby links already serve the
-reader — record these in the PR description too): "particle filter" and
-"resampling" on the-search-in-one-dimension (same paragraph already links
-The Particle Filter); "simulation units" on clocks-as-gravimeters (same
-sentence already links Units and Scales); "mass–distance degeneracy" on
-one-clock-is-not-enough (that page is the treatment) and on
-gravitational-echolocation (already links one-clock-is-not-enough).
+Deliberately **not** linked (record these in the PR description too):
 
-- [ ] **Step 1: Apply the 14 link edits from the matrix**
+- "particle filter" and "resampling" on the-search-in-one-dimension —
+  the same paragraph already links The Particle Filter.
+- "posterior" on the-search-in-one-dimension — "The cloud *is* the
+  posterior" is itself that page's definition of the term, not an
+  unexplained occurrence.
+- "evidence" on how-many-masses — defined in the same sentence ("compare
+  **evidence**: the probability each model assigned…"); that page is the
+  evidence treatment.
+- "simulation units" on clocks-as-gravimeters — same sentence already
+  links Units and Scales.
+- "mass–distance degeneracy" on one-clock-is-not-enough (that page is
+  the treatment) and on gravitational-echolocation and
+  beyond-point-masses (both already link one-clock-is-not-enough at that
+  exact phrase).
+
+- [ ] **Step 1: Apply the 12 link edits from the matrix**
 
 Example of the edit pattern (index.qmd; all others follow the same shape):
 
@@ -421,7 +535,7 @@ Example of the edit pattern (index.qmd; all others follow the same shape):
 This site builds that detector: a
 [forward model](method/notation-and-glossary.qmd#term-forward-model) from
 general relativity, a
-[particle filter](method/the-particle-filter.qmd) for the
+[particle filter](method/the-particle-filter.qmd#sec-intro) for the
 [inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
 and a series of increasingly hard detection puzzles.
 ```
@@ -431,38 +545,45 @@ story-page hrefs do.
 
 - [ ] **Step 2: Append the Task 2 rows to CONTRACT in `scripts/check_site_links.py`**
 
+Append before the closing `]`, then re-run
+`uv run ruff format scripts/check_site_links.py`:
+
 ```python
     # Task 2 — story/landing cross-links
-    ("index.html", "method/the-particle-filter.html", None),
-    ("index.html", "method/notation-and-glossary.html", "term-forward-model"),
-    ("index.html", "method/notation-and-glossary.html", "term-inverse-problem"),
-    ("story/clocks-as-gravimeters.html", "method/notation-and-glossary.html", "term-weak-field"),
-    ("story/one-clock-is-not-enough.html", "method/notation-and-glossary.html", "term-sigma-obs"),
-    ("story/the-search-in-one-dimension.html", "method/notation-and-glossary.html", "term-posterior"),
-    ("story/into-the-plane.html", "method/notation-and-glossary.html", "term-prior"),
-    ("story/into-the-plane.html", "method/notation-and-glossary.html", "term-index-conventions"),
-    ("story/two-hidden-masses.html", "method/the-particle-filter.html", "sec-resampling"),
-    ("story/two-hidden-masses.html", "method/notation-and-glossary.html", "term-posterior"),
-    ("story/how-many-masses.html", "method/the-particle-filter.html", "sec-evidence"),
-    ("story/beyond-point-masses.html", "method/notation-and-glossary.html", "term-sigma-obs"),
-    ("story/beyond-point-masses.html", "method/the-particle-filter.html", "sec-resampling"),
-    ("story/gravitational-echolocation.html", "method/the-particle-filter.html", "sec-evidence"),
+    ("content", "index.html", "method/the-particle-filter.html", "sec-intro"),
+    ("content", "index.html", "method/notation-and-glossary.html", "term-forward-model"),
+    ("content", "index.html", "method/notation-and-glossary.html", "term-inverse-problem"),
+    ("content", "story/clocks-as-gravimeters.html", "method/notation-and-glossary.html", "term-weak-field"),
+    ("content", "story/one-clock-is-not-enough.html", "method/notation-and-glossary.html", "term-sigma-obs"),
+    ("content", "story/into-the-plane.html", "method/notation-and-glossary.html", "term-prior"),
+    ("content", "story/into-the-plane.html", "method/notation-and-glossary.html", "term-index-conventions"),
+    ("content", "story/two-hidden-masses.html", "method/the-particle-filter.html", "sec-resampling"),
+    ("content", "story/two-hidden-masses.html", "method/notation-and-glossary.html", "term-posterior"),
+    ("content", "story/beyond-point-masses.html", "method/notation-and-glossary.html", "term-sigma-obs"),
+    ("content", "story/beyond-point-masses.html", "method/the-particle-filter.html", "sec-resampling"),
+    ("content", "story/gravitational-echolocation.html", "method/the-particle-filter.html", "sec-evidence"),
 ```
 
 - [ ] **Step 3: Render and run the checker**
 
 ```bash
-cd site && uv run --frozen quarto render && cd ..
-uv run python scripts/check_site_links.py
+cd /Users/jonathan/projects/clocks/site && uv run --frozen quarto render
+cd /Users/jonathan/projects/clocks && uv run python scripts/check_site_links.py
 ```
-Expected: `Link contract OK: 26 rows checked.`
+Expected: `Link contract OK: 25 rows checked.`
 
 - [ ] **Step 4: Repo gate, commit, push**
 
 ```bash
+cd /Users/jonathan/projects/clocks
 uv run ruff format --check . && uv run ruff check . && uv run pytest
 git add site/index.qmd site/story/*.qmd scripts/check_site_links.py
-git commit -m "Cross-link story pages to method anchors and glossary terms"
+git commit -m "$(cat <<'EOF'
+Cross-link story pages to method anchors and glossary terms
+
+<model trailer>
+EOF
+)"
 git push
 ```
 
@@ -560,12 +681,13 @@ flowchart TB
 ```
 
 **In words** (text equivalent of the diagram): `types` is the foundation
-every layer builds on. `config` and `results` define the public
-configuration and result dataclasses on top of it. `physics` computes
-clock rates from mass configurations; `noise` (which imports nothing from
-the package) models observation noise. `inference` — the particle filter —
-consumes physics, noise, and types. `api` ties all of it into the
-`simulate` / `infer` / `build_particle_filter` entry points. `viz` is a
+nearly everything builds on — only `noise` and `_cli` stand apart.
+`config` and `results` define the public configuration and result
+dataclasses on top of it. `physics` computes clock rates from mass
+configurations; `noise` (which imports nothing from the package) models
+observation noise. `inference` — the particle filter — consumes physics,
+noise, and types. `api` ties all of it into the `simulate` / `infer` /
+`simulate_and_infer` / `build_particle_filter` entry points. `viz` is a
 pure facade re-exporting the private `_animate`, `_panels`, and
 `_panels3d` plotting modules. `_scenarios` builds shared demo/test
 scenarios on the public API; `_echo_study` adds echolocation-study
@@ -598,26 +720,26 @@ Reproducibility entry, add:
 - [ ] **Step 3: Verify the diagram against the real import graph**
 
 ```bash
-grep -n "^from clocks" src/clocks/*.py
+cd /Users/jonathan/projects/clocks && grep -n "^from clocks" src/clocks/*.py | grep -v __init__
 ```
 Confirm every solid arrow in the diagram corresponds to an import and no
-import is missing from the diagram (ignoring `__init__.py`). If they
-disagree, fix the diagram, not the code.
+import is missing from the diagram. If they disagree, fix the diagram,
+not the code.
 
 - [ ] **Step 4: Append the Task 3 rows to CONTRACT**
 
 ```python
     # Task 3 — architecture page sidebar entry
-    ("index.html", "reproduce/architecture.html", None),
+    ("sidebar", "index.html", "reproduce/architecture.html", None),
 ```
 
 - [ ] **Step 5: Render, check, visual pass**
 
 ```bash
-cd site && uv run --frozen quarto render && cd ..
-uv run python scripts/check_site_links.py
+cd /Users/jonathan/projects/clocks/site && uv run --frozen quarto render
+cd /Users/jonathan/projects/clocks && uv run python scripts/check_site_links.py
 ```
-Expected: `Link contract OK: 27 rows checked.`
+Expected: `Link contract OK: 26 rows checked.`
 Open `site/_output/reproduce/architecture.html`: diagram legible in light
 and dark themes and at a narrow window (the Mermaid block may scroll
 horizontally inside its own container — the page must not).
@@ -625,9 +747,15 @@ horizontally inside its own container — the page must not).
 - [ ] **Step 6: Repo gate, commit, push**
 
 ```bash
+cd /Users/jonathan/projects/clocks
 uv run ruff format --check . && uv run ruff check . && uv run pytest
 git add site/reproduce/architecture.qmd site/_quarto.yml scripts/check_site_links.py
-git commit -m "Add architecture page: C4-inspired module map of src/clocks"
+git commit -m "$(cat <<'EOF'
+Add architecture page: C4-inspired module map of src/clocks
+
+<model trailer>
+EOF
+)"
 git push
 ```
 
@@ -653,10 +781,10 @@ paragraphs — and replace with:
 ## Use as a library
 
 The package exposes stable end-to-end entry points — `simulate`, `infer`,
-and `build_particle_filter` — configured and returned via public
-dataclasses (`SimulationConfig`, `InferenceConfig`, `SimulationResult`,
-`InferenceResult`, ...). A complete simulate-then-infer round trip runs
-live on the site's
+and `simulate_and_infer` — configured via public dataclasses
+(`SimulationConfig`, `InferenceConfig`, ...), plus `build_particle_filter`
+for driving the filter observation-by-observation. A complete
+simulate-then-infer round trip runs live on the site's
 [Getting Started](https://jbwhit.github.io/clocks/reproduce/getting-started.html)
 page, and the filter machinery is documented in
 [The Particle Filter](https://jbwhit.github.io/clocks/method/the-particle-filter.html).
@@ -664,12 +792,13 @@ page, and the filter machinery is documented in
 
 - [ ] **Step 2: Compress README's demo catalog**
 
-Replace the per-demo subsections (each command + GIF embed + description,
+Replace the per-demo subsections (each command + embed + description,
 from the first `**1D**` entry through the echolocation GIF embed,
-keeping the `## Run the demos` heading) with:
+keeping the `## Run the demos` heading) with the following — six GIF
+demos plus one static figure, all seven commands retained:
 
 ```markdown
-All seven demo commands (rough laptop runtimes on the site):
+Six animated demos and one static figure:
 
 ​```bash
 uv run demo-1d                  # → output/demo_1d.gif
@@ -683,15 +812,16 @@ uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
 
 ![2D inference demo](assets/demo_2d.gif)
 
-Each demo animates the physical setup, the particle cloud converging, and
-the estimates' uncertainty. All seven, with commentary:
+The GIF demos animate the physical setup, the particle cloud converging,
+and the estimates' uncertainty; `demo-density` produces a static
+comparison figure. All seven, with commentary:
 [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The
 echolocation range study behind the site's final page:
 `scripts/scan_echolocation_range.py`.
 ```
 
-(The `​` marks above are to escape the nested code fence in this plan —
-write plain ``` fences in the README.)
+(The `​` marks above escape the nested code fence in this plan — write
+plain ``` fences in the README.)
 
 - [ ] **Step 3: Point README's project structure at the architecture page**
 
@@ -735,30 +865,33 @@ observation-by-observation (e.g. for animation), use
 
 ```python
     # Task 4 — README → site links and getting-started repoint
-    ("README.md", "reproduce/getting-started.html", None),
-    ("README.md", "method/the-particle-filter.html", None),
-    ("README.md", "index.html", None),
-    ("README.md", "reproduce/architecture.html", None),
-    ("reproduce/getting-started.html", "method/the-particle-filter.html", None),
-]
+    ("content", "README.md", "reproduce/getting-started.html", None),
+    ("content", "README.md", "method/the-particle-filter.html", None),
+    ("content", "README.md", "index.html", None),
+    ("content", "README.md", "reproduce/architecture.html", None),
+    ("content", "reproduce/getting-started.html", "method/the-particle-filter.html", None),
 ```
-(The closing `]` shown is the existing list terminator — the four rows go
-before it.)
 
 - [ ] **Step 6: Render, check**
 
 ```bash
-cd site && uv run --frozen quarto render && cd ..
-uv run python scripts/check_site_links.py
+cd /Users/jonathan/projects/clocks/site && uv run --frozen quarto render
+cd /Users/jonathan/projects/clocks && uv run python scripts/check_site_links.py
 ```
-Expected: `Link contract OK: 32 rows checked.`
+Expected: `Link contract OK: 31 rows checked.`
 
 - [ ] **Step 7: Repo gate, commit, push**
 
 ```bash
+cd /Users/jonathan/projects/clocks
 uv run ruff format --check . && uv run ruff check . && uv run pytest
 git add README.md site/reproduce/getting-started.qmd scripts/check_site_links.py
-git commit -m "Slim README to install-and-run; point details at the site"
+git commit -m "$(cat <<'EOF'
+Slim README to install-and-run; point details at the site
+
+<model trailer>
+EOF
+)"
 git push
 ```
 
@@ -768,24 +901,59 @@ git push
 
 - [ ] **Step 1: Open the PR**
 
+Write the PR body to a scratch file first:
+
 ```bash
-gh pr create --title "Diataxis docs pass: glossary, cross-links, architecture page, slim README" --body "<summary of the four commits; paste the Task 2 link matrix (linked + deliberately-not-linked lists) as the link-contract artifact; link the spec docs/superpowers/specs/2026-08-10-diataxis-docs-pass-design.md>"
+cd /Users/jonathan/projects/clocks
+cat > /tmp/docs-pass-pr-body.md <<'EOF'
+Implements the Diataxis documentation pass per the approved spec
+`docs/superpowers/specs/2026-08-10-diataxis-docs-pass-design.md`
+(Codex xhigh: SOUND ENOUGH TO IMPLEMENT, round 5).
+
+Four commits in dependency order:
+1. Notation & Glossary page + stable anchors + link-contract checker
+2. Story/landing cross-links (matrix below)
+3. Architecture page (C4-inspired module map)
+4. README slimmed; getting-started claims fixed
+
+## Link contract
+
+<paste the Task 2 link matrix table AND the deliberately-not-linked list
+from docs/superpowers/plans/2026-08-10-diataxis-docs-pass.md verbatim>
+
+Verified bidirectionally by `scripts/check_site_links.py` (31 rows) on
+the rendered site.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+gh pr create --title "Diataxis docs pass: glossary, cross-links, architecture page, slim README" --body-file /tmp/docs-pass-pr-body.md
 ```
 
 - [ ] **Step 2: Verify CI green**
 
 Poll `gh pr checks` until every check reports a **non-empty conclusion**;
-an empty result is not evidence of green. Investigate any failure
-immediately.
+an empty result is not evidence of green (it can mean pending, failing,
+or no CI). Investigate any failure immediately.
 
 - [ ] **Step 3: Codex xhigh review of the final diff**
 
-Launch per the standing protocol; go rounds until "READY TO MERGE"; post
-each round's findings and responses on the PR via `gh`, attributed.
+```bash
+cd /Users/jonathan/projects/clocks
+codex exec --sandbox read-only -c model_reasoning_effort="xhigh" "Review the final diff of branch claude-diataxis-docs-pass against main (run: git diff main...claude-diataxis-docs-pass) for the Diataxis docs pass, against the approved spec docs/superpowers/specs/2026-08-10-diataxis-docs-pass-design.md. Check spec conformance, link correctness, physics wording, and the checker script. End with a hard verdict line: 'READY TO MERGE' or 'NEEDS REVISION' with blocking issues." < /dev/null > /tmp/codex-pr-review.txt 2>&1
+```
+
+The answer is after the last `codex` marker, before `tokens used`. Triage
+findings with rigor; apply fixes, commit (full per-commit gate), push,
+re-review — repeat until "READY TO MERGE". Post each round's findings,
+responses, and the verdict on the PR via
+`gh pr comment --body-file <round-file>`, attributed
+("**Codex xhigh (round N):** …").
 
 - [ ] **Step 4: Merge and confirm**
 
-After Codex verdict (counts as approval): `gh pr merge --squash` (or repo
-convention), confirm CI stays green on main, fast-forward the local
-checkout, and confirm the deployed site
-(`site.yml` runs on push to main) shows the new pages.
+After the Codex verdict (counts as approval per the standing protocol):
+merge with `gh pr merge --squash --delete-branch`, confirm CI stays green
+on main afterward (`gh run list --branch main` — wait for non-empty
+conclusions), fast-forward the local checkout
+(`git checkout main && git pull --no-rebase --ff-only`), and confirm the
+deployed site (`site.yml` runs on push to main) shows the two new pages.
