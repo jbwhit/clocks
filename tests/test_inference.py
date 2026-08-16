@@ -57,6 +57,15 @@ def _make_forward_model(
 
 
 class TestResamplingIndices:
+    class _EndpointRng:
+        """RNG double returning the largest legal uniform value below one."""
+
+        def uniform(self, size: int | None = None) -> float | NDArray[np.float64]:
+            value = np.nextafter(1.0, 0.0)
+            if size is None:
+                return value
+            return np.full(size, value)
+
     @pytest.mark.parametrize(
         "helper", [_systematic_indices, _stratified_indices, _residual_indices]
     )
@@ -71,6 +80,7 @@ class TestResamplingIndices:
             np.array([1.1, -0.1]),
             np.array([0.4, 0.5]),
             np.array([0.4, 0.600000000002]),
+            np.array([0.2, 0.2, 0.2, 0.2, 0.19], dtype=np.float32),
         ],
     )
     def test_rejects_invalid_weights(
@@ -152,6 +162,47 @@ class TestResamplingIndices:
         )
 
         np.testing.assert_array_equal(indices, np.array([0, 1, 1, 2], dtype=np.intp))
+
+    @pytest.mark.parametrize("helper", [_systematic_indices, _stratified_indices])
+    def test_rounded_endpoint_never_selects_zero_weight_source(
+        self,
+        helper: Callable[
+            [NDArray[np.floating], int, np.random.Generator], NDArray[np.intp]
+        ],
+    ) -> None:
+        weights = np.array([0.0, 0.25, 0.0, 0.75, 0.0])
+
+        indices = helper(weights, 4, self._EndpointRng())  # type: ignore[arg-type]
+
+        assert np.all(weights[indices] > 0)
+
+    def test_residual_rounded_endpoint_never_selects_zero_weight_source(
+        self,
+    ) -> None:
+        weights = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.0])
+
+        indices = _residual_indices(
+            weights,
+            4,
+            self._EndpointRng(),  # type: ignore[arg-type]
+        )
+
+        assert np.all(weights[indices] > 0)
+
+    @pytest.mark.parametrize(
+        "helper", [_systematic_indices, _stratified_indices, _residual_indices]
+    )
+    def test_accepts_normalized_float32_weights(
+        self,
+        helper: Callable[
+            [NDArray[np.floating], int, np.random.Generator], NDArray[np.intp]
+        ],
+    ) -> None:
+        indices = helper(
+            np.array([0.2] * 5, dtype=np.float32), 7, np.random.default_rng(0)
+        )
+
+        assert indices.shape == (7,)
 
 
 class TestParticleFilter:

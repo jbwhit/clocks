@@ -15,27 +15,33 @@ from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
 _JITTER_MODES = {"fixed", "covariance", "annealed"}
 _WEIGHT_SUM_ATOL = 1e-12
+_UNIT_INTERVAL_MAX = np.nextafter(1.0, 0.0)
 
 
 def _validated_resampling_inputs(
     weights: NDArray[np.floating], n_draws: int
 ) -> tuple[NDArray[np.float64], int]:
-    """Validate resampling inputs and normalize within a 1e-12 tolerance."""
-    weights_array = np.asarray(weights, dtype=float)
-    if weights_array.ndim != 1:
+    """Validate inputs, allowing dtype-scaled summation roundoff only."""
+    source_weights = np.asarray(weights)
+    if source_weights.ndim != 1:
         raise ValueError("weights must be a 1-D array")
-    if weights_array.size == 0:
+    if source_weights.size == 0:
         raise ValueError("weights must be nonempty")
+    weights_array = np.asarray(source_weights, dtype=float)
     if not np.all(np.isfinite(weights_array)):
         raise ValueError("weights must be finite")
     if np.any(weights_array < 0):
         raise ValueError("weights must be nonnegative")
 
     total = float(weights_array.sum())
-    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=_WEIGHT_SUM_ATOL):
-        raise ValueError(
-            f"weights must sum to one within {_WEIGHT_SUM_ATOL:g}, got {total}"
-        )
+    source_epsilon = (
+        np.finfo(source_weights.dtype).eps
+        if np.issubdtype(source_weights.dtype, np.floating)
+        else np.finfo(np.float64).eps
+    )
+    sum_atol = max(_WEIGHT_SUM_ATOL, source_weights.size * source_epsilon)
+    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=sum_atol):
+        raise ValueError(f"weights must sum to one within {sum_atol:g}, got {total}")
     if isinstance(n_draws, (bool, np.bool_)) or not isinstance(
         n_draws, (int, np.integer)
     ):
@@ -54,6 +60,7 @@ def _systematic_indices(
     cumsum = np.cumsum(weights_array)
     cumsum[-1] = 1.0
     positions = (rng.uniform() + np.arange(n_draws)) / n_draws
+    positions = np.minimum(positions, _UNIT_INTERVAL_MAX)
     indices = np.searchsorted(cumsum, positions, side="right")
     return np.clip(indices, 0, len(weights_array) - 1).astype(np.intp)
 
@@ -66,6 +73,7 @@ def _stratified_indices(
     cumsum = np.cumsum(weights_array)
     cumsum[-1] = 1.0
     positions = (rng.uniform(size=n_draws) + np.arange(n_draws)) / n_draws
+    positions = np.minimum(positions, _UNIT_INTERVAL_MAX)
     indices = np.searchsorted(cumsum, positions, side="right")
     return np.clip(indices, 0, len(weights_array) - 1).astype(np.intp)
 
@@ -97,9 +105,8 @@ def _repair_support(
     """One-shot reject-and-stay support repair for post-jitter proposals.
 
     Proposals with -inf log-prior revert to their resampled parent's value.
-    Parents that are themselves invalid (e.g. a zero-weight CDF plateau
-    selected by left-sided searchsorted) are replaced by a uniform draw
-    from the valid repaired particles. Deliberately NOT retry-until-valid:
+    Parents that are themselves invalid are replaced by a uniform draw from
+    the valid repaired particles. Deliberately NOT retry-until-valid:
     retrying samples a parent-dependent truncated proposal that biases
     particles away from support boundaries.
 
