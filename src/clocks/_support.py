@@ -169,9 +169,10 @@ def density_support_mask(
     )
     physical = np.zeros(len(values), dtype=bool)
     if np.any(valid):
-        potential = _density_potential_batch(
-            values[valid], clock_array, integration_limit, n_quad
-        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            potential = _density_potential_batch(
+                values[valid], clock_array, integration_limit, n_quad
+            )
         physical[valid] = (
             np.all(np.isfinite(potential), axis=1)
             & np.all(potential <= 0.0, axis=1)
