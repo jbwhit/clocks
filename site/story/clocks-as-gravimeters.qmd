@@ -54,11 +54,9 @@ import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
 
 fig, ax = plt.subplots()
-# start outside the largest Schwarzschild radius (r_s = 2M = 2.0) so
-# rates stay real everywhere on the plot (strong field near the left
-# edge, approaching weak field on the right)
+# start far enough away that every curve satisfies |2 Phi| <= 0.1
 distances = np.linspace(2.2, 10, 200)
-for mass in (0.2, 0.5, 1.0):
+for mass in (0.02, 0.05, 0.10):
     rates = [
         clock_rates(
             MassConfig(positions=np.array([[0.0]]), masses=np.array([mass])),

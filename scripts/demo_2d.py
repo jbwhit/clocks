@@ -23,12 +23,11 @@ from clocks.viz import animate_inference_2d
 # --- Configuration ---
 TRUE_X = 1.5
 TRUE_Y = -1.0
-TRUE_M = 0.5
+TRUE_M = 0.15
 TRACK_OFFSET = 3.0  # clocks offset in z from mass plane (breaks M/r degeneracy)
 N_OBSERVATIONS = 50
 NOISE_STD = 0.005
 N_PARTICLES = 2000
-JITTER_STD = 0.02
 SEED = 42
 OUTPUT_PATH = Path("output/demo_2d.gif")
 
@@ -71,10 +70,9 @@ def main() -> None:
         InferenceConfig(
             clock_array=clock_array,
             noise=NoiseConfig(observation_std=NOISE_STD),
-            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
             n_particles=N_PARTICLES,
             n_masses=1,
-            jitter_std=JITTER_STD,
             seed=SEED,
         )
     )

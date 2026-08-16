@@ -25,7 +25,7 @@ from clocks import ClockArray, MassConfig, clock_rates, clock_rates_density_gaus
 
 xs = np.linspace(-8, 8, 200).reshape(-1, 1)
 dense = ClockArray(positions=xs, track_offset=1.0)
-total_mass = 0.8
+total_mass = 0.02
 
 fig, ax = plt.subplots()
 point = MassConfig(positions=np.array([[1.5]]), masses=np.array([total_mass]))

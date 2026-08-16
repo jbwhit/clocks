@@ -65,7 +65,7 @@ clock_array = ClockArray(
 )
 ground_truth = MassConfig(
     positions=np.array([[-2.0], [3.0]]),
-    masses=np.array([0.6, 0.4]),
+    masses=np.array([0.045, 0.030]),
 )
 
 simulation = simulate(
@@ -83,7 +83,7 @@ result = infer(
     InferenceConfig(
         clock_array=clock_array,
         noise=NoiseConfig(observation_std=0.005),
-        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
         n_particles=1500,
         n_masses=(1, 2, 3),
         seed=42,

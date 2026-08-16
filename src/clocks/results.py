@@ -7,7 +7,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from clocks.config import NoiseConfig
-from clocks.types import ClockArray, MassConfig, Observation, ParticleState
+from clocks.types import (
+    ClockArray,
+    MassConfig,
+    Observation,
+    ParticleState,
+    UpdateDiagnostics,
+)
 
 
 def _mass_config_to_dict(config: MassConfig) -> dict[str, object]:
@@ -39,6 +45,8 @@ class HistoryEntry:
     std: NDArray[np.floating]
     ess: float
     observations_seen: int
+    log_evidence: float
+    diagnostics: UpdateDiagnostics
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -46,6 +54,13 @@ class HistoryEntry:
             "std": self.std.tolist(),
             "ess": self.ess,
             "observations_seen": self.observations_seen,
+            "log_evidence": self.log_evidence,
+            "diagnostics": {
+                "tempering_stages": self.diagnostics.tempering_stages,
+                "mh_proposals": self.diagnostics.mh_proposals,
+                "mh_acceptances": self.diagnostics.mh_acceptances,
+                "acceptance_rate": self.diagnostics.acceptance_rate,
+            },
         }
 
 
@@ -78,6 +93,7 @@ class InferenceResult:
     posterior_mean: NDArray[np.floating]
     posterior_std: NDArray[np.floating]
     ess: float
+    log_evidence: float
     history: list[HistoryEntry]
     particle_state: ParticleState | None = None
     simulation: SimulationResult | None = None
@@ -87,6 +103,7 @@ class InferenceResult:
             posterior_mean=self.posterior_mean,
             posterior_std=self.posterior_std,
             ess=self.ess,
+            log_evidence=self.log_evidence,
             history=self.history,
             particle_state=self.particle_state,
             simulation=simulation,
@@ -97,6 +114,7 @@ class InferenceResult:
             "posterior_mean": self.posterior_mean.tolist(),
             "posterior_std": self.posterior_std.tolist(),
             "ess": self.ess,
+            "log_evidence": self.log_evidence,
             "history": [entry.to_dict() for entry in self.history],
         }
         if self.particle_state is not None:

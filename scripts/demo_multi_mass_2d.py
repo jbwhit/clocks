@@ -33,7 +33,6 @@ from clocks._scenarios import (
 from clocks.viz import animate_inference_multi_2d
 
 # --- Configuration ---
-JITTER_STD = 0.02  # floor for the annealed default; finalized by the scan
 SEED = 11
 OUTPUT_PATH = Path("output/demo_multi_mass_2d.gif")
 
@@ -72,10 +71,9 @@ def main() -> None:
         InferenceConfig(
             clock_array=clock_array,
             noise=NoiseConfig(observation_std=NOISE_STD),
-            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
             n_particles=N_PARTICLES,
             n_masses=2,
-            jitter_std=JITTER_STD,
             seed=SEED,
         )
     )

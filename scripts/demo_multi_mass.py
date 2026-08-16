@@ -17,14 +17,13 @@ from clocks.viz import animate_inference_multi_1d
 # --- Configuration ---
 TRUE_X1 = -2.0
 TRUE_X2 = 4.5
-TRUE_M1 = 0.6
-TRUE_M2 = 0.4
+TRUE_M1 = 0.045
+TRUE_M2 = 0.030
 CLOCK_POSITIONS = [-6.0, -3.0, 0.0, 3.0, 6.0]
 TRACK_OFFSET = 1.0
 N_OBSERVATIONS = 80
 NOISE_STD = 0.005
 N_PARTICLES = 3000
-JITTER_STD = 0.02
 SEED = 42
 OUTPUT_PATH = Path("output/demo_multi_mass.gif")
 
@@ -48,10 +47,9 @@ def main() -> None:
     infer_config = InferenceConfig(
         clock_array=clock_array,
         noise=NoiseConfig(observation_std=NOISE_STD),
-        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
         n_particles=N_PARTICLES,
         n_masses=2,
-        jitter_std=JITTER_STD,
         seed=SEED,
     )
     simulation = simulate(sim_config)

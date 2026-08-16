@@ -9,24 +9,21 @@ from pathlib import Path
 
 import numpy as np
 
-from clocks.api import infer, simulate
+from clocks.api import build_model_comparison, infer, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
-from clocks.inference import ModelComparison
 from clocks.types import ClockArray, MassConfig
 from clocks.viz import animate_model_comparison
 
 # --- Configuration ---
 TRUE_X1 = -2.0
 TRUE_X2 = 3.0
-TRUE_M1 = 0.6
-TRUE_M2 = 0.4
+TRUE_M1 = 0.045
+TRUE_M2 = 0.030
 CLOCK_POSITIONS = [-6.0, -3.0, 0.0, 3.0, 6.0]
 TRACK_OFFSET = 1.0
 N_OBSERVATIONS = 80
 NOISE_STD = 0.005
 N_PARTICLES = 2000
-JITTER_STD = 0.02
-K_MAX = 3
 SEED = 42
 
 
@@ -49,10 +46,9 @@ def main() -> None:
     infer_config = InferenceConfig(
         clock_array=clock_array,
         noise=NoiseConfig(observation_std=NOISE_STD),
-        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
         n_particles=N_PARTICLES,
         n_masses=(1, 2, 3),
-        jitter_std=JITTER_STD,
         seed=SEED,
     )
     simulation = simulate(sim_config)
@@ -81,16 +77,7 @@ def main() -> None:
 
     # --- Animated GIF ---
     print("\nGenerating model comparison GIF...")
-    rng_gif = np.random.default_rng(SEED)
-    mc_gif = ModelComparison(
-        clock_array=clock_array,
-        noise_std=NOISE_STD,
-        n_dims=1,
-        k_max=K_MAX,
-        n_particles=N_PARTICLES,
-        jitter_std=JITTER_STD,
-        rng=rng_gif,
-    )
+    mc_gif = build_model_comparison(infer_config)
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
     gif_path = output_dir / "demo_model_comparison.gif"

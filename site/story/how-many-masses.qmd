@@ -45,14 +45,14 @@ from clocks import (
 clock_array = ClockArray(
     positions=np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]]), track_offset=1.0
 )
-truth = MassConfig(positions=np.array([[-2.0], [3.0]]), masses=np.array([0.6, 0.4]))
+truth = MassConfig(positions=np.array([[-2.0], [3.0]]), masses=np.array([0.045, 0.030]))
 sim = simulate(SimulationConfig(
     clock_array=clock_array, ground_truth=truth,
     noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
 ))
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
-    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
     n_particles=400, n_masses=(1, 2, 3), seed=42,
 ))
 

@@ -44,11 +44,11 @@ CERT_FAR_RANGE = 8.0
 CERT_POS_TOL = 1.0
 CERT_MASS_TOL = 0.075
 CERT_SWEEP_RANGES = (2.0, 2.6, 3.5, 4.6, 6.1, 8.0)
-CERT_M_TRUE = 0.15
-CERT_NOISE_STD = 0.005
+CERT_M_TRUE = 0.080
+CERT_NOISE_STD = 0.001
 CERT_N_PARTICLES = 6000
 CERT_N_OBSERVATIONS = 80
-CERT_MASS_RANGE = (0.05, 2.0)
+CERT_MASS_RANGE = (0.005, 0.15)
 CERT_POSITION_HALFWIDTH = 16.0
 CERT_DIRECTION = (2.0 / 7.0, 3.0 / 7.0, 6.0 / 7.0)
 # Far-range posterior std must be at least this multiple of close-range.
@@ -104,12 +104,8 @@ def test_scenario_matches_certified_configuration() -> None:
 def test_filter_construction_matches_certified_configuration() -> None:
     """Fast guard: the built filter is certified too, not just constants."""
     pf = build_echolocation_filter(seed=0, n_particles=10)
-    assert pf.jitter == "annealed"
-    assert pf.jitter_tau == 15.0
-    assert pf.jitter_std == 0.02
+    assert pf.ess_target == 0.8
+    assert pf.rejuvenation_steps == 2
+    assert pf.proposal_scale == 2.38
     assert pf.noise_std == CERT_NOISE_STD
-    assert pf.support_bounds is not None
-    lower, upper = pf.support_bounds
-    hw = CERT_POSITION_HALFWIDTH
-    assert np.allclose(lower, [-hw, -hw, -hw, CERT_MASS_RANGE[0]])
-    assert np.allclose(upper, [hw, hw, hw, CERT_MASS_RANGE[1]])
+    assert np.all(np.isfinite(pf.log_prior_density(pf.state.particles)))

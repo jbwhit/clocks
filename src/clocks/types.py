@@ -123,3 +123,18 @@ class ParticleState:
         object.__setattr__(self, "particles", particles)
         object.__setattr__(self, "weights", weights)
         object.__setattr__(self, "observations_seen", observations_seen)
+
+
+@dataclass(frozen=True)
+class UpdateDiagnostics:
+    """Tempering and Metropolis-Hastings counts for one observation update."""
+
+    tempering_stages: int = 0
+    mh_proposals: int = 0
+    mh_acceptances: int = 0
+
+    @property
+    def acceptance_rate(self) -> float:
+        if self.mh_proposals == 0:
+            return 0.0
+        return self.mh_acceptances / self.mh_proposals

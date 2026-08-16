@@ -23,6 +23,7 @@ from clocks._scenarios import (
     run_multi_mass_2d,
     validate_echo_geometry,
 )
+from clocks.physics import _point_mass_potential_batch
 
 
 class TestPassRule:
@@ -60,7 +61,7 @@ class TestFreezeRegression:
         """Seed 101 froze at t=1 under reject-and-stay (clone-freeze,
         docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md).
         Under reflection it must keep a live posterior."""
-        result = run_multi_mass_2d(101, jitter_std=0.02, jitter_tau=5.0)
+        result = run_multi_mass_2d(101)
         assert result["max_posterior_std"] > 1e-6
 
 
@@ -107,6 +108,12 @@ class TestEchoGeometry:
     def test_validate_accepts_shipped_defaults(self) -> None:
         head = build_head_lattice()
         validate_echo_geometry(ECHO_MIN_RANGE_R, ECHO_M_TRUE, head)
+        config = echo_mass_config(ECHO_MIN_RANGE_R)
+        potential, valid = _point_mass_potential_batch(
+            config.positions.reshape(1, 1, 3), config.masses.reshape(1, 1), head
+        )
+        assert valid[0]
+        assert np.max(np.abs(2.0 * potential)) <= 0.08
 
     def test_validate_rejects_non_finite_range(self) -> None:
         head = build_head_lattice()
@@ -141,17 +148,17 @@ class TestEchoMeasurementModel:
             single = pf.forward_model(pf.state.particles[i])
             assert np.allclose(single, batch[i])
 
-    def test_prior_support_bounds_match_log_prior(self) -> None:
+    def test_prior_sampler_and_log_prior_match_physical_support(self) -> None:
         pf = build_echolocation_filter(seed=0, n_particles=100)
-        assert pf.support_bounds is not None
-        assert pf.log_prior is not None
-        lower, upper = pf.support_bounds
-        # In-support particles get 0; nudged-outside particles get -inf.
         inside = pf.state.particles
-        assert np.all(pf.log_prior(inside) == 0.0)
+        assert np.all(pf.log_prior_density(inside) == 0.0)
         outside = inside.copy()
-        outside[:, 3] = upper[3] + 0.1
-        assert np.all(np.isneginf(pf.log_prior(outside)))
+        outside[:, 3] = 0.2
+        assert np.all(np.isneginf(pf.log_prior_density(outside)))
+        singular = inside[:1].copy()
+        singular[0, :3] = build_head_lattice().positions[0]
+        singular[0, 3] = 0.01
+        assert np.isneginf(pf.log_prior_density(singular)[0])
 
 
 class TestEchoRunResult:

@@ -1,182 +1,334 @@
-"""Forward model: gravitational potential and time dilation.
+"""Strict weak-field gravitational forward models.
 
-Uses simulation units where G = 1, c = 1.
+The project uses simulation units where ``G = c = 1`` and deliberately limits
+the pedagogical rate map to ``|2 Phi| <= 0.1``.
 """
+
+from numbers import Integral
 
 import numpy as np
 from numpy.typing import NDArray
 
+from clocks._validation import finite_float
 from clocks.types import ClockArray, MassConfig
 
-# Guard against singularities inside the Schwarzschild radius
-_EPS = 1e-15
+WEAK_FIELD_LIMIT = 0.1
+
+
+class PhysicsDomainError(ValueError):
+    """A state lies outside the documented gravitational model."""
+
+
+def _finite_array(name: str, value: object, *, ndim: int) -> NDArray[np.float64]:
+    array = np.asarray(value, dtype=np.float64)
+    if array.ndim != ndim:
+        raise ValueError(f"{name} must be {ndim}-D, got shape {array.shape}")
+    if 0 in array.shape:
+        raise ValueError(f"{name} must be nonempty")
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} must contain only finite values")
+    return array
+
+
+def _nonnegative_float(name: str, value: object) -> float:
+    result = finite_float(name, value)
+    if result < 0:
+        raise ValueError(f"{name} must be nonnegative")
+    return result
+
+
+def _positive_float(name: str, value: object) -> float:
+    result = finite_float(name, value)
+    if result <= 0:
+        raise ValueError(f"{name} must be positive")
+    return result
+
+
+def _validate_spatial_dimensions(
+    first_name: str,
+    first: NDArray[np.float64],
+    second_name: str,
+    second: NDArray[np.float64],
+) -> None:
+    if first.shape[-1] != second.shape[-1]:
+        raise ValueError(
+            f"{first_name} and {second_name} must have matching spatial dimensions, "
+            f"got {first.shape[-1]} and {second.shape[-1]}"
+        )
 
 
 def compute_distances(
     clock_positions: NDArray[np.floating],
     mass_positions: NDArray[np.floating],
     track_offset: float = 0.0,
-) -> NDArray[np.floating]:
-    """Distance from each clock to each mass, with `track_offset` added as
-    an orthogonal (perpendicular) component.
-
-    Returns: (n_clocks, n_masses) distance array.
-    """
-    # (n_clocks, 1, n_dims) - (1, n_masses, n_dims)
-    diff = clock_positions[:, np.newaxis, :] - mass_positions[np.newaxis, :, :]
-    dist_sq = np.sum(diff**2, axis=-1) + track_offset**2
-    return np.sqrt(dist_sq)
+) -> NDArray[np.float64]:
+    """Return the exact clock-to-mass distances with an orthogonal offset."""
+    clocks = _finite_array("clock_positions", clock_positions, ndim=2)
+    positions = _finite_array("mass_positions", mass_positions, ndim=2)
+    offset = _nonnegative_float("track_offset", track_offset)
+    _validate_spatial_dimensions("clock_positions", clocks, "mass_positions", positions)
+    diff = clocks[:, np.newaxis, :] - positions[np.newaxis, :, :]
+    return np.sqrt(np.sum(diff**2, axis=-1) + offset**2)
 
 
 def gravitational_potential(
     distances: NDArray[np.floating],
     masses: NDArray[np.floating],
-) -> NDArray[np.floating]:
-    """Newtonian gravitational potential Phi at each clock (negative by convention).
+) -> NDArray[np.float64]:
+    """Return ``Phi_i = -sum_j M_j / r_ij`` without numerical floors."""
+    distance_array = _finite_array("distances", distances, ndim=2)
+    mass_array = _finite_array("masses", masses, ndim=1)
+    if distance_array.shape[1] != mass_array.shape[0]:
+        raise ValueError(
+            "distances must have one column per mass; "
+            f"got {distance_array.shape[1]} columns for {mass_array.shape[0]} masses"
+        )
+    if np.any(distance_array < 0):
+        raise ValueError("distances must be nonnegative")
+    if np.any(mass_array < 0):
+        raise ValueError("masses must be nonnegative")
+    singular = (distance_array == 0.0) & (mass_array[np.newaxis, :] > 0.0)
+    if np.any(singular):
+        raise PhysicsDomainError("positive mass at zero distance is singular")
 
-    Phi_i = -sum_j (M_j / r_ij)
+    terms = np.zeros_like(distance_array)
+    np.divide(
+        mass_array[np.newaxis, :],
+        distance_array,
+        out=terms,
+        where=distance_array > 0.0,
+    )
+    return -np.sum(terms, axis=1)
 
-    Returns: (n_clocks,) potential array.
-    """
-    # distances: (n_clocks, n_masses), masses: (n_masses,)
-    safe_dist = np.maximum(distances, _EPS)
-    return -np.sum(masses[np.newaxis, :] / safe_dist, axis=1)
+
+def _validate_potential(potential: NDArray[np.float64]) -> None:
+    if not np.all(np.isfinite(potential)):
+        raise PhysicsDomainError("potential must be finite")
+    if np.any(potential > 0.0):
+        raise PhysicsDomainError("potential must be nonpositive")
+    if np.any(np.abs(2.0 * potential) > WEAK_FIELD_LIMIT):
+        raise PhysicsDomainError(
+            f"weak-field policy requires |2*Phi| <= {WEAK_FIELD_LIMIT}"
+        )
 
 
 def time_dilation_factor(
     potential: NDArray[np.floating],
-) -> NDArray[np.floating]:
-    """Gravitational time dilation factor: dtau/dt = sqrt(1 + 2*Phi).
-
-    In the weak-field limit of general relativity, dtau/dt = sqrt(1 + 2*Phi/c^2);
-    in simulation units (c=1) this simplifies to sqrt(1 + 2*Phi).
-    Since Phi is negative, clocks in deeper potential wells tick slower.
-    Clamped above eps to avoid sqrt of negative (black hole regime).
-
-    Returns: (n_clocks,) dilation factors in (0, 1].
-    """
-    argument = 1.0 + 2.0 * potential
-    return np.sqrt(np.maximum(argument, _EPS))
+) -> NDArray[np.float64]:
+    """Return exactly ``sqrt(1 + 2 Phi)`` inside the weak-field domain."""
+    array = np.asarray(potential, dtype=np.float64)
+    if array.ndim != 1:
+        raise ValueError(f"potential must be 1-D, got shape {array.shape}")
+    if array.size == 0:
+        raise ValueError("potential must be nonempty")
+    _validate_potential(array)
+    return np.sqrt(1.0 + 2.0 * array)
 
 
 def clock_rates(
     mass_config: MassConfig,
     clock_array: ClockArray,
-) -> NDArray[np.floating]:
-    """Full forward model: mass configuration → predicted clock tick rates.
-
-    Returns: (n_clocks,) array of rates in (0, 1].
-    """
+) -> NDArray[np.float64]:
+    """Evaluate one point-mass configuration against a clock array."""
     distances = compute_distances(
         clock_array.positions,
         mass_config.positions,
         clock_array.track_offset,
     )
-    potential = gravitational_potential(distances, mass_config.masses)
-    return time_dilation_factor(potential)
+    return time_dilation_factor(gravitational_potential(distances, mass_config.masses))
+
+
+def _validate_point_mass_batch_shapes(
+    mass_positions: NDArray[np.float64],
+    masses: NDArray[np.float64],
+    clock_array: ClockArray,
+) -> None:
+    if mass_positions.shape[:2] != masses.shape:
+        raise ValueError(
+            "mass_positions and masses must have matching particle and mass "
+            f"dimensions, got {mass_positions.shape[:2]} and {masses.shape}"
+        )
+    _validate_spatial_dimensions(
+        "mass_positions", mass_positions, "clock positions", clock_array.positions
+    )
+
+
+def _point_mass_potential_batch(
+    mass_positions: NDArray[np.floating],
+    masses: NDArray[np.floating],
+    clock_array: ClockArray,
+) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+    """Return raw candidate potentials and a no-warning physical-validity mask.
+
+    Unlike public forward functions, candidate invalidity is normal control
+    flow here. Shape mismatches still raise because they are programming
+    errors; non-finite, negative, singular, and strong-field rows are marked
+    invalid.
+    """
+    positions = np.asarray(mass_positions, dtype=np.float64)
+    mass_array = np.asarray(masses, dtype=np.float64)
+    if positions.ndim != 3:
+        raise ValueError(f"mass_positions must be 3-D, got shape {positions.shape}")
+    if mass_array.ndim != 2:
+        raise ValueError(f"masses must be 2-D, got shape {mass_array.shape}")
+    if 0 in positions.shape or 0 in mass_array.shape:
+        raise ValueError("mass_positions and masses must be nonempty")
+    _validate_point_mass_batch_shapes(positions, mass_array, clock_array)
+
+    finite_rows = np.all(np.isfinite(positions), axis=(1, 2)) & np.all(
+        np.isfinite(mass_array), axis=1
+    )
+    nonnegative_rows = np.all(mass_array >= 0.0, axis=1)
+    clean_positions = np.where(np.isfinite(positions), positions, 0.0)
+    clean_masses = np.where(
+        np.isfinite(mass_array) & (mass_array >= 0.0), mass_array, 0.0
+    )
+
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        diff = (
+            clock_array.positions[np.newaxis, :, np.newaxis, :]
+            - clean_positions[:, np.newaxis, :, :]
+        )
+        distance = np.sqrt(np.sum(diff**2, axis=-1) + clock_array.track_offset**2)
+        singular = (distance == 0.0) & (clean_masses[:, np.newaxis, :] > 0.0)
+        terms = np.zeros_like(distance)
+        np.divide(
+            clean_masses[:, np.newaxis, :],
+            distance,
+            out=terms,
+            where=distance > 0.0,
+        )
+        potential = -np.sum(terms, axis=2)
+
+    potential[~finite_rows] = np.nan
+    valid = (
+        finite_rows
+        & nonnegative_rows
+        & ~np.any(singular, axis=(1, 2))
+        & np.all(np.isfinite(potential), axis=1)
+        & np.all(potential <= 0.0, axis=1)
+        & np.all(np.abs(2.0 * potential) <= WEAK_FIELD_LIMIT, axis=1)
+    )
+    return potential, valid
+
+
+def _strict_rates_from_point_mass_batch(
+    positions: NDArray[np.float64],
+    masses: NDArray[np.float64],
+    clock_array: ClockArray,
+) -> NDArray[np.float64]:
+    potential, valid = _point_mass_potential_batch(positions, masses, clock_array)
+    if not np.all(valid):
+        raise PhysicsDomainError(
+            "point-mass state is singular or violates the weak-field policy"
+        )
+    return np.sqrt(1.0 + 2.0 * potential)
 
 
 def clock_rates_batch(
     mass_positions: NDArray[np.floating],
     masses: NDArray[np.floating],
     clock_array: ClockArray,
-) -> NDArray[np.floating]:
-    """Batch forward model for single-mass particles.
-
-    Computes predicted clock rates for many hypothesized point masses at once.
-
-    mass_positions: (n_particles, n_dims) — position of each particle's mass
-    masses: (n_particles,) — mass value for each particle
-    clock_array: the fixed clock layout
-
-    Returns: (n_particles, n_clocks) array of predicted rates.
-    """
-    # clock_array.positions: (n_clocks, n_dims)
-    # mass_positions: (n_particles, n_dims)
-    # diff: (n_clocks, n_particles, n_dims)
-    diff = clock_array.positions[:, np.newaxis, :] - mass_positions[np.newaxis, :, :]
-    dist_sq = np.sum(diff**2, axis=-1) + clock_array.track_offset**2
-    distances = np.sqrt(dist_sq)  # (n_clocks, n_particles)
-
-    # potential: (n_clocks, n_particles)
-    safe_dist = np.maximum(distances, _EPS)
-    potential = -masses[np.newaxis, :] / safe_dist
-
-    # dilation: (n_clocks, n_particles)
-    argument = 1.0 + 2.0 * potential
-    rates = np.sqrt(np.maximum(argument, _EPS))
-
-    return rates.T  # (n_particles, n_clocks)
+) -> NDArray[np.float64]:
+    """Evaluate a batch of single-mass candidates with exact shape checks."""
+    positions = _finite_array("mass_positions", mass_positions, ndim=2)
+    mass_array = _finite_array("masses", masses, ndim=1)
+    if positions.shape[0] != mass_array.shape[0]:
+        raise ValueError("mass_positions and masses must contain the same number")
+    if positions.shape[1] != clock_array.positions.shape[1]:
+        raise ValueError(
+            "mass_positions and clock positions must have matching spatial dimensions"
+        )
+    if np.any(mass_array < 0):
+        raise ValueError("masses must be nonnegative")
+    return _strict_rates_from_point_mass_batch(
+        positions[:, np.newaxis, :], mass_array[:, np.newaxis], clock_array
+    )
 
 
 def clock_rates_batch_multi(
     mass_positions: NDArray[np.floating],
     masses: NDArray[np.floating],
     clock_array: ClockArray,
-) -> NDArray[np.floating]:
-    """Batch forward model for multi-mass particles.
+) -> NDArray[np.float64]:
+    """Evaluate a batch of multi-mass candidates with exact shape checks."""
+    positions = _finite_array("mass_positions", mass_positions, ndim=3)
+    mass_array = _finite_array("masses", masses, ndim=2)
+    _validate_point_mass_batch_shapes(positions, mass_array, clock_array)
+    if np.any(mass_array < 0):
+        raise ValueError("masses must be nonnegative")
+    return _strict_rates_from_point_mass_batch(positions, mass_array, clock_array)
 
-    Computes predicted clock rates for many hypothesized K-mass configurations.
 
-    mass_positions: (n_particles, K, n_dims) — positions of each particle's masses
-    masses: (n_particles, K) — mass values for each particle
-    clock_array: the fixed clock layout
+def _validate_density_context(
+    clock_array: ClockArray, integration_limit: object
+) -> float:
+    if clock_array.positions.shape[1] != 1:
+        raise ValueError("Gaussian density model requires one spatial dimension")
+    if clock_array.track_offset <= 0.0:
+        raise ValueError("density track_offset must be positive")
+    return _positive_float("integration_limit", integration_limit)
 
-    Returns: (n_particles, n_clocks) array of predicted rates.
-    """
-    # clock_array.positions: (n_clocks, n_dims)
-    # mass_positions: (n_particles, K, n_dims)
-    # diff: (n_clocks, n_particles, K, n_dims)
-    diff = (
-        clock_array.positions[:, np.newaxis, np.newaxis, :]
-        - mass_positions[np.newaxis, :, :, :]
-    )
-    dist_sq = np.sum(diff**2, axis=-1) + clock_array.track_offset**2
-    distances = np.sqrt(dist_sq)  # (n_clocks, n_particles, K)
 
-    # potential per mass: (n_clocks, n_particles, K)
-    safe_dist = np.maximum(distances, _EPS)
-    potential_per_mass = -masses[np.newaxis, :, :] / safe_dist
+def _validate_density_params(value: object, *, batch: bool) -> NDArray[np.float64]:
+    name = "params_batch" if batch else "params"
+    ndim = 2 if batch else 1
+    params = _finite_array(name, value, ndim=ndim)
+    if params.shape[-1] != 3:
+        raise ValueError(f"{name} must contain exactly three parameters")
+    if np.any(params[..., 1] <= 0.0):
+        raise ValueError("density sigma must be positive")
+    if np.any(params[..., 2] < 0.0):
+        raise ValueError("density amplitude must be nonnegative")
+    return params
 
-    # total potential: sum over K masses → (n_clocks, n_particles)
-    potential = np.sum(potential_per_mass, axis=-1)
 
-    # dilation: (n_clocks, n_particles)
-    argument = 1.0 + 2.0 * potential
-    rates = np.sqrt(np.maximum(argument, _EPS))
+def _density_potential_batch(
+    params_batch: NDArray[np.float64],
+    clock_array: ClockArray,
+    integration_limit: float,
+    n_quad: int,
+) -> NDArray[np.float64]:
+    mu = params_batch[:, 0]
+    sigma = params_batch[:, 1]
+    amplitude = params_batch[:, 2]
+    lo = mu - integration_limit * sigma
+    hi = mu + integration_limit * sigma
+    t = np.linspace(0.0, 1.0, n_quad)
+    x_grid = lo[:, np.newaxis] + (hi - lo)[:, np.newaxis] * t
+    z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
+    density = amplitude[:, np.newaxis] * np.exp(-0.5 * z**2)
 
-    return rates.T  # (n_particles, n_clocks)
+    potential = np.empty((params_batch.shape[0], len(clock_array.positions)))
+    for index, clock_position in enumerate(clock_array.positions[:, 0]):
+        distance = np.sqrt((x_grid - clock_position) ** 2 + clock_array.track_offset**2)
+        potential[:, index] = np.trapezoid(-density / distance, x_grid, axis=1)
+    return potential
 
 
 def clock_rates_density_gaussian(
     params: NDArray[np.floating],
     clock_array: ClockArray,
     integration_limit: float = 10.0,
-) -> NDArray[np.floating]:
-    """Forward model for a Gaussian mass density profile (1D).
-
-    params: [mu, sigma, amplitude] — center, width, and peak density
-    Returns: (n_clocks,) array of time dilation factors.
-    """
+) -> NDArray[np.float64]:
+    """Evaluate a one-dimensional Gaussian line-density profile."""
     from scipy.integrate import quad
 
-    mu, sigma, amplitude = params[0], params[1], params[2]
-    h = clock_array.track_offset
-    positions = clock_array.positions[:, 0]  # 1D only
+    values = _validate_density_params(params, batch=False)
+    limit = _validate_density_context(clock_array, integration_limit)
+    mu, sigma, amplitude = values
+    lo = mu - limit * sigma
+    hi = mu + limit * sigma
+    potential = np.empty(len(clock_array.positions))
 
-    lo = mu - integration_limit * sigma
-    hi = mu + integration_limit * sigma
+    for index, clock_position in enumerate(clock_array.positions[:, 0]):
 
-    potential = np.empty(len(positions))
-    for i, x_c in enumerate(positions):
-
-        def integrand(x: float, xc: float = x_c) -> float:
+        def integrand(x: float, xc: float = float(clock_position)) -> float:
             density = amplitude * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-            r = np.sqrt((x - xc) ** 2 + h**2)
-            return -density / r
+            distance = np.sqrt((x - xc) ** 2 + clock_array.track_offset**2)
+            return float(-density / distance)
 
-        potential[i], _ = quad(integrand, lo, hi)
-
+        potential[index], _ = quad(integrand, lo, hi)
     return time_dilation_factor(potential)
 
 
@@ -185,42 +337,15 @@ def clock_rates_density_gaussian_batch(
     clock_array: ClockArray,
     integration_limit: float = 10.0,
     n_quad: int = 200,
-) -> NDArray[np.floating]:
-    """Batch forward model for Gaussian density (vectorized via trapezoid rule).
-
-    params_batch: (n_particles, 3) — each row is [mu, sigma, amplitude]
-    Returns: (n_particles, n_clocks) array of time dilation factors.
-    """
-    n_particles = params_batch.shape[0]
-    mu = params_batch[:, 0]  # (n_particles,)
-    sigma = params_batch[:, 1]  # (n_particles,)
-    amplitude = params_batch[:, 2]  # (n_particles,)
-    h = clock_array.track_offset
-    positions = clock_array.positions[:, 0]  # (n_clocks,)
-
-    # Per-particle bounds: mu ± limit*sigma
-    lo = mu - integration_limit * sigma  # (n_particles,)
-    hi = mu + integration_limit * sigma  # (n_particles,)
-
-    # Map to common [0, 1] grid, then scale per particle
-    t = np.linspace(0, 1, n_quad)  # (n_quad,)
-    # x_grid: (n_particles, n_quad)
-    x_grid = lo[:, np.newaxis] + (hi - lo)[:, np.newaxis] * t[np.newaxis, :]
-
-    # Density at grid points: (n_particles, n_quad)
-    z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
-    density = amplitude[:, np.newaxis] * np.exp(-0.5 * z**2)
-
-    # For each clock, compute potential via trapezoid
-    n_clocks = len(positions)
-    potential = np.empty((n_particles, n_clocks))
-
-    for c in range(n_clocks):
-        # distance: (n_particles, n_quad)
-        r = np.sqrt((x_grid - positions[c]) ** 2 + h**2)
-        integrand = -density / r  # (n_particles, n_quad)
-        potential[:, c] = np.trapezoid(integrand, x_grid, axis=1)
-
-    # Time dilation for each particle's potential
-    argument = 1.0 + 2.0 * potential
-    return np.sqrt(np.maximum(argument, _EPS))
+) -> NDArray[np.float64]:
+    """Evaluate Gaussian density candidates using vectorized quadrature."""
+    values = _validate_density_params(params_batch, batch=True)
+    limit = _validate_density_context(clock_array, integration_limit)
+    if isinstance(n_quad, (bool, np.bool_)) or not isinstance(n_quad, Integral):
+        raise ValueError("n_quad must be an integer >= 2")
+    count = int(n_quad)
+    if count < 2:
+        raise ValueError("n_quad must be an integer >= 2")
+    potential = _density_potential_batch(values, clock_array, limit, count)
+    rates = time_dilation_factor(potential.reshape(-1))
+    return rates.reshape(potential.shape)

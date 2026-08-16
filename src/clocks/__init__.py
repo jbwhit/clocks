@@ -1,10 +1,17 @@
 """Gravitational time dilation simulation and inference library."""
 
-from clocks.api import build_particle_filter, infer, simulate, simulate_and_infer
+from clocks.api import (
+    build_model_comparison,
+    build_particle_filter,
+    infer,
+    simulate,
+    simulate_and_infer,
+)
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.inference import (
     ConvergenceInfo,
     Estimate,
+    GaussianObservationStats,
     ModelComparison,
     ModelComparisonResult,
     ParticleFilter,
@@ -15,6 +22,8 @@ from clocks.noise import (
     log_likelihood_gaussian_batch,
 )
 from clocks.physics import (
+    WEAK_FIELD_LIMIT,
+    PhysicsDomainError,
     clock_rates,
     clock_rates_batch,
     clock_rates_batch_multi,
@@ -30,7 +39,13 @@ from clocks.results import (
     ModelComparisonInferenceResult,
     SimulationResult,
 )
-from clocks.types import ClockArray, MassConfig, Observation, ParticleState
+from clocks.types import (
+    ClockArray,
+    MassConfig,
+    Observation,
+    ParticleState,
+    UpdateDiagnostics,
+)
 from clocks.viz import (
     animate_echolocation,
     animate_inference,
@@ -57,6 +72,7 @@ __all__ = [
     "ClockArray",
     "ConvergenceInfo",
     "Estimate",
+    "GaussianObservationStats",
     "HistoryEntry",
     "InferenceConfig",
     "InferenceResult",
@@ -69,8 +85,11 @@ __all__ = [
     "ParticleFilter",
     "ParticleState",
     "PriorConfig",
+    "PhysicsDomainError",
     "SimulationConfig",
     "SimulationResult",
+    "UpdateDiagnostics",
+    "WEAK_FIELD_LIMIT",
     "add_clock_noise",
     "animate_echolocation",
     "animate_inference",
@@ -79,6 +98,7 @@ __all__ = [
     "animate_inference_multi_2d",
     "animate_model_comparison",
     "build_particle_filter",
+    "build_model_comparison",
     "clock_rates",
     "clock_rates_batch",
     "clock_rates_batch_multi",

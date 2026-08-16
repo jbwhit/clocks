@@ -80,14 +80,14 @@ from clocks import (
 )
 
 clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
-truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.8]))
+truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.10]))
 sim = simulate(SimulationConfig(
     clock_array=clock_array, ground_truth=truth,
     noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
 ))
 pf = build_particle_filter(InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
-    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
     n_particles=400, n_masses=1, seed=42,
 ))
 

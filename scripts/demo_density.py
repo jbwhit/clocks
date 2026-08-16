@@ -1,6 +1,6 @@
 """Gaussian density forward model demo.
 
-Ground truth: a Gaussian mass density (mu=1.5, sigma=2.0, amplitude=0.3).
+Ground truth: a Gaussian mass density (mu=1.5, sigma=2.0, amplitude=0.01).
 Uses a standard ParticleFilter with the density forward model to infer
 the parameters from noisy clock observations.
 """
@@ -13,6 +13,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+from clocks._support import density_support_mask, sample_conditioned_prior  # noqa: E402
 from clocks.inference import ParticleFilter  # noqa: E402
 from clocks.noise import add_clock_noise  # noqa: E402
 from clocks.physics import (  # noqa: E402
@@ -24,20 +25,79 @@ from clocks.types import ClockArray, Observation  # noqa: E402
 # --- Configuration ---
 TRUE_MU = 1.5
 TRUE_SIGMA = 2.0
-TRUE_AMPLITUDE = 0.3
+TRUE_AMPLITUDE = 0.010
 CLOCK_POSITIONS = [-6.0, -3.0, 0.0, 3.0, 6.0]
 TRACK_OFFSET = 1.0
 N_OBSERVATIONS = 60
 NOISE_STD = 0.005
 N_PARTICLES = 2000
-JITTER_STD = 0.02
 SEED = 42
 OUTPUT_PATH = Path("output/demo_density.png")
+MU_RANGE = (-8.0, 8.0)
+SIGMA_RANGE = (0.1, 5.0)
+AMPLITUDE_RANGE = (0.001, 0.030)
 
 
 def _fmt(label: str, est: dict, idx: int, true_val: float) -> str:
     m, s = est["mean"][idx], est["std"][idx]
     return f"  {label} = {m:.3f} ± {s:.3f}  (true: {true_val})"
+
+
+def build_density_filter(
+    clock_array: ClockArray,
+    rng: np.random.Generator,
+    *,
+    n_particles: int = N_PARTICLES,
+) -> ParticleFilter:
+    """Build the raw density filter on its true conditional prior."""
+
+    def draw(draw_rng: np.random.Generator, n: int) -> np.ndarray:
+        return np.column_stack(
+            [
+                draw_rng.uniform(*MU_RANGE, n),
+                draw_rng.uniform(*SIGMA_RANGE, n),
+                draw_rng.uniform(*AMPLITUDE_RANGE, n),
+            ]
+        )
+
+    def valid(particles: np.ndarray) -> np.ndarray:
+        return density_support_mask(
+            particles,
+            clock_array=clock_array,
+            mu_range=MU_RANGE,
+            sigma_range=SIGMA_RANGE,
+            amplitude_range=AMPLITUDE_RANGE,
+        )
+
+    def prior_sampler(draw_rng: np.random.Generator, n: int) -> np.ndarray:
+        return sample_conditioned_prior(
+            draw_rng,
+            n,
+            draw,
+            valid,
+            description="Gaussian density",
+        )
+
+    def forward_model(params: np.ndarray) -> np.ndarray:
+        return clock_rates_density_gaussian(params, clock_array)
+
+    def forward_model_batch(particles: np.ndarray) -> np.ndarray:
+        return clock_rates_density_gaussian_batch(particles, clock_array)
+
+    def log_prior_fn(particles: np.ndarray) -> np.ndarray:
+        lp = np.full(particles.shape[0], -np.inf)
+        lp[valid(particles)] = 0.0
+        return lp
+
+    return ParticleFilter(
+        n_particles=n_particles,
+        prior_sampler=prior_sampler,
+        forward_model=forward_model,
+        noise_std=NOISE_STD,
+        rng=rng,
+        forward_model_batch=forward_model_batch,
+        log_prior_density=log_prior_fn,
+    )
 
 
 def main() -> None:
@@ -56,35 +116,7 @@ def main() -> None:
     print(f"True rates: {true_rates}")
     print()
 
-    # Prior: mu ~ U(-8, 8), sigma ~ U(0.1, 5.0), amplitude ~ U(0.01, 1.0)
-    def prior_sampler(rng: np.random.Generator, n: int) -> np.ndarray:
-        mu = rng.uniform(-8, 8, n)
-        sigma = rng.uniform(0.1, 5.0, n)
-        amplitude = rng.uniform(0.01, 1.0, n)
-        return np.column_stack([mu, sigma, amplitude])
-
-    def forward_model(params: np.ndarray) -> np.ndarray:
-        return clock_rates_density_gaussian(params, clock_array)
-
-    def forward_model_batch(particles: np.ndarray) -> np.ndarray:
-        return clock_rates_density_gaussian_batch(particles, clock_array)
-
-    def log_prior_fn(particles: np.ndarray) -> np.ndarray:
-        lp = np.zeros(particles.shape[0])
-        lp[particles[:, 1] < 0.1] = -np.inf  # sigma >= 0.1
-        lp[particles[:, 2] < 0.01] = -np.inf  # amplitude >= 0.01
-        return lp
-
-    pf = ParticleFilter(
-        n_particles=N_PARTICLES,
-        prior_sampler=prior_sampler,
-        forward_model=forward_model,
-        noise_std=NOISE_STD,
-        jitter_std=JITTER_STD,
-        rng=rng,
-        forward_model_batch=forward_model_batch,
-        log_prior=log_prior_fn,
-    )
+    pf = build_density_filter(clock_array, rng)
 
     # Feed observations
     for t in range(N_OBSERVATIONS):

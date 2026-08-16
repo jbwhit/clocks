@@ -41,14 +41,14 @@ import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
 
 clock_positions = np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]])
-clock_array = ClockArray(positions=clock_positions, track_offset=1.0)
+clock_array = ClockArray(positions=clock_positions, track_offset=2.0)
 two_masses = MassConfig(
-    positions=np.array([[-2.0], [4.5]]), masses=np.array([0.6, 0.4])
+    positions=np.array([[-2.0], [4.5]]), masses=np.array([0.045, 0.030])
 )
-one_mass = MassConfig(positions=np.array([[0.6]]), masses=np.array([1.0]))
+one_mass = MassConfig(positions=np.array([[0.6]]), masses=np.array([0.075]))
 
 xs = np.linspace(-8, 8, 300).reshape(-1, 1)
-dense = ClockArray(positions=xs, track_offset=1.0)
+dense = ClockArray(positions=xs, track_offset=2.0)
 fig, ax = plt.subplots()
 for config, label, color in [
     (two_masses, "two masses (truth)", "lightcoral"),

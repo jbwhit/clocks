@@ -35,20 +35,20 @@ from clocks import (
 )
 
 clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
-truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.8]))
+truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.10]))
 sim = simulate(SimulationConfig(
     clock_array=clock_array, ground_truth=truth,
     noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
 ))
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
-    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
     n_particles=400, n_masses=1, seed=42,
 ))
 x, m = result.posterior_mean
 sx, sm = result.posterior_std
 print(f"Hidden mass: x = {x:.2f} ± {sx:.2f} (true 2.5)")
-print(f"             M = {m:.2f} ± {sm:.2f} (true 0.8)")
+print(f"             M = {m:.2f} ± {sm:.2f} (true 0.10)")
 ```
 
 ## Read the idea in eight pages

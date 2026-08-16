@@ -52,12 +52,7 @@ class NoiseConfig:
 
 @dataclass(frozen=True)
 class PriorConfig:
-    """Initial sampling ranges for position and mass parameters.
-
-    Positions remain bounded by `position_range` throughout inference;
-    masses are constrained only to be positive after initialization
-    (`mass_range` shapes the initial sample only).
-    """
+    """True bounded support for position and mass parameters."""
 
     position_range: tuple[float, float]
     mass_range: tuple[float, float]
@@ -75,25 +70,17 @@ class PriorConfig:
 
 @dataclass(frozen=True)
 class InferenceConfig:
-    """Top-level config for end-to-end inference.
-
-    ``jitter_std`` scales the post-resampling jitter: an absolute standard
-    deviation when ``jitter="fixed"``, a fraction of the particle cloud's own
-    spread (technically: it scales the Cholesky factor of the weighted
-    covariance) when ``jitter="covariance"``, or the floor (late-run
-    asymptote) when ``jitter="annealed"``. ``jitter_tau`` is the anneal time
-    constant, in observations, for the ``"annealed"`` schedule.
-    """
+    """Top-level configuration for adaptive tempered SMC inference."""
 
     clock_array: ClockArray
     noise: NoiseConfig
     prior: PriorConfig
     n_particles: int
     n_masses: int | tuple[int, ...]
-    jitter_std: float = 0.02
     resampling: str = "systematic"
-    jitter: str = "annealed"
-    jitter_tau: float = 15.0
+    ess_target: float = 0.8
+    rejuvenation_steps: int = 2
+    proposal_scale: float = 2.38
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -112,16 +99,24 @@ class InferenceConfig:
                 ) from error
         else:
             n_masses = _positive_int("n_masses", self.n_masses)
-        jitter_std = finite_float("jitter_std", self.jitter_std)
-        if jitter_std < 0:
-            raise ValueError("jitter_std must be >= 0")
-        jitter_tau = finite_float("jitter_tau", self.jitter_tau)
-        if jitter_tau <= 0:
-            raise ValueError("jitter_tau must be > 0")
+        if self.resampling not in {"systematic", "stratified", "residual"}:
+            raise ValueError(
+                "resampling must be one of ['residual', 'stratified', 'systematic']"
+            )
+        ess_target = finite_float("ess_target", self.ess_target)
+        if not 0.0 < ess_target < 1.0:
+            raise ValueError("ess_target must be in (0, 1)")
+        rejuvenation_steps = _positive_int(
+            "rejuvenation_steps", self.rejuvenation_steps
+        )
+        proposal_scale = finite_float("proposal_scale", self.proposal_scale)
+        if proposal_scale <= 0:
+            raise ValueError("proposal_scale must be > 0")
         object.__setattr__(self, "n_particles", n_particles)
         object.__setattr__(self, "n_masses", n_masses)
-        object.__setattr__(self, "jitter_std", jitter_std)
-        object.__setattr__(self, "jitter_tau", jitter_tau)
+        object.__setattr__(self, "ess_target", ess_target)
+        object.__setattr__(self, "rejuvenation_steps", rejuvenation_steps)
+        object.__setattr__(self, "proposal_scale", proposal_scale)
         object.__setattr__(self, "seed", _seed(self.seed))
 
 

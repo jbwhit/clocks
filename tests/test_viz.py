@@ -7,7 +7,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from clocks.inference import ModelComparison, ParticleFilter
+from clocks.api import build_model_comparison
+from clocks.config import InferenceConfig, NoiseConfig, PriorConfig
+from clocks.inference import ParticleFilter
 from clocks.noise import add_clock_noise
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
@@ -51,7 +53,7 @@ def clock_array_1d() -> ClockArray:
 def mass_config_1d() -> MassConfig:
     return MassConfig(
         positions=np.array([[2.0]]),
-        masses=np.array([0.5]),
+        masses=np.array([0.10]),
     )
 
 
@@ -67,14 +69,16 @@ def clock_array_2d() -> ClockArray:
 def mass_config_2d() -> MassConfig:
     return MassConfig(
         positions=np.array([[1.0, -0.5]]),
-        masses=np.array([0.4]),
+        masses=np.array([0.10]),
     )
 
 
 @pytest.fixture()
 def particle_state_1d() -> ParticleState:
     rng = np.random.default_rng(0)
-    particles = np.column_stack([rng.uniform(-5, 5, 100), rng.uniform(0.1, 2, 100)])
+    particles = np.column_stack(
+        [rng.uniform(-5, 5, 100), rng.uniform(0.005, 0.15, 100)]
+    )
     weights = np.ones(100) / 100
     return ParticleState(particles=particles, weights=weights, observations_seen=3)
 
@@ -86,7 +90,7 @@ def particle_state_2d() -> ParticleState:
         [
             rng.uniform(-5, 5, 100),
             rng.uniform(-5, 5, 100),
-            rng.uniform(0.1, 2, 100),
+            rng.uniform(0.005, 0.15, 100),
         ]
     )
     weights = np.ones(100) / 100
@@ -238,10 +242,13 @@ def _make_pf_and_obs(
         prior_sampler=prior_sampler,
         forward_model=forward_model,
         noise_std=0.005,
-        # Animation tests exercise rendering, not legacy proposal behavior.
-        # Keep candidates inside the strict MassConfig contract.
-        jitter="fixed",
-        jitter_std=0.0,
+        log_prior_density=lambda values: np.where(
+            np.all(np.isfinite(values), axis=1)
+            & np.all(values[:, -mass_config.masses.size :] > 0.0, axis=1),
+            0.0,
+            -np.inf,
+        ),
+        proposal_scale=1e-6,
         rng=rng,
     )
     return pf, observations
@@ -255,7 +262,7 @@ class TestAnimateInference:
         tmp_path: Path,
     ) -> None:
         def prior(rng: np.random.Generator, n: int) -> np.ndarray:
-            return np.column_stack([rng.uniform(-5, 5, n), rng.uniform(0.1, 2, n)])
+            return np.column_stack([rng.uniform(-5, 5, n), rng.uniform(0.005, 0.04, n)])
 
         def fwd(params: np.ndarray) -> np.ndarray:
             mc = MassConfig(
@@ -285,7 +292,11 @@ class TestAnimateInference2d:
     ) -> None:
         def prior(rng: np.random.Generator, n: int) -> np.ndarray:
             return np.column_stack(
-                [rng.uniform(-5, 5, n), rng.uniform(-5, 5, n), rng.uniform(0.1, 2, n)]
+                [
+                    rng.uniform(-5, 5, n),
+                    rng.uniform(-5, 5, n),
+                    rng.uniform(0.005, 0.04, n),
+                ]
             )
 
         def fwd(params: np.ndarray) -> np.ndarray:
@@ -323,7 +334,7 @@ def clock_array_multi_1d() -> ClockArray:
 def mass_config_multi_1d() -> MassConfig:
     return MassConfig(
         positions=np.array([[-2.0], [4.5]]),
-        masses=np.array([0.6, 0.4]),
+        masses=np.array([0.045, 0.030]),
     )
 
 
@@ -333,7 +344,12 @@ def particle_state_multi_1d() -> ParticleState:
     x = rng.uniform(-5, 5, (100, 2))
     x.sort(axis=1)
     particles = np.column_stack(
-        [x[:, 0], x[:, 1], rng.uniform(0.1, 2, 100), rng.uniform(0.1, 2, 100)]
+        [
+            x[:, 0],
+            x[:, 1],
+            rng.uniform(0.005, 0.02, 100),
+            rng.uniform(0.005, 0.02, 100),
+        ]
     )
     weights = np.ones(100) / 100
     return ParticleState(particles=particles, weights=weights, observations_seen=5)
@@ -367,7 +383,12 @@ class TestAnimateInferenceMulti1d:
             x = rng.uniform(-5, 5, (n, 2))
             x.sort(axis=1)
             return np.column_stack(
-                [x[:, 0], x[:, 1], rng.uniform(0.1, 2, n), rng.uniform(0.1, 2, n)]
+                [
+                    x[:, 0],
+                    x[:, 1],
+                    rng.uniform(0.005, 0.02, n),
+                    rng.uniform(0.005, 0.02, n),
+                ]
             )
 
         def fwd(params: np.ndarray) -> np.ndarray:
@@ -416,7 +437,7 @@ def clock_array_multi_2d() -> ClockArray:
 def mass_config_multi_2d() -> MassConfig:
     return MassConfig(
         positions=np.array([[-3.0, 2.0], [4.0, -1.0]]),
-        masses=np.array([0.6, 0.4]),
+        masses=np.array([0.050, 0.030]),
     )
 
 
@@ -427,8 +448,8 @@ def particle_state_multi_2d() -> ParticleState:
     y1 = rng.uniform(-5, 5, 100)
     x2 = rng.uniform(-5, 5, 100)
     y2 = rng.uniform(-5, 5, 100)
-    m1 = rng.uniform(0.1, 2, 100)
-    m2 = rng.uniform(0.1, 2, 100)
+    m1 = rng.uniform(0.005, 0.04, 100)
+    m2 = rng.uniform(0.005, 0.04, 100)
     particles = np.column_stack([x1, y1, x2, y2, m1, m2])
     # enforce x1 < x2
     swap = particles[:, 0] > particles[:, 2]
@@ -477,8 +498,8 @@ class TestAnimateInferenceMulti2d:
             y1 = rng.uniform(-5, 5, n)
             x2 = rng.uniform(-5, 5, n)
             y2 = rng.uniform(-5, 5, n)
-            m1 = rng.uniform(0.1, 2, n)
-            m2 = rng.uniform(0.1, 2, n)
+            m1 = rng.uniform(0.005, 0.04, n)
+            m2 = rng.uniform(0.005, 0.04, n)
             return np.column_stack([x1, y1, x2, y2, m1, m2])
 
         def fwd(params: np.ndarray) -> np.ndarray:
@@ -519,14 +540,15 @@ class TestAnimateModelComparison:
             Observation(rates=add_clock_noise(true_rates, 0.005, rng), time=float(t))
             for t in range(3)
         ]
-        mc = ModelComparison(
-            clock_array=clock_array_multi_1d,
-            noise_std=0.005,
-            n_dims=1,
-            k_max=3,
-            n_particles=50,
-            jitter_std=0.02,
-            rng=rng,
+        mc = build_model_comparison(
+            InferenceConfig(
+                clock_array=clock_array_multi_1d,
+                noise=NoiseConfig(0.005),
+                prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
+                n_particles=50,
+                n_masses=(1, 2, 3),
+                seed=42,
+            )
         )
         out = tmp_path / "test_model_comparison.gif"
         animate_model_comparison(
@@ -551,14 +573,15 @@ class TestAnimateModelComparison:
             Observation(rates=add_clock_noise(true_rates, 0.005, rng), time=float(t))
             for t in range(2)
         ]
-        mc = ModelComparison(
-            clock_array=clock_array_multi_1d,
-            noise_std=0.005,
-            n_dims=1,
-            k_values=(2, 3),
-            n_particles=20,
-            jitter_std=0.02,
-            rng=np.random.default_rng(1),
+        mc = build_model_comparison(
+            InferenceConfig(
+                clock_array=clock_array_multi_1d,
+                noise=NoiseConfig(0.005),
+                prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
+                n_particles=20,
+                n_masses=(2, 3),
+                seed=1,
+            )
         )
         out = tmp_path / "test_model_comparison_sparse.gif"
 
@@ -589,15 +612,22 @@ class TestAnimationProcessesObservationsOnce:
         pf = ParticleFilter(
             n_particles=50,
             prior_sampler=lambda r, n: np.column_stack(
-                [r.uniform(-8, 8, n), r.uniform(0.1, 2.0, n)]
+                [r.uniform(-8, 8, n), r.uniform(0.005, 0.04, n)]
             ),
             forward_model=lambda p: clock_rates(
                 MassConfig(positions=p[:1].reshape(1, 1), masses=p[1:]),
                 clock_array_1d,
             ),
             noise_std=0.01,
-            jitter="fixed",
-            jitter_std=0.0,
+            log_prior_density=lambda values: np.where(
+                (values[:, 0] >= -8.0)
+                & (values[:, 0] <= 8.0)
+                & (values[:, 1] >= 0.005)
+                & (values[:, 1] <= 0.04),
+                0.0,
+                -np.inf,
+            ),
+            proposal_scale=1e-6,
         )
         animate_inference(
             clock_array_1d,
@@ -620,8 +650,14 @@ class TestAnimationProcessesObservationsOnce:
             )
             for t in range(3)
         ]
-        mc = ModelComparison(
-            clock_array=clock_array_1d, noise_std=0.01, k_max=2, n_particles=50
+        mc = build_model_comparison(
+            InferenceConfig(
+                clock_array=clock_array_1d,
+                noise=NoiseConfig(0.01),
+                prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
+                n_particles=50,
+                n_masses=(1, 2),
+            )
         )
         animate_model_comparison(
             clock_array_1d, mass_config_1d, observations, mc, tmp_path / "mc.gif"
@@ -637,7 +673,10 @@ class TestAnimationProcessesObservationsOnce:
 def head_state() -> ParticleState:
     rng = np.random.default_rng(0)
     particles = np.column_stack(
-        [rng.uniform(-5, 5, size=(200, 3)), rng.uniform(0.05, 2.0, size=(200, 1))]
+        [
+            rng.uniform(-5, 5, size=(200, 3)),
+            rng.uniform(0.005, 0.15, size=(200, 1)),
+        ]
     )
     return ParticleState(
         particles=particles,
