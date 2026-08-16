@@ -204,6 +204,33 @@ class TestResamplingIndices:
 
         assert indices.shape == (7,)
 
+    def test_rejects_large_float32_vector_summing_to_point_99(self) -> None:
+        weights = np.full(100_000, 0.99 / 100_000, dtype=np.float32)
+        assert float(weights.astype(np.float64).sum()) == pytest.approx(0.99)
+
+        with pytest.raises(ValueError, match="sum to one"):
+            _systematic_indices(weights, 5, np.random.default_rng(0))
+
+    def test_rejects_zero_total_float16_without_dividing(self) -> None:
+        weights = np.zeros(2_048, dtype=np.float16)
+
+        with (
+            np.errstate(all="raise"),
+            pytest.raises(ValueError, match="strictly positive"),
+        ):
+            _systematic_indices(weights, 5, np.random.default_rng(0))
+
+    @pytest.mark.parametrize(
+        "dtype", [np.float16, np.float32, np.float64, np.longdouble]
+    )
+    def test_rejects_materially_non_normalized_floating_dtypes(
+        self, dtype: type[np.floating]
+    ) -> None:
+        weights = np.array([0.2, 0.2, 0.2, 0.2, 0.19], dtype=dtype)
+
+        with pytest.raises(ValueError, match="sum to one"):
+            _systematic_indices(weights, 5, np.random.default_rng(0))
+
 
 class TestParticleFilter:
     def test_convergence(self) -> None:

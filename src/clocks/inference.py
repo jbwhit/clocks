@@ -15,13 +15,14 @@ from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
 _JITTER_MODES = {"fixed", "covariance", "annealed"}
 _WEIGHT_SUM_ATOL = 1e-12
+_WEIGHT_SUM_EPS_MULTIPLIER = 4.0
 _UNIT_INTERVAL_MAX = np.nextafter(1.0, 0.0)
 
 
 def _validated_resampling_inputs(
     weights: NDArray[np.floating], n_draws: int
 ) -> tuple[NDArray[np.float64], int]:
-    """Validate inputs, allowing dtype-scaled summation roundoff only."""
+    """Validate inputs; sum tolerance is max(1e-12, 4 source-dtype eps)."""
     source_weights = np.asarray(weights)
     if source_weights.ndim != 1:
         raise ValueError("weights must be a 1-D array")
@@ -34,12 +35,14 @@ def _validated_resampling_inputs(
         raise ValueError("weights must be nonnegative")
 
     total = float(weights_array.sum())
+    if not math.isfinite(total) or total <= 0:
+        raise ValueError("weights total must be finite and strictly positive")
     source_epsilon = (
         np.finfo(source_weights.dtype).eps
         if np.issubdtype(source_weights.dtype, np.floating)
         else np.finfo(np.float64).eps
     )
-    sum_atol = max(_WEIGHT_SUM_ATOL, source_weights.size * source_epsilon)
+    sum_atol = max(_WEIGHT_SUM_ATOL, _WEIGHT_SUM_EPS_MULTIPLIER * source_epsilon)
     if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=sum_atol):
         raise ValueError(f"weights must sum to one within {sum_atol:g}, got {total}")
     if isinstance(n_draws, (bool, np.bool_)) or not isinstance(
