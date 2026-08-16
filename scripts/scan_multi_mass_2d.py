@@ -38,6 +38,12 @@ def _control_cells(
     scales: list[float] | None,
 ) -> list[tuple[float, int, float]]:
     """Use the declared grid in development and one frozen cell in certification."""
+    if seed_block >= 400 and any(
+        value is not None for value in (ess_targets, steps, scales)
+    ):
+        raise ValueError(
+            "explicit control overrides are forbidden for protected seed blocks"
+        )
     selected_ess = ess_targets or (
         list(DEVELOPMENT_ESS_TARGETS) if seed_block == 0 else [MULTI_ESS_TARGET]
     )
@@ -59,8 +65,6 @@ def _control_cells(
     if any(not math.isfinite(value) or value <= 0.0 for value in selected_scales):
         raise ValueError("proposal-scale controls must be finite and positive")
     cells = list(product(selected_ess, selected_steps, selected_scales))
-    if seed_block >= 400 and len(cells) != 1:
-        raise ValueError("certification requires a single control cell")
     return cells
 
 

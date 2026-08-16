@@ -1,6 +1,9 @@
 """Fast tests for the shared multi-mass-2D scenario module."""
 
+import importlib.util
 import inspect
+from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import pytest
@@ -29,6 +32,61 @@ from clocks._scenarios import (
 )
 from clocks.physics import _point_mass_potential_batch, clock_rates
 from clocks.types import MassConfig
+
+
+def _load_scan(script_name: str) -> ModuleType:
+    path = Path(__file__).parents[1] / "scripts" / f"{script_name}.py"
+    spec = importlib.util.spec_from_file_location(script_name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ["scan_multi_mass_2d", "scan_echolocation_range"],
+)
+def test_protected_seed_blocks_forbid_explicit_control_overrides(
+    script_name: str,
+) -> None:
+    scan = _load_scan(script_name)
+    assert scan._seeds_for_block(500) == tuple(range(500, 512))
+    assert scan._control_cells(500, None, None, None) == [(0.8, 2, 2.38)]
+    for explicit_controls in (
+        ([0.8], None, None),
+        (None, [2], None),
+        (None, None, [2.38]),
+    ):
+        with pytest.raises(ValueError, match="explicit control overrides"):
+            scan._control_cells(500, *explicit_controls)
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ["scan_multi_mass_2d", "scan_echolocation_range"],
+)
+def test_development_seed_block_uses_declared_grid_and_allows_overrides(
+    script_name: str,
+) -> None:
+    scan = _load_scan(script_name)
+    assert scan._seeds_for_block(0) == tuple(range(12))
+    development = scan._control_cells(0, None, None, None)
+    assert len(development) == 27
+    assert {cell[0] for cell in development} == {0.7, 0.8, 0.9}
+    assert {cell[1] for cell in development} == {1, 2, 4}
+    assert {cell[2] for cell in development} == {1.5, 2.38, 3.0}
+    assert scan._control_cells(0, [0.7], [1], [1.5]) == [(0.7, 1, 1.5)]
+    for invalid_block in (-100, 200, 300, 501):
+        with pytest.raises(ValueError, match="seed block"):
+            scan._seeds_for_block(invalid_block)
+    for invalid_controls in (
+        ([0.0], None, None),
+        (None, [0], None),
+        (None, None, [np.inf]),
+    ):
+        with pytest.raises(ValueError, match="control"):
+            scan._control_cells(0, *invalid_controls)
 
 
 class TestPassRule:
