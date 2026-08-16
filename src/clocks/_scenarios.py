@@ -39,12 +39,13 @@ NOISE_STD = 0.005
 N_PARTICLES = 4000
 POSITION_RANGE = (-8.0, 8.0)
 MASS_RANGE = (0.005, 0.15)
-MULTI_ESS_TARGET = 0.8
+MULTI_ESS_TARGET = 0.7
 MULTI_REJUVENATION_STEPS = 2
-MULTI_PROPOSAL_SCALE = 2.38
-# Pass rule: absolute posterior-mean error per parameter. Mass tolerances are
-# scaled to the retuned weak-field truth rather than inherited from old units.
-PASS_TOLERANCE = np.array([0.5, 0.5, 0.5, 0.5, 0.01, 0.01])
+MULTI_PROPOSAL_SCALE = 3.0
+# Frozen 2026-08-16 from development seeds 0-11, before certification. This
+# simple recovery/regression gate uses one absolute tolerance per parameter
+# kind; it is not an estimate of population reliability.
+PASS_TOLERANCE = np.array([2.5, 2.5, 2.5, 2.5, 0.012, 0.012])
 
 
 class RunResult(TypedDict):
@@ -193,9 +194,9 @@ ECHO_MASS_RANGE = (0.005, 0.15)
 ECHO_MIN_RANGE_R = 2.0  # circumradii; exterior means exterior, with clearance
 ECHO_POSITION_HALFWIDTH = 16.0  # prior box covers max swept range 8*R_head~13.9
 ECHO_SWEEP_RANGES = (2.0, 2.6, 3.5, 4.6, 6.1, 8.0)  # log-ish, circumradii
-ECHO_ESS_TARGET = 0.8
-ECHO_REJUVENATION_STEPS = 2
-ECHO_PROPOSAL_SCALE = 2.38
+ECHO_ESS_TARGET = 0.9
+ECHO_REJUVENATION_STEPS = 1
+ECHO_PROPOSAL_SCALE = 1.5
 
 
 def build_head_lattice() -> ClockArray:
@@ -244,10 +245,13 @@ def validate_echo_geometry(
         )
 
 
-# Provisional pass tolerances at the closest swept range; frozen after the
-# tuning sweep (spec section 3a) — the tuning task records final values.
+# Frozen 2026-08-16 from development seeds 0-11, before certification. These
+# fixed-case regression/calibration thresholds are not population guarantees.
 ECHO_PASS_POS_TOL = 1.0
 ECHO_PASS_MASS_TOL = 0.04
+# Conservative honest-uncertainty gate: the median position standard deviation
+# at the far range must be at least this multiple of the close-range value.
+ECHO_FAR_STD_FACTOR = 20.0
 
 
 class EchoRunResult(TypedDict):

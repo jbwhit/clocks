@@ -1,7 +1,8 @@
-"""Echolocation acceptance guards before one-shot certification exists.
+"""Frozen echolocation development guards before certification exists.
 
-Task 11 will install the deterministic slow replay only after development
-calibration is frozen and the protected block has been executed exactly once.
+Development calibration is frozen here before any protected seed is inspected.
+Task 11 will install the deterministic slow replay only after the protected
+block has been executed exactly once.
 """
 
 import inspect
@@ -9,6 +10,7 @@ import inspect
 import numpy as np
 import pytest
 
+import clocks._scenarios as scenarios
 from clocks._scenarios import (
     ECHO_DIRECTION,
     ECHO_M_TRUE,
@@ -36,16 +38,20 @@ EXPECTED_N_OBSERVATIONS = 80
 EXPECTED_MASS_RANGE = (0.005, 0.15)
 EXPECTED_POSITION_HALFWIDTH = 16.0
 EXPECTED_DIRECTION = (2.0 / 7.0, 3.0 / 7.0, 6.0 / 7.0)
+EXPECTED_ESS_TARGET = 0.9
+EXPECTED_REJUVENATION_STEPS = 1
+EXPECTED_PROPOSAL_SCALE = 1.5
+EXPECTED_FAR_STD_FACTOR = 20.0
 
 
 @pytest.mark.slow
 @pytest.mark.skip(reason="Task 11 installs this replay after one-shot certification")
 def test_certification_replay_pending_task_11() -> None:
-    """No protected seed values belong in runnable tests before Task 11."""
+    """Protected-seed outcomes are added only after their one-shot run."""
 
 
-def test_scenario_matches_declared_configuration() -> None:
-    """Fast guard: live scenario constants equal Task 8's declared values."""
+def test_scenario_matches_frozen_development_configuration() -> None:
+    """Fast guard for constants fixed without protected-seed evidence."""
     params = inspect.signature(run_echolocation_3d).parameters
     assert params["n_particles"].default == ECHO_N_PARTICLES
     assert params["n_observations"].default == ECHO_N_OBSERVATIONS
@@ -61,14 +67,15 @@ def test_scenario_matches_declared_configuration() -> None:
     assert ECHO_MASS_RANGE == EXPECTED_MASS_RANGE
     assert ECHO_POSITION_HALFWIDTH == EXPECTED_POSITION_HALFWIDTH
     assert np.allclose(ECHO_DIRECTION, EXPECTED_DIRECTION)
+    assert scenarios.ECHO_FAR_STD_FACTOR == EXPECTED_FAR_STD_FACTOR
 
 
 def test_filter_construction_matches_declared_configuration() -> None:
-    """Fast guard: the built filter uses Task 8's declared defaults."""
+    """Fast guard: the built filter uses the development-selected controls."""
     pf = build_echolocation_filter(seed=0, n_particles=10)
-    assert pf.ess_target == 0.8
-    assert pf.rejuvenation_steps == 2
-    assert pf.proposal_scale == 2.38
+    assert pf.ess_target == EXPECTED_ESS_TARGET
+    assert pf.rejuvenation_steps == EXPECTED_REJUVENATION_STEPS
+    assert pf.proposal_scale == EXPECTED_PROPOSAL_SCALE
     assert pf.noise_std == EXPECTED_NOISE_STD
     assert np.all(np.isfinite(pf.log_prior_density(pf.state.particles)))
 
@@ -77,6 +84,6 @@ def test_run_and_filter_accept_only_rigorous_smc_controls() -> None:
     for callable_ in (build_echolocation_filter, run_echolocation_3d):
         params = inspect.signature(callable_).parameters
         assert "jitter" not in params
-        assert params["ess_target"].default == 0.8
-        assert params["rejuvenation_steps"].default == 2
-        assert params["proposal_scale"].default == 2.38
+        assert params["ess_target"].default == EXPECTED_ESS_TARGET
+        assert params["rejuvenation_steps"].default == EXPECTED_REJUVENATION_STEPS
+        assert params["proposal_scale"].default == EXPECTED_PROPOSAL_SCALE

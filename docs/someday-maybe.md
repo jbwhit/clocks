@@ -10,9 +10,9 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
   for curved or multimodal posteriors. Any replacement must retain an explicit
   acceptance rule and preserve each tempered target.
 - **Population-level reliability study.** The corrected SMC controls and
-  tolerances have not yet been calibrated and frozen on the development seeds,
-  and the reserved 400–411 block has not been run. That pending fixed-seed
-  protocol can provide regression and calibration evidence for its particular
+  tolerances are frozen from the development seeds, and the reserved 400–411
+  block has not been run. The pending protected replay can provide regression
+  and calibration evidence for its particular
   cases, not a reliability estimate over a declared population. A later study
   could preregister such a population and attach confidence intervals to
   failure rates.

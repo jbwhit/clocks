@@ -88,24 +88,23 @@ reliability measurement.
 
 ![The echolocation demo. Left: the head lattice, the true exterior mass (star), and the particle cloud, camera orbiting. Right, top to bottom: parameter convergence, mass marginal, differential rates by clock.](../assets/demo_echolocation_3d.gif)
 
-This committed GIF is a pre-remediation illustration pending Task 11
-calibration and regeneration, not a result from the corrected contrast-space
-SMC implementation.
+This committed GIF is a pre-remediation illustration pending certification
+and regeneration, not a result from the corrected contrast-space SMC
+implementation.
 
 ## How far does the sense reach?
 
 The range harness sweeps the declared circumradius grid and records position
 error, mass error, posterior standard deviations, coverage, residuals, SMC
-controls, and forward-model evaluation counts. Development seeds will select
-controls by a declared ranking; only after those controls and tolerances are
-frozen may the untouched 400–411 block be run once. Neither step has happened
-yet for the corrected implementation.
+controls, and forward-model evaluation counts. Development seeds selected and
+froze the controls and tolerances by the declared ranking. The untouched
+400–411 block has not yet been run once for the corrected implementation.
 
 ![A finite fixed-seed resolution study. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, and dashed lines show posterior standard deviations.](../assets/echolocation_range_study.png)
 
 The displayed study is the legacy pre-remediation artifact. Task 11 will
-replace it after development calibration and the one-shot protected run; its
-current points must not be read as corrected-SMC evidence.
+replace it after the one-shot protected run; its current points must not be
+read as corrected-SMC evidence.
 
 When completed, that protocol will guard against tuning directly to the
 reported holdout, but its fixed seeds will still provide regression and
@@ -244,9 +243,10 @@ Which may be the most meditative conclusion physics has on offer.
 `uv run demo-echolocation-3d` regenerates the demo;
 `uv run scripts/scan_echolocation_range.py --seed-block 0 --workers 8 --per-run`
 runs the development grid. A future reserved run will use the scenario-default
-cell via `--seed-block 400`; protected blocks reject control
-overrides, but those defaults are not scientifically frozen until Task 11.
-The protected command has not been run.
+cell via `--seed-block 400`; protected blocks reject control overrides. The
+development defaults and acceptance tolerances are scientifically frozen from
+seeds 0–11, while the one-shot 400–411 certification and corrected assets
+remain pending.
 See
 [Getting Started](../reproduce/getting-started.qmd).
 :::

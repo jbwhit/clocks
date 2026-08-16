@@ -18,6 +18,11 @@ from multiprocessing import Pool
 from numbers import Integral
 from pathlib import Path
 
+from clocks._calibration import (
+    DEVELOPMENT_ESS_TARGETS,
+    DEVELOPMENT_PROPOSAL_SCALES,
+    DEVELOPMENT_REJUVENATION_STEPS,
+)
 from clocks._echo_study import (
     load_study,
     save_study,
@@ -37,11 +42,12 @@ from clocks._scenarios import (
     validate_echo_geometry,
 )
 
-JSON_PATH = Path("output/echolocation_range_study.json")
 PNG_PATH = Path("output/echolocation_range_study.png")
-DEVELOPMENT_ESS_TARGETS = (0.7, 0.8, 0.9)
-DEVELOPMENT_REJUVENATION_STEPS = (1, 2, 4)
-DEVELOPMENT_PROPOSAL_SCALES = (1.5, 2.38, 3.0)
+
+
+def _study_json_path(seed_block: int) -> Path:
+    """Keep every seed block in a separately named raw evidence file."""
+    return Path(f"output/echolocation_range_study_seed_block_{seed_block}.json")
 
 
 def _reject_duplicates(name: str, values: list[float] | list[int]) -> None:
@@ -189,8 +195,9 @@ def main() -> None:
     except ValueError as error:
         parser.error(str(error))
 
+    json_path = _study_json_path(args.seed_block)
     if args.figure_only:
-        write_summary_figure(load_study(JSON_PATH), PNG_PATH)
+        write_summary_figure(load_study(json_path), PNG_PATH)
         print(f"Figure written to {PNG_PATH}")
         return
 
@@ -220,9 +227,15 @@ def main() -> None:
     with Pool(args.workers) as pool:
         results = pool.map(_run, jobs)
 
-    JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-    save_study(JSON_PATH, args.seed_block, results)
-    study = load_study(JSON_PATH)
+    save_study(
+        json_path,
+        seed_block=args.seed_block,
+        seeds=seeds,
+        control_cells=cells,
+        ranges=ranges,
+        results=results,
+    )
+    study = load_study(json_path)
 
     print(f"\nSweep on seed block {args.seed_block} ({len(jobs)} runs):")
     grouped: dict[tuple[float, int, float], list[dict]] = {}
@@ -283,7 +296,7 @@ def main() -> None:
                 f" normalized_error={r['normalized_error']:.3f}"
                 f" forward_evaluations={r['forward_model_evaluations']}"
             )
-    written = f"{JSON_PATH} and {PNG_PATH}" if len(cells) == 1 else str(JSON_PATH)
+    written = f"{json_path} and {PNG_PATH}" if len(cells) == 1 else str(json_path)
     print(f"\nWrote {written}")
 
 

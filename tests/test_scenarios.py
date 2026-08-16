@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import clocks._scenarios as scenarios
+from clocks._calibration import load_study
 from clocks._scenarios import (
     ECHO_DIRECTION,
     ECHO_M_TRUE,
@@ -44,6 +45,100 @@ def _load_scan(script_name: str) -> ModuleType:
     return module
 
 
+def test_scan_raw_study_paths_are_seed_block_specific() -> None:
+    multi = _load_scan("scan_multi_mass_2d")
+    echo = _load_scan("scan_echolocation_range")
+    assert multi._study_json_path(0) == Path(
+        "output/multi_mass_2d_study_seed_block_0.json"
+    )
+    assert multi._study_json_path(500) == Path(
+        "output/multi_mass_2d_study_seed_block_500.json"
+    )
+    assert echo._study_json_path(0) == Path(
+        "output/echolocation_range_study_seed_block_0.json"
+    )
+    assert echo._study_json_path(500) == Path(
+        "output/echolocation_range_study_seed_block_500.json"
+    )
+
+
+def test_multi_scan_serializes_raw_results_with_gate_metadata(tmp_path: Path) -> None:
+    scan = _load_scan("scan_multi_mass_2d")
+    results = [
+        {
+            "seed": seed,
+            "passed": True,
+            "mean": TRUTH.copy(),
+            "std": np.ones(6),
+            "max_abs_error": 0.0,
+            "covered_3sigma": True,
+            "max_posterior_std": 1.0,
+            "residual_over_noise": 1.0,
+            "normalized_error": 0.0,
+            "forward_model_evaluations": 42,
+            "ess_target": 0.7,
+            "rejuvenation_steps": 2,
+            "proposal_scale": 3.0,
+        }
+        for seed in (0, 1)
+    ]
+    path = tmp_path / "multi.json"
+    scan._write_study(
+        path,
+        seed_block=0,
+        seeds=(0, 1),
+        cells=[(0.7, 2, 3.0)],
+        results=results,
+    )
+    raw = load_study(path)
+    assert raw["schema_version"] == 1
+    assert raw["study"] == "multi_mass_2d"
+    assert raw["seed_block"] == 0
+    assert raw["seeds"] == [0, 1]
+    assert raw["control_grid"] == {
+        "ess_target": [0.7],
+        "proposal_scale": [3.0],
+        "rejuvenation_steps": [2],
+    }
+    assert raw["tolerances"] == {
+        "absolute_parameter_error": [2.5, 2.5, 2.5, 2.5, 0.012, 0.012]
+    }
+    assert len(raw["results"]) == 2
+    assert raw["results"][0]["mean"] == TRUTH.tolist()
+
+
+def test_multi_scan_validation_preserves_existing_evidence(tmp_path: Path) -> None:
+    scan = _load_scan("scan_multi_mass_2d")
+    result = {
+        "seed": 0,
+        "passed": False,
+        "mean": TRUTH.copy(),
+        "std": np.ones(6),
+        "max_abs_error": 0.0,
+        "covered_3sigma": True,
+        "max_posterior_std": 1.0,
+        "residual_over_noise": 1.0,
+        "normalized_error": 0.0,
+        "forward_model_evaluations": 42,
+        "ess_target": 0.7,
+        "rejuvenation_steps": 2,
+        "proposal_scale": 3.0,
+    }
+    path = tmp_path / "multi.json"
+    path.write_bytes(b"existing evidence\n")
+
+    with pytest.raises(ValueError, match="passed.*derived"):
+        scan._write_study(
+            path,
+            seed_block=0,
+            seeds=(0,),
+            cells=[(0.7, 2, 3.0)],
+            results=[result],
+        )
+
+    assert path.read_bytes() == b"existing evidence\n"
+
+
 @pytest.mark.parametrize(
     "script_name",
     ["scan_multi_mass_2d", "scan_echolocation_range"],
@@ -53,7 +148,10 @@ def test_protected_seed_blocks_forbid_explicit_control_overrides(
 ) -> None:
     scan = _load_scan(script_name)
     assert scan._seeds_for_block(500) == tuple(range(500, 512))
-    assert scan._control_cells(500, None, None, None) == [(0.8, 2, 2.38)]
+    expected = (
+        [(0.7, 2, 3.0)] if script_name == "scan_multi_mass_2d" else [(0.9, 1, 1.5)]
+    )
+    assert scan._control_cells(500, None, None, None) == expected
     for explicit_controls in (
         ([0.8], None, None),
         (None, [2], None),
@@ -133,19 +231,23 @@ class TestPassRule:
         assert passes(TRUTH)
 
     def test_position_error_at_tolerance_passes(self) -> None:
-        assert passes(TRUTH + np.array([0.5, 0, 0, 0, 0, 0]))
+        assert passes(TRUTH + np.array([2.5, 0, 0, 0, 0, 0]))
 
     def test_position_error_beyond_tolerance_fails(self) -> None:
-        assert not passes(TRUTH + np.array([0.51, 0, 0, 0, 0, 0]))
+        assert not passes(TRUTH + np.array([2.5001, 0, 0, 0, 0, 0]))
 
     def test_mass_error_beyond_tolerance_fails(self) -> None:
-        assert not passes(TRUTH + np.array([0, 0, 0, 0, 0.011, 0]))
+        assert not passes(TRUTH + np.array([0, 0, 0, 0, 0.0121, 0]))
 
     def test_tolerance_values(self) -> None:
         assert np.array_equal(
             PASS_TOLERANCE,
-            np.array([0.5, 0.5, 0.5, 0.5, 0.01, 0.01]),
+            np.array([2.5, 2.5, 2.5, 2.5, 0.012, 0.012]),
         )
+
+    def test_tolerance_uses_one_rule_per_parameter_kind(self) -> None:
+        assert len(set(PASS_TOLERANCE[:4])) == 1
+        assert len(set(PASS_TOLERANCE[4:])) == 1
 
 
 class TestClockPlacement:
@@ -314,9 +416,10 @@ class TestEchoMeasurementModel:
 
     def test_filter_builder_exposes_rigorous_smc_controls(self) -> None:
         params = inspect.signature(build_echolocation_filter).parameters
-        assert params["ess_target"].default == 0.8
-        assert params["rejuvenation_steps"].default == 2
-        assert params["proposal_scale"].default == 2.38
+        assert params["ess_target"].default == 0.9
+        assert params["rejuvenation_steps"].default == 1
+        assert params["proposal_scale"].default == 1.5
+        assert scenarios.ECHO_FAR_STD_FACTOR == 20.0
         pf = build_echolocation_filter(
             seed=0,
             n_particles=20,
@@ -359,9 +462,9 @@ class TestEchoRunResult:
         assert result["residual_over_noise"] >= 0.0
         assert result["normalized_error"] >= 0.0
         assert result["forward_model_evaluations"] > 0
-        assert result["ess_target"] == 0.8
-        assert result["rejuvenation_steps"] == 2
-        assert result["proposal_scale"] == 2.38
+        assert result["ess_target"] == 0.9
+        assert result["rejuvenation_steps"] == 1
+        assert result["proposal_scale"] == 1.5
 
     def test_run_rejects_invalid_geometry(self) -> None:
         with pytest.raises(ValueError, match="exterior"):

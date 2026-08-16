@@ -6,18 +6,55 @@ import statistics
 from itertools import product
 from multiprocessing import Pool
 from numbers import Integral
+from pathlib import Path
 
+from clocks._calibration import (
+    DEVELOPMENT_ESS_TARGETS,
+    DEVELOPMENT_PROPOSAL_SCALES,
+    DEVELOPMENT_REJUVENATION_STEPS,
+    build_study_document,
+    control_grid_from_cells,
+    validate_multi_results,
+    write_study,
+)
 from clocks._scenarios import (
     MULTI_ESS_TARGET,
     MULTI_PROPOSAL_SCALE,
     MULTI_REJUVENATION_STEPS,
+    PASS_TOLERANCE,
     RunResult,
     run_multi_mass_2d,
 )
 
-DEVELOPMENT_ESS_TARGETS = (0.7, 0.8, 0.9)
-DEVELOPMENT_REJUVENATION_STEPS = (1, 2, 4)
-DEVELOPMENT_PROPOSAL_SCALES = (1.5, 2.38, 3.0)
+
+def _study_json_path(seed_block: int) -> Path:
+    """Keep every seed block in a separately named raw evidence file."""
+    return Path(f"output/multi_mass_2d_study_seed_block_{seed_block}.json")
+
+
+def _write_study(
+    path: Path,
+    *,
+    seed_block: int,
+    seeds: tuple[int, ...],
+    cells: list[tuple[float, int, float]],
+    results: list[RunResult],
+) -> None:
+    expected_tuples = {
+        (ess_target, steps, scale, seed)
+        for ess_target, steps, scale in cells
+        for seed in seeds
+    }
+    validate_multi_results(results, expected_tuples=expected_tuples)
+    study = build_study_document(
+        study="multi_mass_2d",
+        seed_block=seed_block,
+        seeds=seeds,
+        control_grid=control_grid_from_cells(cells),
+        tolerances={"absolute_parameter_error": PASS_TOLERANCE},
+        results=results,
+    )
+    write_study(path, study)
 
 
 def _reject_duplicates(name: str, values: list[float] | list[int]) -> None:
@@ -116,6 +153,15 @@ def main() -> None:
     with Pool(args.workers) as pool:
         results = pool.map(_run, runs)
 
+    json_path = _study_json_path(args.seed_block)
+    _write_study(
+        json_path,
+        seed_block=args.seed_block,
+        seeds=seeds,
+        cells=cells,
+        results=[result for _, result in results],
+    )
+
     grouped: dict[tuple, list[RunResult]] = {}
     for key, result in results:
         grouped.setdefault(key, []).append(result)
@@ -151,6 +197,7 @@ def main() -> None:
     ranked.sort()
     _, winner = ranked[0]
     print(f"winner: ess={winner[0]:.2f}, steps={winner[1]}, scale={winner[2]:.2f}")
+    print(f"raw study: {json_path}")
 
 
 if __name__ == "__main__":

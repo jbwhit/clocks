@@ -26,7 +26,7 @@ and a series of increasingly hard detection puzzles.
 ::: {.callout-warning title="Generated-evidence status"}
 The committed GIFs and PNGs predate the corrected physics and SMC
 implementation. They are illustrations, not evidence for the current code,
-until Task 11 freezes the calibrated controls and regenerates them.
+until the frozen configuration is certified and the assets are regenerated.
 :::
 
 Here is the whole round trip — simulate noisy clock readings near a hidden

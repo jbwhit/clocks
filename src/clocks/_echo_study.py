@@ -5,7 +5,6 @@ import it; the scan script stays a thin CLI (same reasoning as
 clocks._scenarios).
 """
 
-import json
 import statistics
 from collections.abc import Sequence
 from pathlib import Path
@@ -13,9 +12,21 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from clocks._calibration import (
+    build_study_document,
+    control_grid_from_cells,
+    validate_echo_results,
+    write_study,
+)
+from clocks._calibration import (
+    load_study as load_study,
+)
 from clocks._scenarios import (
+    ECHO_FAR_STD_FACTOR,
     ECHO_M_TRUE,
     ECHO_NOISE_STD,
+    ECHO_PASS_MASS_TOL,
+    ECHO_PASS_POS_TOL,
     EchoRunResult,
     build_head_lattice,
     echo_mass_config,
@@ -49,22 +60,37 @@ def snr_table(
     return table
 
 
-def save_study(path: Path, seed_block: int, results: list[EchoRunResult]) -> None:
-    """Write sweep results to JSON (numpy arrays become lists)."""
-    serializable = [
-        {
-            key: value.tolist() if isinstance(value, np.ndarray) else value
-            for key, value in result.items()
-        }
-        for result in results
-    ]
-    path.write_text(
-        json.dumps({"seed_block": seed_block, "results": serializable}, indent=2)
+def save_study(
+    path: Path,
+    *,
+    seed_block: int,
+    seeds: Sequence[int],
+    control_cells: Sequence[tuple[float, int, float]],
+    ranges: Sequence[float],
+    results: Sequence[EchoRunResult],
+) -> None:
+    """Write exact echo scan evidence in the shared deterministic schema."""
+    expected_tuples = {
+        (ess_target, steps, scale, float(range_r), int(seed))
+        for ess_target, steps, scale in control_cells
+        for range_r in ranges
+        for seed in seeds
+    }
+    validate_echo_results(results, expected_tuples=expected_tuples)
+    study = build_study_document(
+        study="echolocation_range",
+        seed_block=seed_block,
+        seeds=seeds,
+        control_grid=control_grid_from_cells(control_cells),
+        tolerances={
+            "position_error_max": ECHO_PASS_POS_TOL,
+            "mass_error_max": ECHO_PASS_MASS_TOL,
+            "far_std_factor_min": ECHO_FAR_STD_FACTOR,
+        },
+        ranges=ranges,
+        results=results,
     )
-
-
-def load_study(path: Path) -> dict:
-    return json.loads(path.read_text())
+    write_study(path, study)
 
 
 def summarize(results: list[dict]) -> list[dict]:
