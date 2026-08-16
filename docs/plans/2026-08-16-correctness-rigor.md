@@ -242,7 +242,11 @@ Delete `_EPS`. Reject zero distance only in columns whose mass is positive.
 Compute rates exactly as `np.sqrt(1.0 + 2.0 * potential)` after validation.
 Create a private `_point_mass_potential_batch(...)` shared by strict batch
 functions and API prior-support evaluation; it returns raw potentials without
-clipping. Batch public functions call the same validation as scalar functions.
+clipping. Candidate support evaluation must use
+`np.errstate(divide="ignore", invalid="ignore")` around raw division and mark
+zero-distance/positive-mass pairs invalid before thresholding; an impossible
+candidate is normal control flow and must not emit a warning. Batch public
+functions call the same validation as scalar functions.
 
 **Step 4: Make density evaluation strict**
 
@@ -518,10 +522,12 @@ weights = np.exp(candidate_log_weights - log_increment)
 beta = next_beta
 ```
 
-If ESS is at or below the target before beta reaches one, resample and reset
-weights to `1/N`; Task 6 adds the move immediately afterward. When beta reaches
-one, add the observation to completed sufficient statistics and append exactly
-one immutable `ParticleState`.
+Whenever ESS is at or below the target, resample and reset weights to `1/N`,
+including after the final increment reaches `beta=1`; Task 6 adds the move
+immediately afterward. This guarantees the next observation never starts below
+the target with no bisection root. When beta reaches one, add the observation
+to completed sufficient statistics and append exactly one immutable
+`ParticleState`.
 
 **Step 4: Add update diagnostics**
 
@@ -573,8 +579,9 @@ def test_mh_rejects_support_crossing_without_repair():
     pf = bounded_scalar_filter(proposal_scale=50.0, rejuvenation_steps=1)
     current = np.array([[0.99]])
     moved, diagnostics = pf._metropolis_move(current, beta=1.0, observation=OBS)
-    assert np.all((-1.0 <= moved) & (moved <= 1.0))
+    np.testing.assert_array_equal(moved, current)
     assert diagnostics.proposals == 1
+    assert diagnostics.acceptances == 0
 ```
 
 Use a stub RNG in the focused boundary test so the crossing proposal is
@@ -649,11 +656,12 @@ strict first-coordinate ordering, and physical validity:
 ```python
 def test_api_prior_ranges_are_actual_support():
     pf = build_particle_filter(make_config(n_masses=2, n_particles=2_000))
-    particles = pf.state.particles
-    assert np.all((-8.0 <= particles[:, :2]) & (particles[:, :2] <= 8.0))
-    assert np.all((0.005 <= particles[:, 2:]) & (particles[:, 2:] <= 0.15))
-    assert np.all(particles[:, 0] < particles[:, 1])
-    assert np.all(api_physical_support_mask(particles, ...))
+    for state in [pf.state, *(pf.update(obs) for obs in observations[:5])]:
+        particles = state.particles
+        assert np.all((-8.0 <= particles[:, :2]) & (particles[:, :2] <= 8.0))
+        assert np.all((0.005 <= particles[:, 2:]) & (particles[:, 2:] <= 0.15))
+        assert np.all(particles[:, 0] < particles[:, 1])
+        assert np.all(api_physical_support_mask(particles, ...))
 ```
 
 Add a test whose geometry/mass range has no valid conditional volume and assert
@@ -782,6 +790,8 @@ Use these predeclared development values before any seed scan:
 - two-mass 1-D/model-comparison truths `M=[0.045, 0.030]`;
 - multi-mass 2-D truth `M=[0.050, 0.030]`;
 - density truth `amplitude=0.010`;
+- density prior `mu ~ U(-8, 8)`, `sigma ~ U(0.1, 5.0)`, and
+  `amplitude ~ U(0.001, 0.030)`, further conditioned on weak-field validity;
 - echolocation truth `M=0.080`, noise standard deviation `0.001`, mass prior
   `(0.005, 0.15)`; and
 - general point-mass priors `(0.005, 0.15)` unless a narrower documented range
@@ -907,7 +917,11 @@ if __name__ == "__main__":
 ```
 
 Point `[project.scripts]` directly at `clocks._demos.<name>:main` and delete
-`clocks._cli`.
+`clocks._cli`. Each packaged module must select Matplotlib's `Agg` backend
+before any `pyplot` import so default and smoke execution remain headless-safe.
+The density module must rejection-sample the Task 8 conditional density prior
+and provide its matching required `log_prior_density`; it must never pass an
+out-of-domain row to the strict batch forward model.
 
 **Step 4: Add an installed-wheel smoke script**
 
