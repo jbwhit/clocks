@@ -1,7 +1,6 @@
 """Every executable shipped scenario stays inside the 0.08 truth margin."""
 
-import importlib.util
-from pathlib import Path
+import importlib
 from types import ModuleType
 
 import numpy as np
@@ -19,12 +18,7 @@ from clocks.types import ClockArray, MassConfig
 
 
 def _script(name: str) -> ModuleType:
-    path = Path(__file__).parents[1] / "scripts" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module(f"clocks._demos.{name}")
 
 
 def _strength(config: MassConfig, clocks: ClockArray) -> float:
