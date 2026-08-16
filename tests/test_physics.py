@@ -180,6 +180,12 @@ class TestTimeDilation:
         with pytest.raises(PhysicsDomainError):
             time_dilation_factor(np.array([potential]))
 
+    def test_extreme_finite_potential_rejects_without_overflow_warning(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="weak-field"):
+                time_dilation_factor(np.array([-1e308]))
+
     def test_requires_exact_nonempty_vector(self) -> None:
         with pytest.raises(ValueError, match="potential must be 1-D"):
             time_dilation_factor(np.array([[-0.01]]))
@@ -350,6 +356,24 @@ class TestClockRatesBatch:
 
         assert not valid[0]
         assert not np.all(np.isfinite(potential[0]))
+
+    def test_extreme_finite_potential_is_invalid_without_warning(self) -> None:
+        clocks = ClockArray(np.array([[0.0]]), track_offset=0.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            potential, valid = _point_mass_potential_batch(
+                np.array([[[1.0]]]), np.array([[1e308]]), clocks
+            )
+
+        np.testing.assert_array_equal(potential, np.array([[-1e308]]))
+        assert not valid[0]
+
+    def test_public_batch_extreme_potential_rejects_without_warning(self) -> None:
+        clocks = ClockArray(np.array([[0.0]]), track_offset=0.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="weak-field"):
+                clock_rates_batch(np.array([[1.0]]), np.array([1e308]), clocks)
 
 
 class TestClockRatesBatchMulti:

@@ -175,6 +175,6 @@ def density_support_mask(
         physical[valid] = (
             np.all(np.isfinite(potential), axis=1)
             & np.all(potential <= 0.0, axis=1)
-            & np.all(np.abs(2.0 * potential) <= WEAK_FIELD_LIMIT, axis=1)
+            & np.all(np.abs(potential) <= WEAK_FIELD_LIMIT / 2.0, axis=1)
         )
     return valid & physical

@@ -13,6 +13,7 @@ from clocks._validation import finite_float
 from clocks.types import ClockArray, MassConfig
 
 WEAK_FIELD_LIMIT = 0.1
+_MAX_ABS_POTENTIAL = WEAK_FIELD_LIMIT / 2.0
 
 
 class PhysicsDomainError(ValueError):
@@ -114,7 +115,7 @@ def _validate_potential(potential: NDArray[np.float64]) -> None:
         raise PhysicsDomainError("potential must be finite")
     if np.any(potential > 0.0):
         raise PhysicsDomainError("potential must be nonpositive")
-    if np.any(np.abs(2.0 * potential) > WEAK_FIELD_LIMIT):
+    if np.any(np.abs(potential) > _MAX_ABS_POTENTIAL):
         raise PhysicsDomainError(
             f"weak-field policy requires |2*Phi| <= {WEAK_FIELD_LIMIT}"
         )
@@ -221,7 +222,7 @@ def _point_mass_potential_batch(
         & ~np.any(singular, axis=(1, 2))
         & np.all(np.isfinite(potential), axis=1)
         & np.all(potential <= 0.0, axis=1)
-        & np.all(np.abs(2.0 * potential) <= WEAK_FIELD_LIMIT, axis=1)
+        & np.all(np.abs(potential) <= _MAX_ABS_POTENTIAL, axis=1)
     )
     return potential, valid
 

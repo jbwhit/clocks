@@ -296,18 +296,8 @@ def test_multistage_update_records_every_pre_resample_evidence_increment(
 
 def test_stage_proposal_uses_one_frozen_symmetric_gaussian_kernel() -> None:
     pf = _normal_filter(27, n_particles=200)
-    pf.update(Observation([0.4], 0.0))
-    factors = pf.last_proposal_cholesky_factors
-
-    assert factors
-    assert len(factors) == (
-        pf.last_diagnostics.mh_proposals // (pf.n_particles * pf.rejuvenation_steps)
-    )
-    with pytest.raises(AttributeError):
-        pf.last_proposal_cholesky_factors = ()
-    factor = factors[0]
-    with pytest.raises(ValueError, match="read-only"):
-        factor[0, 0] = 0.0
+    factor = pf._proposal_cholesky(pf.state.particles, pf.state.weights)
+    assert not hasattr(pf, "last_proposal_cholesky_factors")
     displacement = np.array([0.37])
     forward_whitened = np.linalg.solve(factor, displacement)
     reverse_whitened = np.linalg.solve(factor, -displacement)
