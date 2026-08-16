@@ -13,7 +13,10 @@ from clocks.inference import (
     ParticleFilter,
     _reflect_into_bounds,
     _repair_support,
+    _residual_indices,
     _state_collapsed_ess,
+    _stratified_indices,
+    _systematic_indices,
 )
 from clocks.noise import add_clock_noise, log_likelihood_gaussian
 from clocks.physics import clock_rates, clock_rates_batch
@@ -51,6 +54,104 @@ def _make_forward_model(
         return clock_rates_batch(params[:1].reshape(1, 1), params[1:2], clock_array)[0]
 
     return forward
+
+
+class TestResamplingIndices:
+    @pytest.mark.parametrize(
+        "helper", [_systematic_indices, _stratified_indices, _residual_indices]
+    )
+    @pytest.mark.parametrize(
+        "weights",
+        [
+            np.array(1.0),
+            np.array([[0.5, 0.5]]),
+            np.array([]),
+            np.array([0.5, np.nan]),
+            np.array([0.5, np.inf]),
+            np.array([1.1, -0.1]),
+            np.array([0.4, 0.5]),
+            np.array([0.4, 0.600000000002]),
+        ],
+    )
+    def test_rejects_invalid_weights(
+        self,
+        helper: Callable[
+            [NDArray[np.floating], int, np.random.Generator], NDArray[np.intp]
+        ],
+        weights: NDArray[np.floating],
+    ) -> None:
+        with pytest.raises(ValueError):
+            helper(weights, 5, np.random.default_rng(0))
+
+    @pytest.mark.parametrize(
+        "helper", [_systematic_indices, _stratified_indices, _residual_indices]
+    )
+    @pytest.mark.parametrize("n_draws", [True, False, 0, -1, 1.5])
+    def test_rejects_invalid_draw_counts(
+        self,
+        helper: Callable[
+            [NDArray[np.floating], int, np.random.Generator], NDArray[np.intp]
+        ],
+        n_draws: object,
+    ) -> None:
+        with pytest.raises(ValueError):
+            helper(np.array([0.5, 0.5]), n_draws, np.random.default_rng(0))  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "helper", [_systematic_indices, _stratified_indices, _residual_indices]
+    )
+    def test_output_length_dtype_and_bounds(
+        self,
+        helper: Callable[
+            [NDArray[np.floating], int, np.random.Generator], NDArray[np.intp]
+        ],
+    ) -> None:
+        indices = helper(np.array([0.1, 0.2, 0.3, 0.4]), 11, np.random.default_rng(4))
+
+        assert indices.shape == (11,)
+        assert indices.dtype == np.intp
+        assert np.all((0 <= indices) & (indices < 4))
+
+    @pytest.mark.parametrize("helper", [_systematic_indices, _stratified_indices])
+    def test_clips_against_source_length_not_draw_count(
+        self,
+        helper: Callable[
+            [NDArray[np.floating], int, np.random.Generator], NDArray[np.intp]
+        ],
+    ) -> None:
+        indices = helper(
+            np.array([0.1, 0.1, 0.1, 0.1, 0.6]),
+            1,
+            np.random.default_rng(0),
+        )
+
+        np.testing.assert_array_equal(indices, np.array([4], dtype=np.intp))
+
+    def test_residual_regression_selects_second_source_index(self) -> None:
+        weights = np.array([0.20, 0.19, 0.21, 0.20, 0.20])
+
+        indices = _residual_indices(weights, 5, np.random.default_rng(0))
+
+        np.testing.assert_array_equal(indices, np.array([0, 2, 3, 4, 1], dtype=np.intp))
+
+    def test_residual_empirical_frequencies_match_weights(self) -> None:
+        weights = np.array([0.20, 0.19, 0.21, 0.20, 0.20])
+        rng = np.random.default_rng(1234)
+        counts = np.zeros(len(weights), dtype=int)
+
+        for _ in range(2_000):
+            counts += np.bincount(
+                _residual_indices(weights, 5, rng), minlength=len(weights)
+            )
+
+        np.testing.assert_allclose(counts / counts.sum(), weights, atol=0.01)
+
+    def test_residual_zero_remainder_uses_deterministic_copies(self) -> None:
+        indices = _residual_indices(
+            np.array([0.25, 0.5, 0.25]), 4, np.random.default_rng(0)
+        )
+
+        np.testing.assert_array_equal(indices, np.array([0, 1, 1, 2], dtype=np.intp))
 
 
 class TestParticleFilter:

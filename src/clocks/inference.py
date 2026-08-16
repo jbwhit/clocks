@@ -14,6 +14,78 @@ from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
 _JITTER_MODES = {"fixed", "covariance", "annealed"}
+_WEIGHT_SUM_ATOL = 1e-12
+
+
+def _validated_resampling_inputs(
+    weights: NDArray[np.floating], n_draws: int
+) -> tuple[NDArray[np.float64], int]:
+    """Validate resampling inputs and normalize within a 1e-12 tolerance."""
+    weights_array = np.asarray(weights, dtype=float)
+    if weights_array.ndim != 1:
+        raise ValueError("weights must be a 1-D array")
+    if weights_array.size == 0:
+        raise ValueError("weights must be nonempty")
+    if not np.all(np.isfinite(weights_array)):
+        raise ValueError("weights must be finite")
+    if np.any(weights_array < 0):
+        raise ValueError("weights must be nonnegative")
+
+    total = float(weights_array.sum())
+    if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=_WEIGHT_SUM_ATOL):
+        raise ValueError(
+            f"weights must sum to one within {_WEIGHT_SUM_ATOL:g}, got {total}"
+        )
+    if isinstance(n_draws, (bool, np.bool_)) or not isinstance(
+        n_draws, (int, np.integer)
+    ):
+        raise ValueError("n_draws must be a positive integer")
+    if n_draws <= 0:
+        raise ValueError("n_draws must be a positive integer")
+
+    return weights_array / total, int(n_draws)
+
+
+def _systematic_indices(
+    weights: NDArray[np.floating], n_draws: int, rng: np.random.Generator
+) -> NDArray[np.intp]:
+    """Draw source indices using systematic resampling."""
+    weights_array, n_draws = _validated_resampling_inputs(weights, n_draws)
+    cumsum = np.cumsum(weights_array)
+    cumsum[-1] = 1.0
+    positions = (rng.uniform() + np.arange(n_draws)) / n_draws
+    indices = np.searchsorted(cumsum, positions, side="right")
+    return np.clip(indices, 0, len(weights_array) - 1).astype(np.intp)
+
+
+def _stratified_indices(
+    weights: NDArray[np.floating], n_draws: int, rng: np.random.Generator
+) -> NDArray[np.intp]:
+    """Draw source indices using stratified resampling."""
+    weights_array, n_draws = _validated_resampling_inputs(weights, n_draws)
+    cumsum = np.cumsum(weights_array)
+    cumsum[-1] = 1.0
+    positions = (rng.uniform(size=n_draws) + np.arange(n_draws)) / n_draws
+    indices = np.searchsorted(cumsum, positions, side="right")
+    return np.clip(indices, 0, len(weights_array) - 1).astype(np.intp)
+
+
+def _residual_indices(
+    weights: NDArray[np.floating], n_draws: int, rng: np.random.Generator
+) -> NDArray[np.intp]:
+    """Draw source indices using deterministic and systematic residual draws."""
+    weights_array, n_draws = _validated_resampling_inputs(weights, n_draws)
+    expected_counts = n_draws * weights_array
+    counts = np.floor(expected_counts).astype(np.intp)
+    remainder = n_draws - int(counts.sum())
+    deterministic = np.repeat(np.arange(len(weights_array), dtype=np.intp), counts)
+    if remainder == 0:
+        return deterministic.astype(np.intp, copy=False)
+
+    fractional = expected_counts - counts
+    fractional /= fractional.sum()
+    stochastic = _systematic_indices(fractional, remainder, rng)
+    return np.concatenate((deterministic, stochastic)).astype(np.intp, copy=False)
 
 
 def _repair_support(
@@ -316,34 +388,6 @@ class ParticleFilter:
         self._history.append(self._state)
         return self._state
 
-    def _systematic_indices(
-        self, weights: NDArray[np.floating], n: int
-    ) -> NDArray[np.intp]:
-        cumsum = np.cumsum(weights)
-        u = (self.rng.uniform() + np.arange(n)) / n
-        return np.clip(np.searchsorted(cumsum, u), 0, n - 1)
-
-    def _stratified_indices(
-        self, weights: NDArray[np.floating], n: int
-    ) -> NDArray[np.intp]:
-        cumsum = np.cumsum(weights)
-        u = (self.rng.uniform(size=n) + np.arange(n)) / n
-        return np.clip(np.searchsorted(cumsum, u), 0, n - 1)
-
-    def _residual_indices(
-        self, weights: NDArray[np.floating], n: int
-    ) -> NDArray[np.intp]:
-        counts = np.floor(n * weights).astype(int)
-        remainder = n - counts.sum()
-        residual_w = n * weights - counts
-        if remainder > 0:
-            residual_w /= residual_w.sum()
-            extra = self._systematic_indices(residual_w, remainder)
-            indices = np.concatenate([np.repeat(np.arange(n), counts), extra])
-        else:
-            indices = np.repeat(np.arange(n), counts)
-        return indices.astype(np.intp)
-
     def _annealed_std(self, t: float) -> NDArray[np.floating]:
         """Scheduled per-parameter jitter std at 0-based observation index t."""
         decay = np.exp(-t / self.jitter_tau)
@@ -358,11 +402,11 @@ class ParticleFilter:
         n = self.n_particles
 
         if self.resampling == "stratified":
-            indices = self._stratified_indices(weights, n)
+            indices = _stratified_indices(weights, n, self.rng)
         elif self.resampling == "residual":
-            indices = self._residual_indices(weights, n)
+            indices = _residual_indices(weights, n, self.rng)
         else:
-            indices = self._systematic_indices(weights, n)
+            indices = _systematic_indices(weights, n, self.rng)
 
         parents = particles[indices]
         new_particles = parents.copy()
