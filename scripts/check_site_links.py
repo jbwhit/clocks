@@ -37,7 +37,21 @@ SITE_BASE = "https://jbwhit.github.io/clocks/"
 # exist. Historical plans/specifications are intentionally records and are not
 # part of this current-facing prose contract.
 FORBIDDEN_CURRENT_CLAIMS: dict[str, str] = {
-    "jit" + "ter": "tempered SMC replaced uncorrected perturbations",
+    "jit" + "ter_tau": "tempered SMC replaced annealed jitter",
+    "jit" + "ter_std": "tempered SMC replaced annealed jitter",
+    "jit" + "ter_mode": "tempered SMC replaced annealed jitter",
+    "resampling with " + "jitter reduces": "resampling now has an MH correction",
+    "perturbs the clones with " + "jitter": "use invariant MH rejuvenation",
+    "jit" + "ter modes:": "use invariant MH rejuvenation",
+    "annealed (the " + "default)": "adaptive tempered SMC is current",
+    "annealed " + "jitter is now": "adaptive tempered SMC is current",
+    "today's " + "jitter": "adaptive tempered SMC is current",
+    "post-resampling " + "jitter, turning": "MH rejuvenation is implemented",
+    "the demo here uses the annealed " + "default": "use current SMC controls",
+    "covariance " + "jitter is the specialist tool": "use invariant MH moves",
+    "at sampling and again after " + "every": (
+        "MH proposals crossing order are rejected"
+    ),
     "resample_" + "threshold": "ess_target controls adaptive tempering",
     "constraint_" + "fn": "the required prior density defines support",
     "support_" + "bounds": "the required prior density defines support",

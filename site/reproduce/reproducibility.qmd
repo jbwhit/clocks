@@ -47,9 +47,11 @@ population reliability estimate. SMC evidence is similarly a
 consistent Monte Carlo estimator with finite-particle sampling error, not a
 deterministic exact integral.
 
-## Locked dependencies
+## Locked Python dependencies
 
-`uv.lock` is committed; CI enforces it (`--locked` in ci.yml, `--frozen`
-in the site build). The environment that
-rendered this page is the environment the lockfile describes, down to the
-patch version.
+`uv.lock` is committed; CI enforces the Python package resolution with
+`--locked` in `ci.yml` and `--frozen` in the site build. The lock covers
+package versions for its supported Python-version markers. It does **not** pin
+the Python interpreter's patch release or the separately installed Quarto
+binary, so the repository does not claim a fully bit-reproducible rendering
+toolchain.
