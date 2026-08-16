@@ -15,8 +15,8 @@ weights $w_i$. The public point-mass API uses a uniform rectangular prior
 conditioned on every actual support rule:
 
 - positions and masses lie inside the configured `PriorConfig` ranges;
-- multiple masses obey the canonical strict ordering $x_1 < \cdots < x_K$;
-  and
+- multiple masses obey the canonical strict ordering by their first spatial
+  coordinate, $x_{1,1} < \cdots < x_{K,1}$; and
 - every candidate satisfies the project's $|2\Phi| \le 0.1$ weak-field
   policy at every clock.
 
@@ -73,8 +73,10 @@ also resampled if its ESS reaches the configured threshold. Systematic
 Every resampling is followed by `rejuvenation_steps` random-walk
 Metropolis-Hastings steps. For a stage, the code freezes one regularized
 empirical covariance, shared by all particles, and scales it by
-`proposal_scale / sqrt(D)`. The resulting Gaussian proposal is symmetric,
-so for a proposal $\theta'$ the acceptance probability is exactly
+`proposal_scale**2 / D`. Equivalently, its Cholesky factor (the proposal's
+standard-deviation scale) is multiplied by `proposal_scale / sqrt(D)`. The
+resulting Gaussian proposal is symmetric, so for a proposal $\theta'$ the
+acceptance probability is exactly
 
 $$
 \alpha(\theta,\theta') =
@@ -151,10 +153,11 @@ fig
 ::: {.callout-warning title="What the diagnostics can and cannot show"}
 Weight collapse raises `RuntimeError` instead of propagating a NaN. Low MH
 acceptance or many tempering stages can diagnose poor proposal geometry or
-a sharp update, but no single diagnostic proves convergence. Fixed-seed
-development and certification scans are reproducible regression and
-calibration evidence for those particular runs; they are not estimates of
-population reliability.
+a sharp update, but no single diagnostic proves convergence. The corrected
+SMC controls and acceptance tolerances have not yet been frozen on the
+development seeds, and the reserved 400–411 block has not been run. Once
+completed, that fixed-seed protocol will be regression and calibration
+evidence for those particular cases, not a population reliability estimate.
 
 With multiple masses, ordering removes label switching from the represented
 parameterization. Proposals crossing the strict ordering boundary are

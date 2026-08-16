@@ -8,7 +8,11 @@ Three clocks sit on a line; somewhere on a parallel track hides a single
 mass. Two unknowns — position $x$ and mass $M$ — and a stream of noisy tick
 rates. Here is the full search, animated:
 
-![The 1D search. Clockwise from top left: the physical setup; the particle cloud in (x, M) space collapsing onto the truth; the convergence of both estimates with uncertainty bands; the observed tick rates being fed to the filter.](../assets/demo_1d.gif)
+![Legacy 1D search asset showing the setup, particle cloud, parameter traces, and observed tick rates.](../assets/demo_1d.gif)
+
+The committed GIF is a pre-remediation illustration pending Task 11
+regeneration; the executed example below is the current-code evidence on this
+page.
 
 ## Meet the detective
 

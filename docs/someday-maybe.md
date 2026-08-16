@@ -9,11 +9,13 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
   random-walk Metropolis-Hastings move with target-preserving alternatives
   for curved or multimodal posteriors. Any replacement must retain an explicit
   acceptance rule and preserve each tempered target.
-- **Population-level reliability study.** The fixed-seed development and
-  certification scans are regression and calibration evidence, not estimates
-  of reliability over a declared data-generating population. A future study
-  could preregister that population and attach confidence intervals to failure
-  rates.
+- **Population-level reliability study.** The corrected SMC controls and
+  tolerances have not yet been calibrated and frozen on the development seeds,
+  and the reserved 400–411 block has not been run. That pending fixed-seed
+  protocol can provide regression and calibration evidence for its particular
+  cases, not a reliability estimate over a declared population. A later study
+  could preregister such a population and attach confidence intervals to
+  failure rates.
 - **Neural-net amortized inference.** Train a network on simulated
   (clock rates → mass parameters) pairs and compare its speed/accuracy
   against the particle filter.

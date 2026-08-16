@@ -37,39 +37,40 @@ SITE_BASE = "https://jbwhit.github.io/clocks/"
 # exist. Historical plans/specifications are intentionally records and are not
 # part of this current-facing prose contract.
 FORBIDDEN_CURRENT_CLAIMS: dict[str, str] = {
-    "jitter": "tempered SMC replaced uncorrected perturbations",
-    "resample_threshold": "ess_target controls adaptive tempering",
-    "constraint_fn": "the required prior density defines support",
-    "support_bounds": "the required prior density defines support",
-    "mass_range shapes the initial sample only": "mass range is prior support",
-    "perfectly symmetric ring would leave mirror-image": (
+    "jit" + "ter": "tempered SMC replaced uncorrected perturbations",
+    "resample_" + "threshold": "ess_target controls adaptive tempering",
+    "constraint_" + "fn": "the required prior density defines support",
+    "support_" + "bounds": "the required prior density defines support",
+    "mass_range shapes the initial " + "sample only": "mass range is prior support",
+    "perfectly symmetric ring would leave mirror-" + "image": (
         "labeled channels generally distinguish reflected vectors"
     ),
-    "deliberately deep in the relativistic regime": "scenarios are weak-field",
-    "_cli": "demo entry points are packaged beneath clocks._demos",
+    "deliberately deep in the relativistic " + "regime": "scenarios are weak-field",
+    "_" + "cli": "demo entry points are packaged beneath clocks._demos",
 }
 
 
-def _current_prose_files() -> list[Path]:
+def _current_prose_files(root: Path = ROOT) -> list[Path]:
     """Return current-facing source prose, excluding historical records."""
-    files = [README]
+    files = [root / "README.md"]
     files.extend(
         path
-        for path in (ROOT / "docs").rglob("*.md")
-        if not ({"plans", "superpowers"} & set(path.relative_to(ROOT / "docs").parts))
+        for path in (root / "docs").rglob("*.md")
+        if not ({"plans", "superpowers"} & set(path.relative_to(root / "docs").parts))
     )
-    files.extend((ROOT / "site").rglob("*.qmd"))
-    files.extend((ROOT / "src" / "clocks").rglob("*.py"))
+    files.extend((root / "site").rglob("*.qmd"))
+    files.extend((root / "src" / "clocks").rglob("*.py"))
+    files.extend((root / "scripts").rglob("*.py"))
     return sorted(path for path in files if path.is_file())
 
 
-def _prose_claim_failures() -> list[str]:
+def _prose_claim_failures(root: Path = ROOT) -> list[str]:
     failures: list[str] = []
-    for path in _current_prose_files():
+    for path in _current_prose_files(root):
         text = path.read_text(encoding="utf-8")
         for claim, correction in FORBIDDEN_CURRENT_CLAIMS.items():
             if claim.casefold() in text.casefold():
-                relative = path.relative_to(ROOT)
+                relative = path.relative_to(root)
                 failures.append(f"{relative}: {claim!r} ({correction})")
     return failures
 

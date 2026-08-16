@@ -12,6 +12,9 @@ problem gets qualitatively harder, not merely bigger.
 
 ![Two masses in 2D: ten randomly placed clocks, six unknowns.](../assets/demo_multi_mass_2d.gif)
 
+Both committed GIFs are pre-remediation illustrations pending Task 11
+calibration and regeneration; they are not current SMC result evidence.
+
 ## Label switching — an honest limitation
 
 "Mass 1" and "mass 2" are *our* labels; the physics doesn't care. A
@@ -19,7 +22,8 @@ hypothesis with the masses swapped predicts identical clock rates, so the
 true [posterior](../method/notation-and-glossary.qmd#term-posterior) is perfectly bimodal — and the mean of a bimodal cloud lands
 meaninglessly between the modes. The library instead represents the
 normalized ordered version of the exchangeable prior: initial position-mass
-pairs are sorted together so $x_1 < x_2$. During
+pairs are sorted together by the first spatial coordinate (so $x_1 < x_2$ in
+this notation). During
 [rejuvenation](../method/the-particle-filter.qmd#sec-resampling), a proposal
 that crosses that strict boundary is rejected. Sorting proposals after they
 are drawn would obscure the proposal density and is not used.
@@ -70,9 +74,9 @@ plt.close(fig)
 fig
 ```
 
-In the demonstrated run, the filter separates them: five clocks each
-contribute a small disagreement, and 80 noisy observations compound those
-disagreements. No single reading is decisive, and none has to be.
+The five clocks each expose a small rate-profile disagreement between these
+configurations, and repeated independent observations can compound that
+information. No single reading need be decisive.
 
 ::: {.callout-note title="The question behind the question"}
 If two masses can imitate one this well, how would you ever know *how many*

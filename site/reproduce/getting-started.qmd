@@ -39,9 +39,12 @@ The echolocation range study behind the site page:
 uv run scripts/scan_echolocation_range.py --seed-block 0 --workers 8 --per-run
 ```
 
-This runs the declared development grid on seeds 0–11. Reserved
-certification blocks start at 400 and accept only frozen controls; fixed-seed
-scan outcomes are regression/calibration evidence, not population reliability.
+This runs the declared development grid on seeds 0–11. The code locks
+protected blocks starting at 400 to the scenario-default controls and rejects
+command-line overrides. Those defaults and the acceptance tolerances are still
+provisional: they become scientifically frozen only after the Task 11
+development calibration and before the first protected run. The 400–411 block
+has not yet been run.
 
 ## Use the library
 

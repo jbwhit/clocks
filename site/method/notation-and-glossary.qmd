@@ -109,7 +109,8 @@ clock's fractional-frequency instability after averaging for time $\tau$.
   ([How Many Masses?](../story/how-many-masses.qmd)).
 - [**Label switching**]{#term-label-switching} — with several masses the
   exchangeable posterior is symmetric under relabeling; the library
-  represents its normalized strictly x-ordered form
+  represents its normalized form strictly ordered by the first spatial
+  coordinate
   ([Two Hidden Masses](../story/two-hidden-masses.qmd)).
 - [**Observation noise**]{#term-sigma-obs} — the Gaussian noise
   $\sigma_{\text{obs}}$ added to every clock reading; the floor that

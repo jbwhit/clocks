@@ -21,7 +21,13 @@ summed Newtonian potentials and a pedagogical weak-field rate map, a
 [inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
 and a series of increasingly hard detection puzzles.
 
-![A particle filter localizing a hidden mass on a plane from clock rates alone. Clockwise from top left: the physical setup, the cloud of surviving hypotheses, the convergence of the estimates, and the observed tick rates.](assets/demo_2d.gif)
+![Legacy 2D inference asset showing the physical setup, particle cloud, parameter traces, and observed tick rates.](assets/demo_2d.gif)
+
+::: {.callout-warning title="Generated-evidence status"}
+The committed GIFs and PNGs predate the corrected physics and SMC
+implementation. They are illustrations, not evidence for the current code,
+until Task 11 freezes the calibrated controls and regenerates them.
+:::
 
 Here is the whole round trip — simulate noisy clock readings near a hidden
 mass, then recover it:

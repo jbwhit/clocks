@@ -22,6 +22,9 @@ line. The interesting changes are *geometric*:
 
 ![The 2D search: 8 clocks, one hidden mass, three unknowns (x, y, M).](../assets/demo_2d.gif)
 
+The committed GIF is a pre-remediation illustration pending Task 11
+regeneration; the executed example below uses the corrected implementation.
+
 ## The surviving hypotheses
 
 Scaled down and executed on this page, here is what the particle cloud looks like after 25

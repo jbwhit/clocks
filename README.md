@@ -57,6 +57,10 @@ uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
 
 ![2D inference demo](assets/demo_2d.gif)
 
+The committed demo media predates the corrected physics and SMC
+implementation. It remains illustrative only until Task 11 calibrates the new
+controls and regenerates every asset from the frozen configuration.
+
 Most GIF demos animate the physical setup, the particle cloud converging,
 and the estimates' uncertainty; `demo-model-comparison` instead tracks
 the posterior probability over candidate mass counts, and `demo-density`
@@ -68,9 +72,9 @@ echolocation range study behind the site's final page:
 ## Run tests
 
 `uv run pytest` runs the default non-slow suite; run `uv run pytest -m slow`
-for the long fixed-seed acceptance scans. Those scans are regression and
-calibration evidence for their declared seeds, not population reliability
-estimates.
+for long fixed-seed regression cases. Corrected SMC controls and tolerances
+have not yet been calibrated/frozen, and the reserved certification block has
+not been run; fixed-seed outcomes are never population reliability estimates.
 
 ```bash
 uv run pytest

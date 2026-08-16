@@ -14,6 +14,9 @@ identical particle filter on top.
 
 ![The density demo. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
 
+This committed PNG is a pre-remediation illustration pending Task 11
+regeneration; it is not evidence for the corrected SMC run.
+
 ## What spreading the mass does to clocks
 
 ```{python}
@@ -45,12 +48,9 @@ fig
 
 ## A new degeneracy
 
-Look back at the demo figure's left panel: the inferred profile and the
-true one disagree visibly — yet the center panel shows their clock rates
-matching almost perfectly. The center $\mu$ localizes well, but $\sigma$
-and $A$ trade off along a ridge: a wider, weaker profile and a narrower,
-denser one can produce nearly identical potentials at a handful of clock
-positions. This is the same inverse-problem pattern as the
+The model admits a ridge where $\sigma$ and $A$ trade off: a wider, weaker
+profile and a narrower, denser one can produce nearly identical potentials at
+a handful of clock positions. This is the same inverse-problem pattern as the
 [mass–distance degeneracy](one-clock-is-not-enough.qmd): different physical
 profiles map to nearly identical clock-rate data. The
 library's [rejuvenation move](../method/the-particle-filter.qmd#sec-resampling)
