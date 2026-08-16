@@ -7,16 +7,15 @@ title: "Units and Scales"
 The simulation sets $G = c = 1$. One choice of units removes two constants
 from every equation: the potential simplifies to $\Phi = -M/r$ (setting
 $G=1$), and the tick rate simplifies to $\sqrt{1 + 2\Phi}$ (setting
-$c=1$), turning positions, masses, and times into pure dimensionless
-numbers. Nothing physical is lost — only bookkeeping.
+$c=1$), turning positions, masses, and times into dimensionless simulation
+numbers. This unit choice removes bookkeeping; it does not make the model
+itself more exact.
 
-## What M = 0.8 means
+## What M = 0.10 means
 
-In these units a mass $M$ has Schwarzschild radius $r_s = 2M$. The demos
-place clocks within a handful of Schwarzschild radii of the hidden mass —
-*deliberately deep* in the relativistic regime, so that tick-rate
-differences are visible against 0.5% observation noise. The cell below
-computes the actual numbers for the 1D demo's geometry:
+In these units a mass $M$ has length scale $r_s = 2M$. The demos enforce
+$|2\Phi| \le 0.1$ so the pedagogical rate map stays within its declared
+weak-field domain. The cell below computes the 1D demo's geometry:
 
 ```{python}
 #| code-fold: true
@@ -24,7 +23,7 @@ import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
 from clocks.physics import compute_distances
 
-mass = 0.8
+mass = 0.10
 truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([mass]))
 clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
 
@@ -39,17 +38,21 @@ for i, (r, rate) in enumerate(zip(distances, rates)):
     print(f"  clock {i}: r = {r:5.2f}  (r/r_s = {r / r_s:4.2f})  rate = {rate:.4f}")
 ```
 
-Read those `r/r_s` values: this is strong-field territory. A real
-observer at these separations would have larger worries than clock
-calibration. One more honesty note: for several masses we simply sum the
-$-M/r$ potentials, which is itself a weak-field idealization — pushed here
-into the strong field purely to make the signal visible.
+The project treats $\sqrt{1+2\Phi}$, together with summed Newtonian
+potentials $\Phi_i=-\sum_j M_j/r_{ij}$, as a pedagogical weak-field
+surrogate. It is not an exact strong-field solution and the potential sum
+is not a general superposition law of general relativity. Direct physics
+calls reject nonfinite, positive, singular, or overly deep potentials;
+inference assigns candidates outside the same domain zero prior support.
+The conservative operational policy $|2\Phi| \le 0.1$ keeps the model in
+its declared regime rather than merely keeping the square root real.
 
 ## Scaling to reality
 
 At Earth's surface, $2\Phi/c^2 \approx 1.4 \times 10^{-9}$ — the dip the
-demos paint in tens of percent is, for real planetary fields, parts per
-billion.
+demos paint at a few percent is, for real planetary fields, parts per
+billion. Under the enforced policy, the largest possible rate decrease is
+$1-\sqrt{0.9}\approx5.13\%$; the shipped ground truths are shallower.
 Detecting *anomalies* (a buried density contrast, not the whole planet)
 means resolving fractional rate differences around $10^{-18}$ to
 $10^{-17}$, which is exactly why the
@@ -57,9 +60,9 @@ $10^{-17}$, which is exactly why the
 lattice clocks: that is the instrument class where this stops being a toy.
 
 The plain summary: the simulation compresses the dynamic range so the
-inference story is visible to the eye. It does not change the math — the
-forward model, the degeneracies, and the filter are the same at
-$10^{-1}$ and $10^{-18}$; only the noise budget moves.
+inference story is visible to the eye. The qualitative inverse-problem
+geometry carries over to much weaker signals, but this surrogate deliberately
+omits higher-order relativistic physics and real instrument systematics.
 
 ::: {.callout-note title="Convention"}
 Every number on this site is in simulation units unless it is explicitly

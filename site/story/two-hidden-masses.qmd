@@ -12,21 +12,30 @@ problem gets qualitatively harder, not merely bigger.
 
 ![Two masses in 2D: ten randomly placed clocks, six unknowns.](../assets/demo_multi_mass_2d.gif)
 
+Both committed GIFs are current packaged default outputs from the corrected
+SMC implementation. Each depicts one named finite realization, not a
+population recovery rate.
+
 ## Label switching — an honest limitation
 
 "Mass 1" and "mass 2" are *our* labels; the physics doesn't care. A
 hypothesis with the masses swapped predicts identical clock rates, so the
 true [posterior](../method/notation-and-glossary.qmd#term-posterior) is perfectly bimodal — and the mean of a bimodal cloud lands
-meaninglessly between the modes. The library breaks the symmetry by fiat:
-particles are sorted so $x_1 < x_2$ at sampling and again after every
-[resampling jitter](../method/the-particle-filter.qmd#sec-resampling).
+meaninglessly between the modes. The library instead represents the
+normalized ordered version of the exchangeable prior: initial position-mass
+pairs are sorted together by the first spatial coordinate (so $x_1 < x_2$ in
+this notation). During
+[rejuvenation](../method/the-particle-filter.qmd#sec-resampling), a proposal
+that crosses that strict boundary is rejected. Sorting proposals after they
+are drawn would obscure the proposal density and is not used.
 
 What this does **not** solve: when the two masses nearly share an
 x-coordinate, the sort boundary slices right through the posterior, and
-inference quality degrades. This repo felt that concretely — the 1D demo's
+sampling can become difficult. The 1D demo's
 second mass originally sat at $x_2 = 3.0$, exactly on top of a clock and
 close enough to cause trouble, and was moved to $4.5$ to keep the demo
-crisp. Sorting is a pragmatic fix, not a principled one, and we say so.
+crisp. Ordering is an identifiable parameterization, not evidence that the
+physical masses have intrinsic labels.
 
 ## Superposition is the enemy
 
@@ -41,14 +50,14 @@ import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
 
 clock_positions = np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]])
-clock_array = ClockArray(positions=clock_positions, track_offset=1.0)
+clock_array = ClockArray(positions=clock_positions, track_offset=2.0)
 two_masses = MassConfig(
-    positions=np.array([[-2.0], [4.5]]), masses=np.array([0.6, 0.4])
+    positions=np.array([[-2.0], [4.5]]), masses=np.array([0.045, 0.030])
 )
-one_mass = MassConfig(positions=np.array([[0.6]]), masses=np.array([1.0]))
+one_mass = MassConfig(positions=np.array([[0.6]]), masses=np.array([0.075]))
 
 xs = np.linspace(-8, 8, 300).reshape(-1, 1)
-dense = ClockArray(positions=xs, track_offset=1.0)
+dense = ClockArray(positions=xs, track_offset=2.0)
 fig, ax = plt.subplots()
 for config, label, color in [
     (two_masses, "two masses (truth)", "lightcoral"),
@@ -66,10 +75,9 @@ plt.close(fig)
 fig
 ```
 
-The filter still separates them — five clocks each contribute a small
-disagreement, and 80 noisy observations compound those disagreements into
-certainty. That is the entire trick of the method: no single reading is
-decisive, and none has to be.
+The five clocks each expose a small rate-profile disagreement between these
+configurations, and repeated independent observations can compound that
+information. No single reading need be decisive.
 
 ::: {.callout-note title="The question behind the question"}
 If two masses can imitate one this well, how would you ever know *how many*

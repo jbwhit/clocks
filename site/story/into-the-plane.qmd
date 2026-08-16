@@ -9,15 +9,21 @@ potential sums [$-M_j/r_{ij}$](../method/notation-and-glossary.qmd#term-index-co
 the [prior](../method/notation-and-glossary.qmd#term-prior) gains a column when the mass can hide in a plane instead of on a
 line. The interesting changes are *geometric*:
 
-- The eight clocks are scattered **asymmetrically** across the region. A
-  perfectly symmetric ring would leave mirror-image mass positions
-  indistinguishable; asymmetry is free information.
+- The eight clocks are scattered **asymmetrically** across the region.
+  Reflection of a source around a symmetric layout permutes that layout's
+  readings. Because clock channels are labeled, the permuted vector is
+  generally distinguishable from the original; a true degeneracy appears
+  only if channel identity is discarded or the data vector itself respects
+  the permutation. Asymmetry still helps by removing those special cases.
 - The clocks sit at a perpendicular offset (`track_offset=3.0`) from the
   mass plane. Without it, a hypothesis that drifts right on top of a clock
   could explain that clock's reading with an arbitrarily small mass — the
   offset keeps the geometry informative.
 
 ![The 2D search: 8 clocks, one hidden mass, three unknowns (x, y, M).](../assets/demo_2d.gif)
+
+The committed GIF is the current packaged default output from the corrected
+implementation; the executed example below is a separate smaller run.
 
 ## The surviving hypotheses
 
@@ -39,15 +45,16 @@ clock_positions = np.array([
     [5.0, -1.0], [2.0, -4.0], [-1.0, -3.0], [-3.0, -1.5],
 ])
 clock_array = ClockArray(positions=clock_positions, track_offset=3.0)
-truth = MassConfig(positions=np.array([[1.5, -1.0]]), masses=np.array([0.5]))
+truth = MassConfig(positions=np.array([[1.5, -1.0]]), masses=np.array([0.15]))
 sim = simulate(SimulationConfig(
     clock_array=clock_array, ground_truth=truth,
     noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
 ))
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
-    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
-    n_particles=500, n_masses=1, seed=42,
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
+    n_particles=500, n_masses=1,
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 
 particles = result.particle_state.particles

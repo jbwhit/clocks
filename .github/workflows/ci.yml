@@ -24,3 +24,9 @@ jobs:
 
       - name: Test
         run: uv run pytest --tb=short
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Smoke-test installed entry points
+        run: uv run python scripts/check_wheel_entrypoints.py dist/*.whl python3

@@ -3,11 +3,22 @@
 import numpy as np
 import pytest
 
-from clocks.api import build_particle_filter, infer, simulate, simulate_and_infer
+from clocks.api import (
+    _make_log_prior,
+    build_model_comparison,
+    build_particle_filter,
+    infer,
+    simulate,
+    simulate_and_infer,
+)
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
-from clocks.inference import ModelComparison
-from clocks.results import InferenceResult, SimulationResult
-from clocks.types import ClockArray, MassConfig, Observation
+from clocks.results import (
+    HistoryEntry,
+    InferenceResult,
+    ModelComparisonInferenceResult,
+    SimulationResult,
+)
+from clocks.types import ClockArray, MassConfig, Observation, UpdateDiagnostics
 
 
 def _make_clock_array() -> ClockArray:
@@ -20,14 +31,14 @@ def _make_clock_array() -> ClockArray:
 def _make_ground_truth() -> MassConfig:
     return MassConfig(
         positions=np.array([[-2.0], [4.5]]),
-        masses=np.array([0.6, 0.4]),
+        masses=np.array([0.045, 0.030]),
     )
 
 
 def _make_model_comparison_ground_truth() -> MassConfig:
     return MassConfig(
         positions=np.array([[-2.0], [3.0]]),
-        masses=np.array([0.6, 0.4]),
+        masses=np.array([0.045, 0.030]),
     )
 
 
@@ -36,7 +47,82 @@ def _make_noise() -> NoiseConfig:
 
 
 def _make_prior() -> PriorConfig:
-    return PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0))
+    return PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15))
+
+
+def test_fixed_k_initial_particles_use_the_actual_conditional_prior() -> None:
+    config = InferenceConfig(
+        clock_array=_make_clock_array(),
+        noise=_make_noise(),
+        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.04)),
+        n_particles=500,
+        n_masses=2,
+        seed=12,
+    )
+    particle_filter = build_particle_filter(config)
+    log_prior = _make_log_prior(config, n_masses=2, n_dims=1)
+
+    assert np.all(np.isfinite(log_prior(particle_filter.state.particles)))
+    masses = particle_filter.state.particles[:, 2:]
+    assert np.all(masses >= 0.005)
+    assert np.all(masses <= 0.04)
+    assert np.all(
+        particle_filter.state.particles[:, 0] < particle_filter.state.particles[:, 1]
+    )
+    assert particle_filter.log_prior_density is not None
+
+
+def test_fixed_k_particles_remain_in_conditional_support_after_updates() -> None:
+    config = InferenceConfig(
+        clock_array=_make_clock_array(),
+        noise=NoiseConfig(observation_std=1e-4),
+        prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.04)),
+        n_particles=400,
+        n_masses=2,
+        proposal_scale=5.0,
+        seed=13,
+    )
+    particle_filter = build_particle_filter(config)
+    log_prior = _make_log_prior(config, n_masses=2, n_dims=1)
+    observation = Observation(np.full(5, 0.99), time=0.0)
+
+    particle_filter.update(observation)
+
+    assert np.all(np.isfinite(log_prior(particle_filter.state.particles)))
+
+
+def test_impossible_conditional_prior_fails_clearly() -> None:
+    config = InferenceConfig(
+        clock_array=ClockArray(np.array([[0.0]]), track_offset=1.0),
+        noise=_make_noise(),
+        prior=PriorConfig(position_range=(-0.001, 0.001), mass_range=(0.06, 0.07)),
+        n_particles=8,
+        n_masses=1,
+        seed=14,
+    )
+
+    with pytest.raises(ValueError, match="conditional prior.*weak-field"):
+        build_particle_filter(config)
+
+
+def test_model_comparison_initial_particles_use_true_support() -> None:
+    comparison = build_model_comparison(
+        InferenceConfig(
+            clock_array=_make_clock_array(),
+            noise=_make_noise(),
+            prior=PriorConfig((-8.0, 8.0), (0.005, 0.04)),
+            n_particles=150,
+            n_masses=(1, 2, 3),
+            seed=15,
+        )
+    )
+
+    for particle_filter in comparison.filters.values():
+        assert np.all(
+            np.isfinite(
+                particle_filter.log_prior_density(particle_filter.state.particles)
+            )
+        )
 
 
 def _make_simulation_config(
@@ -57,6 +143,9 @@ def _make_inference_config(
     n_masses: int | tuple[int, ...] = 2,
     n_particles: int = 400,
     seed: int = 42,
+    proposal_scale: float = 2.38,
+    rejuvenation_steps: int = 2,
+    ess_target: float = 0.8,
 ) -> InferenceConfig:
     return InferenceConfig(
         clock_array=_make_clock_array(),
@@ -64,7 +153,9 @@ def _make_inference_config(
         prior=_make_prior(),
         n_particles=n_particles,
         n_masses=n_masses,
-        jitter_std=0.02,
+        proposal_scale=proposal_scale,
+        rejuvenation_steps=rejuvenation_steps,
+        ess_target=ess_target,
         seed=seed,
     )
 
@@ -81,7 +172,7 @@ def test_simulation_result_exposes_ground_truth() -> None:
         seed=42,
     )
 
-    np.testing.assert_allclose(result.ground_truth.masses, [0.6, 0.4])
+    np.testing.assert_allclose(result.ground_truth.masses, [0.045, 0.030])
     assert result.clock_array.positions.shape == (5, 1)
 
 
@@ -110,9 +201,104 @@ def test_simulation_result_to_dict_serializes_arrays() -> None:
 
     payload = result.to_dict()
 
-    assert payload["ground_truth"]["masses"] == [0.6, 0.4]
+    assert payload["ground_truth"]["masses"] == [0.045, 0.03]
     assert payload["clock_array"]["positions"][0] == [-6.0]
     assert payload["observations"][0]["rates"][2] == 0.96
+
+
+def test_simulation_result_is_a_deeply_immutable_snapshot() -> None:
+    rates = np.array([0.98])
+    observations = [Observation([0.98], 0.0)]
+    result = SimulationResult(
+        clock_array=ClockArray([[0.0]], track_offset=1.0),
+        ground_truth=MassConfig([[1.0]], [0.01]),
+        true_rates=rates,
+        observations=observations,
+        noise=_make_noise(),
+    )
+    rates[0] = 0.5
+    observations.clear()
+
+    np.testing.assert_array_equal(result.true_rates, [0.98])
+    assert len(result.observations) == 1
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        result.true_rates.setflags(write=True)
+    with pytest.raises(AttributeError):
+        result.observations.append(Observation([0.5], 1.0))  # type: ignore[attr-defined]
+
+
+def _history_entry() -> HistoryEntry:
+    return HistoryEntry(
+        mean=np.array([0.1]),
+        std=np.array([0.2]),
+        ess=10.0,
+        observations_seen=1,
+        log_evidence=-0.3,
+        diagnostics=UpdateDiagnostics(1, 2, 1),
+    )
+
+
+def test_history_entry_arrays_are_deeply_immutable() -> None:
+    mean = np.array([0.1])
+    std = np.array([0.2])
+    entry = HistoryEntry(mean, std, 10.0, 1, -0.3, UpdateDiagnostics())
+    mean[0] = 9.0
+    std[0] = 9.0
+
+    np.testing.assert_array_equal(entry.mean, [0.1])
+    np.testing.assert_array_equal(entry.std, [0.2])
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        entry.mean.setflags(write=True)
+
+
+def test_inference_result_and_with_simulation_do_not_alias_mutable_inputs() -> None:
+    mean = np.array([0.1])
+    std = np.array([0.2])
+    history = [_history_entry()]
+    result = InferenceResult(mean, std, 10.0, -0.3, history)
+    simulation = SimulationResult(
+        ClockArray([[0.0]], track_offset=1.0),
+        MassConfig([[1.0]], [0.01]),
+        np.array([0.98]),
+        [Observation([0.98], 0.0)],
+        _make_noise(),
+    )
+    enriched = result.with_simulation(simulation)
+    mean[0] = 9.0
+    std[0] = 9.0
+    history.clear()
+
+    np.testing.assert_array_equal(result.posterior_mean, [0.1])
+    np.testing.assert_array_equal(enriched.posterior_std, [0.2])
+    assert len(result.history) == len(enriched.history) == 1
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        result.posterior_mean.setflags(write=True)
+    with pytest.raises(AttributeError):
+        enriched.history.append(_history_entry())  # type: ignore[attr-defined]
+
+
+def test_model_comparison_result_snapshots_nested_mappings_and_history() -> None:
+    nested = InferenceResult(np.array([0.1]), np.array([0.2]), 10.0, -0.3, [])
+    posterior = {1: 0.75, 2: 0.25}
+    evidence = {1: -0.3, 2: -1.4}
+    by_model = {1: nested, 2: nested}
+    history = [{1: 0.6, 2: 0.4}]
+    result = ModelComparisonInferenceResult(posterior, evidence, 1, by_model, history)
+    posterior[1] = 0.0
+    evidence.clear()
+    by_model.clear()
+    history[0][1] = 0.0
+    history.clear()
+
+    assert result.posterior_by_model == {1: 0.75, 2: 0.25}
+    assert result.log_evidence_by_model == {1: -0.3, 2: -1.4}
+    assert set(result.result_by_model) == {1, 2}
+    assert result.history[0] == {1: 0.6, 2: 0.4}
+    with pytest.raises(TypeError):
+        result.posterior_by_model[1] = 0.0  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.history[0][1] = 0.0  # type: ignore[index]
+    assert result.to_dict()["posterior_by_model"] == {1: 0.75, 2: 0.25}
 
 
 def test_simulate_returns_observations_and_ground_truth() -> None:
@@ -195,7 +381,7 @@ def test_inference_result_to_dict_includes_particle_state_and_simulation() -> No
 
     assert "particle_state" in payload
     assert payload["particle_state"]["observations_seen"] == 6
-    assert payload["simulation"]["ground_truth"]["masses"] == [0.6, 0.4]
+    assert payload["simulation"]["ground_truth"]["masses"] == [0.045, 0.03]
 
 
 def test_model_comparison_result_to_dict_includes_nested_results() -> None:
@@ -220,9 +406,31 @@ def test_noise_config_rejects_nonpositive_std() -> None:
         NoiseConfig(observation_std=0.0)
 
 
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_noise_config_rejects_nonfinite_std(value: float) -> None:
+    with pytest.raises(ValueError, match="observation_std must be finite"):
+        NoiseConfig(observation_std=value)
+
+
 def test_prior_config_rejects_invalid_position_range() -> None:
     with pytest.raises(ValueError, match="position_range must be increasing"):
         PriorConfig(position_range=(2.0, -2.0), mass_range=(0.1, 2.0))
+
+
+@pytest.mark.parametrize(
+    ("position_range", "mass_range"),
+    [
+        ((-np.inf, 1.0), (0.1, 2.0)),
+        ((-1.0, np.inf), (0.1, 2.0)),
+        ((-1.0, 1.0), (np.nan, 2.0)),
+        ((-1.0, 1.0), (0.1, np.inf)),
+    ],
+)
+def test_prior_config_rejects_nonfinite_endpoints(
+    position_range: tuple[float, float], mass_range: tuple[float, float]
+) -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        PriorConfig(position_range=position_range, mass_range=mass_range)
 
 
 def test_inference_config_rejects_nonpositive_n_masses() -> None:
@@ -247,6 +455,48 @@ def test_inference_config_rejects_empty_candidate_models() -> None:
         )
 
 
+@pytest.mark.parametrize("field", ["n_particles", "n_masses"])
+def test_inference_config_rejects_bool_counts(field: str) -> None:
+    kwargs = {field: True}
+    with pytest.raises(ValueError, match=field):
+        _make_inference_config(**kwargs)
+
+
+@pytest.mark.parametrize("n_masses", [(1, True), (1, 2.5)])
+def test_inference_config_rejects_noninteger_model_counts(n_masses: tuple) -> None:
+    with pytest.raises(ValueError, match="n_masses"):
+        _make_inference_config(n_masses=n_masses)
+
+
+@pytest.mark.parametrize("seed", [True, 1.5, "1"])
+def test_inference_config_rejects_invalid_seed(seed: object) -> None:
+    with pytest.raises(ValueError, match="seed"):
+        _make_inference_config(seed=seed)
+
+
+@pytest.mark.parametrize("field", ["ess_target", "proposal_scale"])
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_inference_config_rejects_nonfinite_numeric_controls(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        _make_inference_config(**{field: value})
+
+
+@pytest.mark.parametrize("n_observations", [True, 1.5])
+def test_simulation_config_rejects_noninteger_observation_count(
+    n_observations: object,
+) -> None:
+    with pytest.raises(ValueError, match="n_observations"):
+        _make_simulation_config(n_observations=n_observations)
+
+
+@pytest.mark.parametrize("seed", [True, 1.5, "1"])
+def test_simulation_config_rejects_invalid_seed(seed: object) -> None:
+    with pytest.raises(ValueError, match="seed"):
+        _make_simulation_config(seed=seed)
+
+
 def test_public_api_is_exported_from_package() -> None:
     import clocks
 
@@ -255,40 +505,6 @@ def test_public_api_is_exported_from_package() -> None:
     assert clocks.simulate is not None
     assert clocks.simulate_and_infer is not None
     assert clocks.SimulationConfig is not None
-
-
-class TestAnnealedDefaultsAPI:
-    def _config(self, **kwargs: object) -> InferenceConfig:
-        ca = ClockArray(
-            positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
-        )
-        defaults: dict = dict(
-            clock_array=ca,
-            noise=NoiseConfig(observation_std=0.01),
-            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
-            n_particles=100,
-            n_masses=1,
-        )
-        defaults.update(kwargs)
-        return InferenceConfig(**defaults)
-
-    def test_inference_config_default_jitter_is_annealed(self) -> None:
-        assert self._config().jitter == "annealed"
-
-    def test_jitter_tau_plumbs_through_build(self) -> None:
-        pf = build_particle_filter(self._config(jitter_tau=7.0))
-        assert pf.jitter_tau == 7.0
-        assert pf.jitter == "annealed"
-
-    @pytest.mark.parametrize("bad_tau", [0.0, -1.0, float("nan"), float("inf")])
-    def test_invalid_jitter_tau_raises(self, bad_tau: float) -> None:
-        with pytest.raises(ValueError, match="jitter_tau"):
-            self._config(jitter_tau=bad_tau)
-
-    @pytest.mark.parametrize("bad_std", [-0.1, float("nan"), float("inf")])
-    def test_invalid_jitter_std_raises(self, bad_std: float) -> None:
-        with pytest.raises(ValueError, match="jitter_std"):
-            self._config(jitter_std=bad_std)
 
 
 class TestDefaultFlipRecovery:
@@ -301,7 +517,7 @@ class TestDefaultFlipRecovery:
     def test_single_mass_2d_recovery(self) -> None:
         rng = np.random.default_rng(3)
         ca = ClockArray(positions=rng.uniform(-5.0, 5.0, (8, 2)), track_offset=3.0)
-        truth = MassConfig(positions=np.array([[1.5, -2.0]]), masses=np.array([0.5]))
+        truth = MassConfig(positions=np.array([[1.5, -2.0]]), masses=np.array([0.15]))
         sim = simulate(
             SimulationConfig(
                 clock_array=ca,
@@ -316,13 +532,13 @@ class TestDefaultFlipRecovery:
             InferenceConfig(
                 clock_array=ca,
                 noise=NoiseConfig(observation_std=0.005),
-                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
                 n_particles=2000,
                 n_masses=1,
                 seed=3,
             ),
         )
-        error = np.abs(result.posterior_mean - np.array([1.5, -2.0, 0.5]))
+        error = np.abs(result.posterior_mean - np.array([1.5, -2.0, 0.15]))
         assert np.all(error <= np.array([0.5, 0.5, 0.1]))
 
     def test_multi_mass_1d_recovery(self) -> None:
@@ -331,7 +547,7 @@ class TestDefaultFlipRecovery:
             track_offset=3.0,
         )
         truth = MassConfig(
-            positions=np.array([[-3.0], [4.5]]), masses=np.array([0.6, 0.4])
+            positions=np.array([[-3.0], [4.5]]), masses=np.array([0.045, 0.030])
         )
         sim = simulate(
             SimulationConfig(
@@ -347,19 +563,19 @@ class TestDefaultFlipRecovery:
             InferenceConfig(
                 clock_array=ca,
                 noise=NoiseConfig(observation_std=0.005),
-                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
                 n_particles=4000,
                 n_masses=2,
                 seed=5,
             ),
         )
-        truth_vec = np.array([-3.0, 4.5, 0.6, 0.4])
+        truth_vec = np.array([-3.0, 4.5, 0.045, 0.030])
         error = np.abs(result.posterior_mean - truth_vec)
         assert np.all(error <= np.array([0.5, 0.5, 0.1, 0.1]))
 
 
-class TestSupportBoundsPlumbing:
-    def test_build_particle_filter_constructs_bounds(self) -> None:
+class TestConditionalSupportPlumbing:
+    def test_build_particle_filter_uses_reject_and_stay(self) -> None:
         ca = ClockArray(
             positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
         )
@@ -367,18 +583,14 @@ class TestSupportBoundsPlumbing:
             InferenceConfig(
                 clock_array=ca,
                 noise=NoiseConfig(observation_std=0.01),
-                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
                 n_particles=50,
                 n_masses=2,
             )
         )
-        lower, upper = pf.support_bounds
-        # 2 masses x 1 dim -> params [x1, x2, M1, M2]
-        assert np.allclose(lower[:2], -8.0) and np.allclose(upper[:2], 8.0)
-        assert np.all(lower[2:] > 0.0) and np.all(lower[2:] < 1e-100)
-        assert np.all(np.isinf(upper[2:]))
+        assert np.all(np.isfinite(pf.log_prior_density(pf.state.particles)))
 
-    def test_model_comparison_filters_get_bounds(self) -> None:
+    def test_model_comparison_filters_get_conditional_support(self) -> None:
         ca = ClockArray(
             positions=np.linspace(-5, 5, 6).reshape(-1, 1), track_offset=3.0
         )
@@ -387,28 +599,28 @@ class TestSupportBoundsPlumbing:
             InferenceConfig(
                 clock_array=ca,
                 noise=NoiseConfig(observation_std=0.01),
-                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
+                prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
                 n_particles=50,
                 n_masses=(1, 2),
             ),
         )
         assert result.best_model in (1, 2)
 
-        # Assert that ModelComparison-constructed filters carry support_bounds.
-        mc = ModelComparison(clock_array=ca, noise_std=0.01, k_max=2)
-        n_dims = ca.positions.shape[1]  # 1 for this test
-        for k in mc.filters:
-            assert mc.filters[k].support_bounds is not None
-            lower, upper = mc.filters[k].support_bounds
-            # For filter k, params are [positions (k*n_dims), masses (k)].
-            position_end = k * n_dims
-            # Position bounds: lower and upper should be -8.0 and 8.0 respectively.
-            assert np.allclose(lower[:position_end], -8.0)
-            assert np.allclose(upper[:position_end], 8.0)
-            # Mass bounds: lower should be > 0 and finite, upper should be +inf.
-            assert np.all(lower[position_end:] > 0.0)
-            assert np.all(np.isfinite(lower[position_end:]))
-            assert np.all(np.isinf(upper[position_end:]))
+        mc = build_model_comparison(
+            InferenceConfig(
+                clock_array=ca,
+                noise=NoiseConfig(0.01),
+                prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
+                n_particles=50,
+                n_masses=(1, 2),
+            )
+        )
+        for particle_filter in mc.filters.values():
+            assert np.all(
+                np.isfinite(
+                    particle_filter.log_prior_density(particle_filter.state.particles)
+                )
+            )
 
 
 class TestInference3D:
@@ -419,7 +631,7 @@ class TestInference3D:
             positions=rng.uniform(-3, 3, size=(12, 3)), track_offset=0.0
         )
         truth = MassConfig(
-            positions=np.array([[1.0, -1.5, 0.5]]), masses=np.array([0.5])
+            positions=np.array([[1.0, -1.5, 0.5]]), masses=np.array([0.05])
         )
         sim = simulate(
             SimulationConfig(
@@ -435,12 +647,12 @@ class TestInference3D:
             InferenceConfig(
                 clock_array=clock_array,
                 noise=NoiseConfig(observation_std=0.005),
-                prior=PriorConfig(position_range=(-5.0, 5.0), mass_range=(0.1, 2.0)),
+                prior=PriorConfig(position_range=(-5.0, 5.0), mass_range=(0.005, 0.15)),
                 n_particles=2000,
                 n_masses=1,
                 seed=3,
             ),
         )
         assert isinstance(result, InferenceResult)
-        expected = np.array([1.0, -1.5, 0.5, 0.5])
+        expected = np.array([1.0, -1.5, 0.5, 0.05])
         assert np.all(np.abs(result.posterior_mean - expected) < 0.5)

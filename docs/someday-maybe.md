@@ -5,21 +5,17 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
 
 ## Inference
 
-- **MCMC rejuvenation step.** Add a Metropolis-Hastings accept/reject after
-  the post-resampling jitter, turning the filter into a rigorous SMC sampler
-  that exactly preserves the posterior. Today's jitter slightly distorts it.
-- **Adaptive or annealed jitter.** Shipped 2026-07-03 — spec
-  `docs/superpowers/specs/2026-07-02-annealed-jitter-design.md` (amended
-  per `docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md`).
-  Harness: `scripts/scan_multi_mass_2d.py`; acceptance test:
-  `tests/test_acceptance_multi_mass_2d.py` (slow marker, run via
-  `uv run pytest -m slow`). Shipped defaults: `jitter_tau=15.0`
-  (library default, all inference entry points), demo/runner floor
-  `jitter_std=0.02`, mode `"annealed"`. Measured: post-reflection
-  fixed-jitter baseline at the shipped floor recovered only 1/12 tuning
-  seeds (0.02 → 1/12, 0.05 → 4/12, 0.10 → 7/12); annealed jitter
-  (tau=15, floor=0.02) recovered 12/12 tuning seeds (0-11) and 11/12 on
-  a fresh certification holdout (seeds 200-211, run exactly once).
+- **Richer invariant proposals.** Compare the current symmetric Gaussian
+  random-walk Metropolis-Hastings move with target-preserving alternatives
+  for curved or multimodal posteriors. Any replacement must retain an explicit
+  acceptance rule and preserve each tempered target.
+- **Population-level reliability study.** The corrected SMC controls and
+  tolerances are frozen from the development seeds, and the reserved 400–411
+  block has now been run exactly once. The protected results provide regression
+  and calibration evidence for those particular
+  cases, not a reliability estimate over a declared population. A later study
+  could preregister such a population and attach confidence intervals to
+  failure rates.
 - **Neural-net amortized inference.** Train a network on simulated
   (clock rates → mass parameters) pairs and compare its speed/accuracy
   against the particle filter.

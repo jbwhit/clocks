@@ -16,12 +16,18 @@ region of space, watch which ones run slow, and you can infer where the
 hidden mass is and how heavy it is, a gravity detector built from nothing
 but timekeeping. This site builds that detector: a
 [forward model](method/notation-and-glossary.qmd#term-forward-model) from
-general relativity, a
+summed Newtonian potentials and a pedagogical weak-field rate map, a
 [particle filter](method/the-particle-filter.qmd#sec-intro) for the
 [inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
 and a series of increasingly hard detection puzzles.
 
-![A particle filter localizing a hidden mass on a plane from clock rates alone. Clockwise from top left: the physical setup, the cloud of surviving hypotheses, the convergence of the estimates, and the observed tick rates.](assets/demo_2d.gif)
+![Current 2D inference demo showing the physical setup, particle cloud, parameter traces, and observed tick rates.](assets/demo_2d.gif)
+
+::: {.callout-note title="Generated-evidence status"}
+The committed GIFs and PNGs were regenerated from the corrected physics and
+SMC implementation after one-shot certification. They show named finite runs;
+they do not establish population reliability or universal recovery rates.
+:::
 
 Here is the whole round trip — simulate noisy clock readings near a hidden
 mass, then recover it:
@@ -35,20 +41,21 @@ from clocks import (
 )
 
 clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
-truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.8]))
+truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.10]))
 sim = simulate(SimulationConfig(
     clock_array=clock_array, ground_truth=truth,
     noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
 ))
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
-    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
-    n_particles=400, n_masses=1, seed=42,
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
+    n_particles=400, n_masses=1,
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 x, m = result.posterior_mean
 sx, sm = result.posterior_std
 print(f"Hidden mass: x = {x:.2f} ± {sx:.2f} (true 2.5)")
-print(f"             M = {m:.2f} ± {sm:.2f} (true 0.8)")
+print(f"             M = {m:.2f} ± {sm:.2f} (true 0.10)")
 ```
 
 ## Read the idea in eight pages

@@ -16,8 +16,8 @@ import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
 
 clock = ClockArray(positions=np.array([[0.0]]))
-near_light = MassConfig(positions=np.array([[2.0]]), masses=np.array([0.4]))
-far_heavy = MassConfig(positions=np.array([[4.0]]), masses=np.array([0.8]))
+near_light = MassConfig(positions=np.array([[2.0]]), masses=np.array([0.04]))
+far_heavy = MassConfig(positions=np.array([[4.0]]), masses=np.array([0.08]))
 print(f"near light mass: rate = {clock_rates(near_light, clock)[0]:.6f}")
 print(f"far heavy mass:  rate = {clock_rates(far_heavy, clock)[0]:.6f}")
 ```
@@ -43,11 +43,11 @@ perpendicular offset (`track_offset=1.0`) from the line the mass lives on
 import matplotlib.pyplot as plt
 
 positions = np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]])
-array5 = ClockArray(positions=positions, track_offset=1.0)
+array5 = ClockArray(positions=positions, track_offset=2.0)
 fig, ax = plt.subplots()
 for config, label, color in [
-    (near_light, "near light mass (x=2, M=0.4)", "steelblue"),
-    (far_heavy, "far heavy mass (x=4, M=0.8)", "lightcoral"),
+    (near_light, "near light mass (x=2, M=0.04)", "steelblue"),
+    (far_heavy, "far heavy mass (x=4, M=0.08)", "lightcoral"),
 ]:
     ax.plot(
         positions[:, 0], clock_rates(config, array5), "o-",

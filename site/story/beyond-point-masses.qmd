@@ -14,6 +14,9 @@ identical particle filter on top.
 
 ![The density demo. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
 
+This committed PNG is the current packaged default output from the corrected
+SMC implementation.
+
 ## What spreading the mass does to clocks
 
 ```{python}
@@ -25,7 +28,7 @@ from clocks import ClockArray, MassConfig, clock_rates, clock_rates_density_gaus
 
 xs = np.linspace(-8, 8, 200).reshape(-1, 1)
 dense = ClockArray(positions=xs, track_offset=1.0)
-total_mass = 0.8
+total_mass = 0.02
 
 fig, ax = plt.subplots()
 point = MassConfig(positions=np.array([[1.5]]), masses=np.array([total_mass]))
@@ -45,25 +48,23 @@ fig
 
 ## A new degeneracy
 
-Look back at the demo figure's left panel: the inferred profile and the
-true one disagree visibly — yet the center panel shows their clock rates
-matching almost perfectly. The center $\mu$ localizes well, but $\sigma$
-and $A$ trade off along a ridge: a wider, weaker profile and a narrower,
-denser one can produce nearly identical potentials at a handful of clock
-positions. This is the same inverse-problem pattern as the
+The model admits a ridge where $\sigma$ and $A$ trade off: a wider, weaker
+profile and a narrower, denser one can produce nearly identical potentials at
+a handful of clock positions. This is the same inverse-problem pattern as the
 [mass–distance degeneracy](one-clock-is-not-enough.qmd): different physical
 profiles map to nearly identical clock-rate data. The
-library's [covariance-shaped jitter mode](../method/the-particle-filter.qmd#sec-resampling) exists for exactly this kind of
-correlated posterior — it lets the particle cloud slide *along* the ridge
-instead of scattering off it (the demo here uses the annealed default;
-covariance jitter is the specialist tool when the ridge is the whole
-story).
+library's [rejuvenation move](../method/the-particle-filter.qmd#sec-resampling)
+uses a regularized empirical covariance to propose steps along correlated
+directions. Crucially, Metropolis-Hastings accepts or rejects those symmetric
+proposals against the current tempered target; covariance geometry improves
+mixing without redefining the posterior. The density demo samples a uniform
+box in $(\mu,\sigma,A)$ conditioned on that box and weak-field validity, and
+uses the same support for its prior density.
 
 ::: {.callout-note title="Where this could go"}
 The repo's [someday-maybe list](https://github.com/jbwhit/clocks/blob/main/docs/someday-maybe.md)
 sketches the next steps: a special-relativity velocity term so SR and GR
-compete the way they do for real GPS satellites, an MCMC rejuvenation step
-to make the filter exactly posterior-preserving, and an in-browser
+compete the way they do for real GPS satellites, and an in-browser
 interactive version — the inference engine is pure numpy/scipy, which
 Pyodide already supports. First, though, one last question:
 [could you *feel* gravity?](gravitational-echolocation.qmd)

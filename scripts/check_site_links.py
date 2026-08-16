@@ -33,6 +33,62 @@ OUTPUT = ROOT / "site" / "_output"
 README = ROOT / "README.md"
 SITE_BASE = "https://jbwhit.github.io/clocks/"
 
+# These strings describe interfaces or mathematical claims that no longer
+# exist. Historical plans/specifications are intentionally records and are not
+# part of this current-facing prose contract.
+FORBIDDEN_CURRENT_CLAIMS: dict[str, str] = {
+    "jit" + "ter_tau": "tempered SMC replaced annealed jitter",
+    "jit" + "ter_std": "tempered SMC replaced annealed jitter",
+    "jit" + "ter_mode": "tempered SMC replaced annealed jitter",
+    "resampling with " + "jitter reduces": "resampling now has an MH correction",
+    "perturbs the clones with " + "jitter": "use invariant MH rejuvenation",
+    "jit" + "ter modes:": "use invariant MH rejuvenation",
+    "annealed (the " + "default)": "adaptive tempered SMC is current",
+    "annealed " + "jitter is now": "adaptive tempered SMC is current",
+    "today's " + "jitter": "adaptive tempered SMC is current",
+    "post-resampling " + "jitter, turning": "MH rejuvenation is implemented",
+    "the demo here uses the annealed " + "default": "use current SMC controls",
+    "covariance " + "jitter is the specialist tool": "use invariant MH moves",
+    "at sampling and again after " + "every": (
+        "MH proposals crossing order are rejected"
+    ),
+    "resample_" + "threshold": "ess_target controls adaptive tempering",
+    "constraint_" + "fn": "the required prior density defines support",
+    "support_" + "bounds": "the required prior density defines support",
+    "mass_range shapes the initial " + "sample only": "mass range is prior support",
+    "perfectly symmetric ring would leave mirror-" + "image": (
+        "labeled channels generally distinguish reflected vectors"
+    ),
+    "deliberately deep in the relativistic " + "regime": "scenarios are weak-field",
+    "_" + "cli": "demo entry points are packaged beneath clocks._demos",
+}
+
+
+def _current_prose_files(root: Path = ROOT) -> list[Path]:
+    """Return current-facing source prose, excluding historical records."""
+    files = [root / "README.md"]
+    files.extend(
+        path
+        for path in (root / "docs").rglob("*.md")
+        if not ({"plans", "superpowers"} & set(path.relative_to(root / "docs").parts))
+    )
+    files.extend((root / "site").rglob("*.qmd"))
+    files.extend((root / "src" / "clocks").rglob("*.py"))
+    files.extend((root / "scripts").rglob("*.py"))
+    return sorted(path for path in files if path.is_file())
+
+
+def _prose_claim_failures(root: Path = ROOT) -> list[str]:
+    failures: list[str] = []
+    for path in _current_prose_files(root):
+        text = path.read_text(encoding="utf-8")
+        for claim, correction in FORBIDDEN_CURRENT_CLAIMS.items():
+            if claim.casefold() in text.casefold():
+                relative = path.relative_to(root)
+                failures.append(f"{relative}: {claim!r} ({correction})")
+    return failures
+
+
 # (scope, source, target, fragment) — source/target are html paths
 # relative to site/_output; source may also be "README.md". scope is
 # "content", "sidebar", or "readme:<heading>" (README rows are scoped to
@@ -370,6 +426,7 @@ def _source_links(scope: str, source: str) -> set[tuple[str, str | None]] | None
 
 
 def main() -> int:
+    prose_failures = _prose_claim_failures()
     failures: list[str] = []
     for scope, source, target, fragment in CONTRACT:
         label = f"[{scope}] {source} -> {target}" + (f"#{fragment}" if fragment else "")
@@ -387,11 +444,21 @@ def main() -> int:
         # is NOT satisfied by a #fragment link to the same page.
         if (target, fragment) not in links:
             failures.append(f"{label}: no source link found")
+    if prose_failures:
+        print("Current-prose contract failures:", file=sys.stderr)
+        for failure in prose_failures:
+            print(f"  {failure}", file=sys.stderr)
     if failures:
         print("Link contract failures:", file=sys.stderr)
         for failure in failures:
             print(f"  {failure}", file=sys.stderr)
+    if prose_failures or failures:
         return 1
+    print(
+        "Current-prose contract OK: "
+        f"{len(_current_prose_files())} files, "
+        f"{len(FORBIDDEN_CURRENT_CLAIMS)} stale claims checked."
+    )
     print(f"Link contract OK: {len(CONTRACT)} rows checked.")
     return 0
 

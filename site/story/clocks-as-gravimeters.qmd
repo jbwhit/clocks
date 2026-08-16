@@ -11,13 +11,13 @@ from general relativity: a clock sitting at Newtonian potential $\Phi$
 
 $$\frac{d\tau}{dt} = \sqrt{1 + \frac{2\Phi}{c^2}}$$
 
-relative to a clock far from everything. The factor comes from the
-weak-field metric's time–time component; for a single spherical mass it
-reduces to the Schwarzschild result. We will not derive it here, just use it
-relentlessly. Deeper in a gravitational well, $\Phi$ is
-more negative, the square root is smaller, and the clock ticks slower. No
-exotic conditions required — it is true of every clock, everywhere, all the
-time.
+relative to a clock far from everything. This is the rate map used by the
+site's pedagogical weak-field surrogate. For an isolated static spherical
+source it agrees with the Schwarzschild time-time factor when
+$\Phi=-GM/r$, but summing Newtonian potentials for arbitrary sources is not
+an exact solution of general relativity. Within this stationary weak-field
+setup, deeper in a gravitational well means more negative $\Phi$, a smaller
+rate factor, and a slower clock relative to the chosen coordinate time.
 
 ## This is measured, not theoretical
 
@@ -42,9 +42,10 @@ can take.
 
 To experiment freely we drop to simulation units with $G = c = 1$ (see
 [Units and Scales](../method/units-and-scales.qmd) for what that means
-physically). The forward model is two lines of physics: a point mass $M$ at
+physically). The forward surrogate is two lines: a point mass $M$ at
 distance $r$ contributes $\Phi = -M/r$, and the clock's rate is
-$\sqrt{1 + 2\Phi}$. The library wraps this in `clocks.physics.clock_rates`.
+$\sqrt{1 + 2\Phi}$. The library wraps this in `clocks.physics.clock_rates`
+and rejects any state outside $|2\Phi|\le0.1$.
 
 ```{python}
 #| code-fold: true
@@ -54,11 +55,9 @@ import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
 
 fig, ax = plt.subplots()
-# start outside the largest Schwarzschild radius (r_s = 2M = 2.0) so
-# rates stay real everywhere on the plot (strong field near the left
-# edge, approaching weak field on the right)
+# start far enough away that every curve satisfies |2 Phi| <= 0.1
 distances = np.linspace(2.2, 10, 200)
-for mass in (0.2, 0.5, 1.0):
+for mass in (0.02, 0.05, 0.10):
     rates = [
         clock_rates(
             MassConfig(positions=np.array([[0.0]]), masses=np.array([mass])),

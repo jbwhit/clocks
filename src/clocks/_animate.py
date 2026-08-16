@@ -38,6 +38,10 @@ from clocks.inference import ModelComparison, ParticleFilter
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
+_ECHO_CENTER_ATOL = 1e-12
+_ECHO_CONTRAST_ATOL = 1e-12
+_ECHO_CONTRAST_RTOL = 1e-10
+
 
 def _save_animation(
     anim: animation.FuncAnimation,
@@ -510,18 +514,55 @@ def animate_echolocation(
     pf: ParticleFilter,
     output_path: Path,
     fps: int = 4,
+    *,
+    filter_observations: list[Observation],
 ) -> None:
     """Animate the 3D echolocation filter with a slowly orbiting camera.
 
-    ``observations`` must be the centered observations the filter consumes
-    (the head has no external reference). The camera advances through nearly
-    one full azimuth orbit over the animation. Particles have 4 columns:
-    [x, y, z, M].
+    ``observations`` contains centered labeled clock channels for display;
+    ``filter_observations`` contains the orthonormal contrast coordinates used
+    by the likelihood. The camera advances through nearly one full azimuth
+    orbit over the animation. Particles have 4 columns: [x, y, z, M].
     """
+    if not observations or len(observations) != len(filter_observations):
+        raise ValueError(
+            "observations and filter_observations must have the same nonzero length"
+        )
+    n_clocks = len(clock_array.positions)
+    if any(len(observation.rates) != n_clocks for observation in observations):
+        raise ValueError(
+            f"display observations must each have {n_clocks} clock channels"
+        )
+    if any(
+        len(observation.rates) != n_clocks - 1 for observation in filter_observations
+    ):
+        raise ValueError(
+            f"filter observations must each have {n_clocks - 1} contrast channels"
+        )
+    from clocks._scenarios import contrast_matrix
+
+    q = contrast_matrix(n_clocks)
+    for index, (display, filter_observation) in enumerate(
+        zip(observations, filter_observations, strict=True)
+    ):
+        if display.time != filter_observation.time:
+            raise ValueError(f"display and filter observation times differ at {index}")
+        if not np.isclose(display.rates.mean(), 0.0, rtol=0.0, atol=_ECHO_CENTER_ATOL):
+            raise ValueError(f"display observation {index} must be centered")
+        expected_contrast = q @ display.rates
+        if not np.allclose(
+            filter_observation.rates,
+            expected_contrast,
+            rtol=_ECHO_CONTRAST_RTOL,
+            atol=_ECHO_CONTRAST_ATOL,
+        ):
+            raise ValueError(
+                f"filter observation {index} must equal the display contrast"
+            )
     true_params = np.append(mass_config.positions[0], mass_config.masses[0])
 
     fig, axes = create_echolocation_dashboard()
-    states, means, stds = _precompute_filter_states(pf, observations)
+    states, means, stds = _precompute_filter_states(pf, filter_observations)
     n_frames = len(observations)
 
     def predicted_centered(frame: int) -> NDArray[np.floating]:

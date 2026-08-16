@@ -1,112 +1,203 @@
-"""Seed-scan harness for the multi-mass-2D scenario.
-
-Tunes (jitter_tau, floor) on seeds 0-11, prints a per-cell pass table and
-the winner under the spec's total order, and re-measures the fixed-jitter
-baseline post-support-repair. See
-docs/superpowers/specs/2026-07-02-annealed-jitter-design.md §3.
-
-Usage:
-    uv run scripts/scan_multi_mass_2d.py                 # tuning grid
-    uv run scripts/scan_multi_mass_2d.py --baseline      # fixed-jitter baseline
-    uv run scripts/scan_multi_mass_2d.py --holdout --taus 15 --floors 0.02
-"""
+"""Development-seed scan for rigorous SMC controls in the 2-D scenario."""
 
 import argparse
+import math
 import statistics
+from itertools import product
 from multiprocessing import Pool
+from numbers import Integral
+from pathlib import Path
 
-from clocks._scenarios import RunResult, run_multi_mass_2d
+from clocks._calibration import (
+    DEVELOPMENT_ESS_TARGETS,
+    DEVELOPMENT_PROPOSAL_SCALES,
+    DEVELOPMENT_REJUVENATION_STEPS,
+    build_study_document,
+    control_grid_from_cells,
+    validate_multi_results,
+    write_study,
+)
+from clocks._scenarios import (
+    MULTI_ESS_TARGET,
+    MULTI_PROPOSAL_SCALE,
+    MULTI_REJUVENATION_STEPS,
+    PASS_TOLERANCE,
+    RunResult,
+    run_multi_mass_2d,
+)
 
-TUNING_SEEDS = tuple(range(12))
-# Seeds 100-111 are burned (diagnostics only: they exposed the clone-freeze
-# degeneracy, see docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md).
-# Certification now uses 200-211 per the retry protocol.
-HOLDOUT_SEEDS = tuple(range(200, 212))
+
+def _study_json_path(seed_block: int) -> Path:
+    """Keep every seed block in a separately named raw evidence file."""
+    return Path(f"output/multi_mass_2d_study_seed_block_{seed_block}.json")
 
 
-def _run(job: tuple[int, str, float, float]) -> tuple[tuple, RunResult]:
-    seed, jitter, floor, tau = job
-    if jitter == "fixed":
-        # tau is a display/sort key only here: jitter_tau must validate
-        # (> 0) even when unused, so don't pass the 0.0 placeholder.
-        result = run_multi_mass_2d(seed, jitter="fixed", jitter_std=floor)
-    else:
-        result = run_multi_mass_2d(
-            seed, jitter="annealed", jitter_std=floor, jitter_tau=tau
+def _write_study(
+    path: Path,
+    *,
+    seed_block: int,
+    seeds: tuple[int, ...],
+    cells: list[tuple[float, int, float]],
+    results: list[RunResult],
+) -> None:
+    expected_tuples = {
+        (ess_target, steps, scale, seed)
+        for ess_target, steps, scale in cells
+        for seed in seeds
+    }
+    validate_multi_results(results, expected_tuples=expected_tuples)
+    study = build_study_document(
+        study="multi_mass_2d",
+        seed_block=seed_block,
+        seeds=seeds,
+        control_grid=control_grid_from_cells(cells),
+        tolerances={"absolute_parameter_error": PASS_TOLERANCE},
+        results=results,
+    )
+    write_study(path, study)
+
+
+def _reject_duplicates(name: str, values: list[float] | list[int]) -> None:
+    if len(set(values)) != len(values):
+        raise ValueError(f"{name} controls contain duplicate values")
+
+
+def _seeds_for_block(seed_block: int) -> tuple[int, ...]:
+    """Return a valid development or reserved certification seed block."""
+    if seed_block == 0:
+        return tuple(range(12))
+    if seed_block < 400 or seed_block % 100 != 0:
+        raise ValueError(
+            "seed block must be 0 (development) or a multiple of 100 from 400"
         )
-    return (jitter, tau, floor), result
+    return tuple(range(seed_block, seed_block + 12))
+
+
+def _control_cells(
+    seed_block: int,
+    ess_targets: list[float] | None,
+    steps: list[int] | None,
+    scales: list[float] | None,
+) -> list[tuple[float, int, float]]:
+    """Use the declared grid in development and one frozen cell in certification."""
+    if seed_block >= 400 and any(
+        value is not None for value in (ess_targets, steps, scales)
+    ):
+        raise ValueError(
+            "explicit control overrides are forbidden for protected seed blocks"
+        )
+    selected_ess = ess_targets or (
+        list(DEVELOPMENT_ESS_TARGETS) if seed_block == 0 else [MULTI_ESS_TARGET]
+    )
+    selected_steps = steps or (
+        list(DEVELOPMENT_REJUVENATION_STEPS)
+        if seed_block == 0
+        else [MULTI_REJUVENATION_STEPS]
+    )
+    selected_scales = scales or (
+        list(DEVELOPMENT_PROPOSAL_SCALES) if seed_block == 0 else [MULTI_PROPOSAL_SCALE]
+    )
+    if any(not math.isfinite(value) or not 0.0 < value < 1.0 for value in selected_ess):
+        raise ValueError("ess-target controls must be finite and in (0, 1)")
+    if any(
+        isinstance(value, bool) or not isinstance(value, Integral) or value <= 0
+        for value in selected_steps
+    ):
+        raise ValueError("rejuvenation-step controls must be positive integers")
+    if any(not math.isfinite(value) or value <= 0.0 for value in selected_scales):
+        raise ValueError("proposal-scale controls must be finite and positive")
+    _reject_duplicates("ess-target", selected_ess)
+    _reject_duplicates("rejuvenation-step", selected_steps)
+    _reject_duplicates("proposal-scale", selected_scales)
+    cells = list(product(selected_ess, selected_steps, selected_scales))
+    return cells
+
+
+def _run(job: tuple[int, float, int, float]) -> tuple[tuple, RunResult]:
+    seed, ess_target, steps, scale = job
+    result = run_multi_mass_2d(
+        seed,
+        ess_target=ess_target,
+        rejuvenation_steps=steps,
+        proposal_scale=scale,
+    )
+    return (ess_target, steps, scale), result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--taus", type=float, nargs="+", default=[5, 10, 15, 25, 40])
-    parser.add_argument("--floors", type=float, nargs="+", default=[0.02, 0.05, 0.10])
+    parser.add_argument("--ess-targets", type=float, nargs="+")
+    parser.add_argument("--steps", type=int, nargs="+")
+    parser.add_argument("--scales", type=float, nargs="+")
     parser.add_argument(
-        "--baseline",
-        action="store_true",
-        help="fixed-jitter baseline over --floors instead of the annealed grid",
-    )
-    parser.add_argument(
-        "--holdout",
-        action="store_true",
-        help="use certification seeds 200-211 (100-111 are burned)",
+        "--seed-block",
+        type=int,
+        default=0,
+        help="0 for development; unseen multiples of 100 from 400 for certification",
     )
     parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument(
-        "--per-run",
-        action="store_true",
-        help="print per-run diagnostics (3-sigma coverage, max std, residual)",
-    )
+    parser.add_argument("--per-run", action="store_true")
     args = parser.parse_args()
 
-    seeds = HOLDOUT_SEEDS if args.holdout else TUNING_SEEDS
-    if args.baseline:
-        jobs = [("fixed", 0.0, floor) for floor in args.floors]
-    else:
-        jobs = [("annealed", tau, floor) for tau in args.taus for floor in args.floors]
-    runs = [
-        (seed, jitter, floor, tau) for (jitter, tau, floor) in jobs for seed in seeds
-    ]
-
+    try:
+        seeds = _seeds_for_block(args.seed_block)
+    except ValueError as error:
+        parser.error(str(error))
+    try:
+        cells = _control_cells(
+            args.seed_block, args.ess_targets, args.steps, args.scales
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    runs = [(seed, *cell) for cell in cells for seed in seeds]
     with Pool(args.workers) as pool:
         results = pool.map(_run, runs)
 
-    cells: dict[tuple, list[RunResult]] = {}
-    for key, result in results:
-        cells.setdefault(key, []).append(result)
-
-    header = (
-        f"{'mode':>9} {'tau':>6} {'floor':>6} {'pass':>6} {'med|err|':>9} {'resid':>7}"
+    json_path = _study_json_path(args.seed_block)
+    _write_study(
+        json_path,
+        seed_block=args.seed_block,
+        seeds=seeds,
+        cells=cells,
+        results=[result for _, result in results],
     )
-    print(header)
+
+    grouped: dict[tuple, list[RunResult]] = {}
+    for key, result in results:
+        grouped.setdefault(key, []).append(result)
+    expected_runs_per_cell = len(seeds)
+    if any(len(cell) != expected_runs_per_cell for cell in grouped.values()):
+        raise RuntimeError("scan produced unequal run counts across control cells")
+
     ranked = []
-    for (jitter, tau, floor), cell in sorted(cells.items()):
-        n_pass = sum(r["passed"] for r in cell)
-        med_err = statistics.median(r["max_abs_error"] for r in cell)
-        med_resid = statistics.median(r["residual_over_noise"] for r in cell)
-        ranked.append(((-n_pass, med_err, tau, floor), (jitter, tau, floor), n_pass))
+    for (ess_target, steps, scale), cell in sorted(grouped.items()):
+        n_pass = sum(result["passed"] for result in cell)
+        median_error = statistics.median(result["normalized_error"] for result in cell)
+        median_evaluations = statistics.median(
+            result["forward_model_evaluations"] for result in cell
+        )
+        ranked.append(
+            (
+                (-n_pass, median_error, median_evaluations, steps),
+                (ess_target, steps, scale),
+            )
+        )
         print(
-            f"{jitter:>9} {tau:>6g} {floor:>6g} {n_pass:>4}/{len(cell)}"
-            f" {med_err:>9.3f} {med_resid:>7.1f}"
+            f"ess={ess_target:.2f} steps={steps} scale={scale:.2f}: "
+            f"{n_pass}/{len(cell)}, median normalized error={median_error:.3f}, "
+            f"median forward evaluations={median_evaluations:.0f}"
         )
         if args.per_run:
-            for r in sorted(cell, key=lambda r: r["seed"]):
+            for result in sorted(cell, key=lambda item: item["seed"]):
                 print(
-                    f"    seed {r['seed']:>3}  pass={int(r['passed'])}"
-                    f"  max|err|={r['max_abs_error']:.3f}"
-                    f"  3sig={int(r['covered_3sigma'])}"
-                    f"  maxstd={r['max_posterior_std']:.3f}"
-                    f"  resid/noise={r['residual_over_noise']:.1f}"
+                    f"    seed={result['seed']:>3} pass={int(result['passed'])} "
+                    f"normalized_error={result['normalized_error']:.3f} "
+                    f"forward_evaluations={result['forward_model_evaluations']}"
                 )
-
-    if not args.baseline:
-        ranked.sort(key=lambda item: item[0])
-        _, (jitter, tau, floor), n_pass = ranked[0]
-        seed_kind = "holdout" if args.holdout else "tuning"
-        print(
-            f"\nwinner: tau={tau:g} floor={floor:g}"
-            f" ({n_pass}/{len(seeds)} on {seed_kind} seeds)"
-        )
+    ranked.sort()
+    _, winner = ranked[0]
+    print(f"winner: ess={winner[0]:.2f}, steps={winner[1]}, scale={winner[2]:.2f}")
+    print(f"raw study: {json_path}")
 
 
 if __name__ == "__main__":

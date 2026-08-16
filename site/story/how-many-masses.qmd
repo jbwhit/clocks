@@ -7,34 +7,43 @@ title: "How Many Masses?"
 Every page so far fixed the number of masses in advance — detection with
 the answer key half-open. Real detection must infer the *model*, not just
 its parameters. The Bayesian answer is to run a separate particle filter
-for each candidate count $K$ and compare **evidence**: the probability each
-model assigned to the data it actually saw, accumulated observation by
-observation. Models that need the data explained to them lose; models that
-predicted it win.
+for each candidate count $K$ and compare **evidence**: the marginal
+probability each model assigned to the data. The implementation accumulates
+pre-resampling normalizing-constant increments through each adaptive
+tempering stage. At finite particle count this is a stochastic SMC estimate,
+not an exact or deterministic integral.
 
-![Model comparison live: posterior probability over K=1, 2, 3 as observations accumulate. Truth is K=2.](../assets/demo_model_comparison.gif)
+![Current 80-observation model-comparison run over K=1, 2, 3: truth is K=2, while the final estimate mildly favors K=3.](../assets/demo_model_comparison.gif)
+
+This committed GIF is the current packaged default run: 80 observations,
+2,000 particles per candidate, and seed 42. With K=2 truth, its final estimate
+is K=2: 0.3990 and K=3: 0.6010, so this realization mildly prefers K=3. That
+is an honest finite-data, finite-particle result—not a claim that K=3 is the
+data-generating model or that model comparison must recover truth every time.
 
 ## Occam's razor, automatic
 
-The suspicious thing is that $K=3$ doesn't win — a three-mass model *can
-mimic* many two-mass configurations by pushing the extra mass toward the
-lower [prior](../method/notation-and-glossary.qmd#term-prior) bound or into a weakly visible location, so its best fit is at
+Why should $K=3$ not win automatically? A three-mass model *can mimic* many
+two-mass configurations by pushing the extra mass toward the lower
+[prior](../method/notation-and-glossary.qmd#term-prior) bound or into a weakly visible location, so its best fit can be at
 least as good. Evidence is not best-fit, though: it
 averages the likelihood over the model's whole prior. Extra parameters
 spread that average across vast regions of configuration space the data
 rejects, and the dilution is the tax. Complexity isn't punished by rule;
-it is punished by arithmetic.
+it is punished by arithmetic. Here each model's prior is a normalized
+uniform rectangle conditioned on its configured bounds, strict mass
+ordering, and weak-field validity, so that support is part of the comparison.
 
 ## Run it live
 
 (One geometric note: this scenario keeps the second mass at $x = 3.0$,
 directly atop a clock — the placement the previous page avoided for
-parameter estimation; it matters less for the how-many question, as the
-verdict shows.)
+parameter estimation. It is retained here as part of the fixed scenario, not
+as a guarantee that the evidence estimate will select the true count.)
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Posterior probability per candidate K over 25 observations (truth: K=2)."
+#| fig-cap: "A separate 25-observation, 400-particle estimate ends near K=2: 0.740 and K=3: 0.260 (truth: K=2)."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import (
@@ -45,15 +54,16 @@ from clocks import (
 clock_array = ClockArray(
     positions=np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]]), track_offset=1.0
 )
-truth = MassConfig(positions=np.array([[-2.0], [3.0]]), masses=np.array([0.6, 0.4]))
+truth = MassConfig(positions=np.array([[-2.0], [3.0]]), masses=np.array([0.045, 0.030]))
 sim = simulate(SimulationConfig(
     clock_array=clock_array, ground_truth=truth,
     noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
 ))
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
-    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.1, 2.0)),
-    n_particles=400, n_masses=(1, 2, 3), seed=42,
+    prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
+    n_particles=400, n_masses=(1, 2, 3),
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 
 print(f"Posterior over K: { {k: round(v, 3) for k, v in result.posterior_by_model.items()} }")
@@ -72,9 +82,13 @@ fig
 ```
 
 ::: {.callout-note title="Evidence is a flow, not a snapshot"}
-With only 25 noisy observations and a small particle budget, the verdict
-here can be less crisp than the 80-observation GIF above — and that is
-itself the lesson. Evidence accumulates; certainty about *how many things
-exist* is bought one observation at a time, exactly like certainty about
-where they are.
+The embedded 25-observation, 400-particle calculation ends near K=2: 0.740 and
+K=3: 0.260, whereas the packaged 80-observation, 2,000-particle run ends near
+0.3990 and 0.6010. This is not a contradiction. A different finite data
+horizon changes the evidence supplied by the noisy realization, and a
+different finite-particle budget changes the Monte Carlo estimate of that
+evidence. Both effects matter; the difference should not be attributed solely
+to Monte Carlo noise. Comparing models responsibly means examining data
+horizon, particle-count, and seed sensitivity rather than reading one run's
+extra decimal places as certainty.
 :::

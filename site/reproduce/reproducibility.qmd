@@ -14,11 +14,11 @@ the seeds shown and you will get the numbers printed on the page.
 ## Tests
 
 The default suite — `uv run pytest` — covers the forward model's physical
-invariants, the particle filter (convergence, resampling variants, the
-evidence-vs-direct-computation identity, weight-collapse handling), the
-noise model, the public API surface, and every animator; two long-running
-acceptance scans are excluded by default (`uv run pytest -m slow` runs
-them). See
+domain, public data contracts, all resampling variants, adaptive tempering,
+conjugate evidence checks, MH invariance and rejection, observation
+atomicity, prior support, contrast-space likelihoods, the public API, wheel
+entry points, and visualization. Long-running fixed-seed acceptance scans are
+excluded by default (`uv run pytest -m slow` runs them). See
 [`tests/`](https://github.com/jbwhit/clocks/tree/main/tests) for the
 current inventory; the README deliberately does not quote a test count,
 because hardcoded counts go stale.
@@ -33,15 +33,25 @@ Two workflows run on GitHub Actions:
   re-renders and redeploys this site on every push to `main`, so every
   executed-cell figure you see is regenerated from source at deploy time. The
   demo GIFs, the density PNG, and the echolocation range-study PNG are the
-  exceptions: they are pre-rendered, committed assets, reproducible on your
-  machine via the `uv run demo-*` commands (the range-study PNG via
-  `uv run scripts/scan_echolocation_range.py --seed-block 300`, the
-  certification block the published figure used; see the
-  [echolocation page](../story/gravitational-echolocation.qmd)).
+  exceptions: the currently committed copies were generated explicitly from
+  the corrected code after one-shot certification. The `uv run demo-*`
+  commands regenerate their scenarios, but image encoders are not claimed to
+  be byte-deterministic across tool versions. The development range grid uses
+  `uv run scripts/scan_echolocation_range.py --seed-block 0`; its controls and
+  tolerances are frozen, and the reserved 400–411 block was run exactly once.
+  See the
+  [echolocation page](../story/gravitational-echolocation.qmd).
 
-## Locked dependencies
+The protected fixed-seed results establish deterministic regression cases,
+not a population reliability estimate. SMC evidence is similarly a
+consistent Monte Carlo estimator with finite-particle sampling error, not a
+deterministic exact integral.
 
-`uv.lock` is committed; CI enforces it (`--locked` in ci.yml, `--frozen`
-in the site build). The environment that
-rendered this page is the environment the lockfile describes, down to the
-patch version.
+## Locked Python dependencies
+
+`uv.lock` is committed; CI enforces the Python package resolution with
+`--locked` in `ci.yml` and `--frozen` in the site build. The lock covers
+package versions for its supported Python-version markers. It does **not** pin
+the Python interpreter's patch release or the separately installed Quarto
+binary, so the repository does not claim a fully bit-reproducible rendering
+toolchain.

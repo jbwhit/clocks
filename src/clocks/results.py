@@ -1,13 +1,22 @@
 """Public result objects for the clocks library API."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
+from clocks._validation import finite_float_array
 from clocks.config import NoiseConfig
-from clocks.types import ClockArray, MassConfig, Observation, ParticleState
+from clocks.types import (
+    ClockArray,
+    MassConfig,
+    Observation,
+    ParticleState,
+    UpdateDiagnostics,
+)
 
 
 def _mass_config_to_dict(config: MassConfig) -> dict[str, object]:
@@ -39,6 +48,12 @@ class HistoryEntry:
     std: NDArray[np.floating]
     ess: float
     observations_seen: int
+    log_evidence: float
+    diagnostics: UpdateDiagnostics
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "mean", finite_float_array("mean", self.mean, ndim=1))
+        object.__setattr__(self, "std", finite_float_array("std", self.std, ndim=1))
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -46,6 +61,13 @@ class HistoryEntry:
             "std": self.std.tolist(),
             "ess": self.ess,
             "observations_seen": self.observations_seen,
+            "log_evidence": self.log_evidence,
+            "diagnostics": {
+                "tempering_stages": self.diagnostics.tempering_stages,
+                "mh_proposals": self.diagnostics.mh_proposals,
+                "mh_acceptances": self.diagnostics.mh_acceptances,
+                "acceptance_rate": self.diagnostics.acceptance_rate,
+            },
         }
 
 
@@ -56,9 +78,17 @@ class SimulationResult:
     clock_array: ClockArray
     ground_truth: MassConfig
     true_rates: NDArray[np.floating]
-    observations: list[Observation]
+    observations: tuple[Observation, ...]
     noise: NoiseConfig
     seed: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "true_rates",
+            finite_float_array("true_rates", self.true_rates, ndim=1),
+        )
+        object.__setattr__(self, "observations", tuple(self.observations))
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -78,15 +108,30 @@ class InferenceResult:
     posterior_mean: NDArray[np.floating]
     posterior_std: NDArray[np.floating]
     ess: float
-    history: list[HistoryEntry]
+    log_evidence: float
+    history: tuple[HistoryEntry, ...]
     particle_state: ParticleState | None = None
     simulation: SimulationResult | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "posterior_mean",
+            finite_float_array("posterior_mean", self.posterior_mean, ndim=1),
+        )
+        object.__setattr__(
+            self,
+            "posterior_std",
+            finite_float_array("posterior_std", self.posterior_std, ndim=1),
+        )
+        object.__setattr__(self, "history", tuple(self.history))
 
     def with_simulation(self, simulation: SimulationResult) -> "InferenceResult":
         return InferenceResult(
             posterior_mean=self.posterior_mean,
             posterior_std=self.posterior_std,
             ess=self.ess,
+            log_evidence=self.log_evidence,
             history=self.history,
             particle_state=self.particle_state,
             simulation=simulation,
@@ -97,6 +142,7 @@ class InferenceResult:
             "posterior_mean": self.posterior_mean.tolist(),
             "posterior_std": self.posterior_std.tolist(),
             "ess": self.ess,
+            "log_evidence": self.log_evidence,
             "history": [entry.to_dict() for entry in self.history],
         }
         if self.particle_state is not None:
@@ -114,12 +160,34 @@ class InferenceResult:
 class ModelComparisonInferenceResult:
     """Posterior summary for model comparison runs."""
 
-    posterior_by_model: dict[int, float]
-    log_evidence_by_model: dict[int, float]
+    posterior_by_model: Mapping[int, float]
+    log_evidence_by_model: Mapping[int, float]
     best_model: int
-    result_by_model: dict[int, InferenceResult]
-    history: list[dict[int, float]]
+    result_by_model: Mapping[int, InferenceResult]
+    history: tuple[Mapping[int, float], ...]
     simulation: SimulationResult | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "posterior_by_model",
+            MappingProxyType(dict(self.posterior_by_model)),
+        )
+        object.__setattr__(
+            self,
+            "log_evidence_by_model",
+            MappingProxyType(dict(self.log_evidence_by_model)),
+        )
+        object.__setattr__(
+            self,
+            "result_by_model",
+            MappingProxyType(dict(self.result_by_model)),
+        )
+        object.__setattr__(
+            self,
+            "history",
+            tuple(MappingProxyType(dict(entry)) for entry in self.history),
+        )
 
     def with_simulation(
         self, simulation: SimulationResult
@@ -135,13 +203,13 @@ class ModelComparisonInferenceResult:
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "posterior_by_model": self.posterior_by_model,
-            "log_evidence_by_model": self.log_evidence_by_model,
+            "posterior_by_model": dict(self.posterior_by_model),
+            "log_evidence_by_model": dict(self.log_evidence_by_model),
             "best_model": self.best_model,
             "result_by_model": {
                 k: result.to_dict() for k, result in self.result_by_model.items()
             },
-            "history": self.history,
+            "history": [dict(entry) for entry in self.history],
         }
         if self.simulation is not None:
             payload["simulation"] = self.simulation.to_dict()

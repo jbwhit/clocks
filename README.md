@@ -8,9 +8,17 @@ Place atomic clocks near a hidden mass — they tick slower in the gravitational
 
 ## How it works
 
-**Forward model:** Given one or more point masses at positions **x**_j with masses M_j, compute the Newtonian gravitational potential at each clock, then derive the weak-field GR time dilation factor (tick rate). Uses simulation units where G = c = 1.
+**Forward model:** In simulation units where G = c = 1, sum the Newtonian
+potentials $\Phi_i=-\sum_j M_j/r_{ij}$ and map them to clock rates with
+$\sqrt{1+2\Phi_i}$. This is a pedagogical weak-field surrogate, not an exact
+strong-field solution; every state must satisfy the conservative policy
+$|2\Phi_i|\le0.1$.
 
-**Inverse problem:** A particle filter maintains a cloud of hypotheses for the unknown parameters. Each observation (noisy clock rates) reweights particles by likelihood, and resampling with jitter reduces particle degeneracy. In well-conditioned scenarios, the cloud concentrates near the true parameters.
+**Inverse problem:** Adaptive tempered resample-move SMC maintains a weighted
+cloud of hypotheses. ESS-selected likelihood increments control each update;
+resampling is followed by symmetric random-walk Metropolis-Hastings moves that
+preserve the intermediate target. The prior is the normalized configured box
+conditioned on ordering and weak-field validity.
 
 The point-mass forward model and core particle filter are dimension-agnostic, with examples in 1D, 2D, and 3D.
 
@@ -49,6 +57,11 @@ uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
 
 ![2D inference demo](assets/demo_2d.gif)
 
+The committed demo media is the current output regenerated from the corrected
+physics and SMC implementation after the frozen configurations completed
+one-shot certification. The files are release artifacts, not a promise of
+byte-identical encodings across plotting-library versions.
+
 Most GIF demos animate the physical setup, the particle cloud converging,
 and the estimates' uncertainty; `demo-model-comparison` instead tracks
 the posterior probability over candidate mass counts, and `demo-density`
@@ -59,11 +72,16 @@ echolocation range study behind the site's final page:
 
 ## Run tests
 
-`uv run pytest` runs the default non-slow suite; run `uv run pytest -m slow` for the long acceptance scans.
+`uv run pytest` runs the default non-slow suite; run `uv run pytest -m slow`
+for long fixed-seed regression cases. Corrected SMC controls and tolerances
+were frozen on development seeds before the reserved certification block,
+which was then run exactly once. Its fixed-seed outcomes are deterministic
+regression evidence, never population reliability estimates.
 
 ```bash
 uv run pytest
-uv run ruff check src/ tests/ scripts/   # lint
+uv run ruff format --check .
+uv run ruff check .
 ```
 
 ## Project structure
@@ -74,22 +92,17 @@ src/clocks/
     config.py      Public config dataclasses (SimulationConfig, InferenceConfig, ...)
     results.py     Public result dataclasses (SimulationResult, InferenceResult, ...)
     api.py         End-to-end entry points (simulate, infer, build_particle_filter)
-    physics.py     Forward model: mass config → clock tick rates
+    physics.py     Strict weak-field forward models
     noise.py       Gaussian noise model and log-likelihood
-    inference.py   Particle filter (SMC with systematic/stratified/residual resampling)
+    inference.py   Adaptive tempered resample-move SMC
     viz.py         Plotting and animation facade (_panels.py, _panels3d.py, _animate.py)
+    _support.py    Conditional prior support and rejection sampling
     _panels3d.py   3D plotting primitives for the echolocation dashboard
     _scenarios.py  Shared scenario builders for demos/scan harnesses/tests
     _echo_study.py Reporting helpers for the echolocation range study
-    _cli.py        Entry points for demo scripts
+    _demos/        Packaged implementations for all seven console commands
 scripts/
-    demo_1d.py                    1D end-to-end demo
-    demo_2d.py                    2D end-to-end demo
-    demo_multi_mass.py            Two masses in 1D
-    demo_multi_mass_2d.py         Two masses in 2D (random clocks)
-    demo_model_comparison.py      Bayesian model comparison (infer K)
-    demo_density.py               Gaussian density forward model
-    demo_echolocation_3d.py       27-clock 3D echolocation demo (rotating camera)
+    demo_*.py                     Thin source-tree wrappers around clocks._demos
     scan_echolocation_range.py    Resolution-vs-range study for 3D echolocation
     scan_multi_mass_2d.py         Seed-scan harness for the multi-mass-2D scenario
 tests/

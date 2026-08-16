@@ -13,13 +13,13 @@ Repository = "https://github.com/jbwhit/clocks"
 Documentation = "https://jbwhit.github.io/clocks/"
 
 [project.scripts]
-demo-1d = "clocks._cli:demo_1d"
-demo-2d = "clocks._cli:demo_2d"
-demo-multi-mass = "clocks._cli:demo_multi_mass"
-demo-multi-mass-2d = "clocks._cli:demo_multi_mass_2d"
-demo-model-comparison = "clocks._cli:demo_model_comparison"
-demo-density = "clocks._cli:demo_density"
-demo-echolocation-3d = "clocks._cli:demo_echolocation_3d"
+demo-1d = "clocks._demos.demo_1d:main"
+demo-2d = "clocks._demos.demo_2d:main"
+demo-multi-mass = "clocks._demos.demo_multi_mass:main"
+demo-multi-mass-2d = "clocks._demos.demo_multi_mass_2d:main"
+demo-model-comparison = "clocks._demos.demo_model_comparison:main"
+demo-density = "clocks._demos.demo_density:main"
+demo-echolocation-3d = "clocks._demos.demo_echolocation_3d:main"
 
 [dependency-groups]
 dev = [
