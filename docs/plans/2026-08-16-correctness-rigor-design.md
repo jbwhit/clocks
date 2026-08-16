@@ -144,12 +144,13 @@ draw count, and clip indices against `len(weights) - 1`. Residual resampling's
 deterministic and stochastic portions will be tested independently.
 
 The initial sampler must draw from the actual normalized prior represented by
-`log_prior_density`. The density is needed up to an additive constant for MH;
+the required `log_prior_density`. The density is needed up to an additive constant for MH;
 the initial sample establishes the normalized prior measure for evidence. The
 API-built clock models use a uniform prior conditioned on bounds, ordering,
 and physical validity. Documentation will state that custom samplers and prior
 densities must describe the same distribution or posterior and evidence
-results are undefined.
+results are undefined. A missing density is rejected rather than interpreted as
+an improper flat prior.
 
 ### Efficient target evaluation
 
