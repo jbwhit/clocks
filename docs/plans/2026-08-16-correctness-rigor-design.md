@@ -174,6 +174,14 @@ The filter will expose diagnostic information needed to assess correctness:
 the cumulative log evidence, tempering-stage count for the most recent update,
 and MH proposal/acceptance counts. Diagnostics do not change the target.
 
+The echolocation scenario has no external clock reference. Instead of merely
+subtracting the channel mean and then pretending that all centered channels
+have independent noise, it will project rates through an orthonormal contrast
+matrix spanning the subspace perpendicular to the all-ones vector. Independent
+isotropic channel noise remains independent with the same variance in these
+`C - 1` contrast coordinates. The resulting likelihood has the correct
+quadratic form and normalization, so its evidence is meaningful too.
+
 ## Public Data Contracts
 
 Public dataclasses will coerce numeric inputs to defensive `float64` arrays,
