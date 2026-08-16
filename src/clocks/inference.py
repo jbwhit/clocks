@@ -340,6 +340,8 @@ class ParticleFilter:
         self._completed_stats: GaussianObservationStats | None = None
         self.log_evidence = 0.0
         self.last_diagnostics = UpdateDiagnostics()
+        self._last_log_evidence_increments: tuple[float, ...] = ()
+        self._last_proposal_cholesky_factors: tuple[NDArray[np.float64], ...] = ()
 
     @property
     def state(self) -> ParticleState:
@@ -356,6 +358,18 @@ class ParticleFilter:
     @property
     def log_evidence_history(self) -> list[float]:
         return list(self._log_evidence_history)
+
+    @property
+    def last_log_evidence_increments(self) -> tuple[float, ...]:
+        """Incremental normalizers from the most recent public update."""
+        return self._last_log_evidence_increments
+
+    @property
+    def last_proposal_cholesky_factors(
+        self,
+    ) -> tuple[NDArray[np.float64], ...]:
+        """Frozen, read-only proposal factors used by the most recent update."""
+        return self._last_proposal_cholesky_factors
 
     def _log_prior(self, particles: NDArray[np.floating]) -> NDArray[np.float64]:
         values = np.asarray(self.log_prior_density(particles), dtype=np.float64)
@@ -502,6 +516,8 @@ class ParticleFilter:
         weights = self._state.weights.copy()
         beta = 0.0
         stages = proposals = acceptances = 0
+        evidence_increments: list[float] = []
+        proposal_factors: list[NDArray[np.float64]] = []
         target_ess = self.ess_target * self.n_particles
 
         while beta < 1.0:
@@ -517,12 +533,16 @@ class ParticleFilter:
                 candidate_log_weights = np.log(weights) + delta * observation_ll
             weights, log_increment = _normalize_log_weights(candidate_log_weights)
             self.log_evidence += log_increment
+            evidence_increments.append(log_increment)
             beta = next_beta
             stages += 1
 
             ess = _effective_sample_size(weights)
             if beta < 1.0 or ess <= target_ess + 1e-9:
                 proposal_chol = self._proposal_cholesky(particles, weights)
+                frozen_factor = np.array(proposal_chol, copy=True)
+                frozen_factor.setflags(write=False)
+                proposal_factors.append(frozen_factor)
                 indices = self._resample_indices(weights)
                 particles = particles[indices].copy()
                 weights = np.full(self.n_particles, 1.0 / self.n_particles)
@@ -542,6 +562,8 @@ class ParticleFilter:
         self._completed_stats = self._completed_stats.add(observation.rates)
         diagnostics = UpdateDiagnostics(stages, proposals, acceptances)
         self.last_diagnostics = diagnostics
+        self._last_log_evidence_increments = tuple(evidence_increments)
+        self._last_proposal_cholesky_factors = tuple(proposal_factors)
         self._diagnostics_history.append(diagnostics)
         self._log_evidence_history.append(self.log_evidence)
         self._state = ParticleState(

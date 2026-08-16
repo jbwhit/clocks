@@ -7,6 +7,7 @@ import pytest
 from scipy.special import logsumexp
 from scipy.stats import multivariate_normal, norm
 
+import clocks.inference as inference_module
 from clocks.inference import (
     GaussianObservationStats,
     ModelComparison,
@@ -202,6 +203,174 @@ def test_update_never_leaves_ess_below_tempering_target() -> None:
 
     assert pf.last_diagnostics.tempering_stages > 1
     assert pf.estimate()["ess"] >= 0.8 * pf.n_particles - 1e-9
+
+
+class _ZeroMoveRng:
+    """Deterministic RNG: fixed systematic offset and zero MH displacement."""
+
+    def uniform(self, size: int | None = None) -> float | np.ndarray:
+        if size is None:
+            return 0.25
+        return np.full(size, 0.25)
+
+    def normal(self, size: tuple[int, int]) -> np.ndarray:
+        return np.zeros(size)
+
+    def random(self, size: int) -> np.ndarray:
+        return np.full(size, 0.5)
+
+
+def _independent_tempered_evidence_trace(
+    particles: np.ndarray,
+    *,
+    observation: float,
+    noise_std: float,
+    ess_target: float,
+    beta_schedule: tuple[float, ...],
+) -> list[float]:
+    """Independent reference implementation for the deterministic test case."""
+    n_particles = len(particles)
+    weights = np.full(n_particles, 1.0 / n_particles)
+    beta = 0.0
+    increments: list[float] = []
+    for next_beta in beta_schedule:
+        log_likelihood = norm.logpdf(observation, loc=particles[:, 0], scale=noise_std)
+        log_weight = np.log(weights) + (next_beta - beta) * log_likelihood
+        increment = float(logsumexp(log_weight))
+        increments.append(increment)
+        weights = np.exp(log_weight - increment)
+        beta = next_beta
+
+        ess = 1.0 / np.sum(weights**2)
+        if beta < 1.0 or ess <= ess_target * n_particles + 1e-9:
+            cumulative = np.cumsum(weights)
+            positions = (0.25 + np.arange(n_particles)) / n_particles
+            indices = np.searchsorted(cumulative, positions, side="right")
+            particles = particles[indices]
+            weights = np.full(n_particles, 1.0 / n_particles)
+    return increments
+
+
+def test_multistage_update_records_every_pre_resample_evidence_increment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial = np.linspace(-2.0, 2.0, 41).reshape(-1, 1)
+    observation = Observation([0.17], 0.0)
+    pf = ParticleFilter(
+        len(initial),
+        lambda rng, n: initial.copy(),
+        lambda value: value,
+        0.08,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        forward_model_batch=lambda values: values,
+        ess_target=0.8,
+        rejuvenation_steps=1,
+        rng=_ZeroMoveRng(),  # type: ignore[arg-type]
+    )
+    expected = _independent_tempered_evidence_trace(
+        initial.copy(),
+        observation=0.17,
+        noise_std=0.08,
+        ess_target=0.8,
+        beta_schedule=(0.2, 1.0),
+    )
+    beta_schedule = iter((0.2, 1.0))
+    monkeypatch.setattr(
+        inference_module,
+        "_next_beta",
+        lambda *args, **kwargs: next(beta_schedule),
+    )
+
+    pf.update(observation)
+
+    assert len(expected) == 2
+    assert pf.last_log_evidence_increments == pytest.approx(expected, abs=1e-12)
+    assert pf.log_evidence == pytest.approx(sum(expected), abs=1e-12)
+    assert pf.last_diagnostics.mh_proposals == len(expected) * len(initial)
+    np.testing.assert_array_equal(
+        pf.state.weights, np.full(len(initial), 1.0 / len(initial))
+    )
+    with pytest.raises(AttributeError):
+        pf.last_log_evidence_increments = ()
+
+
+def test_stage_proposal_uses_one_frozen_symmetric_gaussian_kernel() -> None:
+    pf = _normal_filter(27, n_particles=200)
+    pf.update(Observation([0.4], 0.0))
+    factors = pf.last_proposal_cholesky_factors
+
+    assert factors
+    assert len(factors) == (
+        pf.last_diagnostics.mh_proposals // (pf.n_particles * pf.rejuvenation_steps)
+    )
+    with pytest.raises(AttributeError):
+        pf.last_proposal_cholesky_factors = ()
+    factor = factors[0]
+    with pytest.raises(ValueError, match="read-only"):
+        factor[0, 0] = 0.0
+    displacement = np.array([0.37])
+    forward_whitened = np.linalg.solve(factor, displacement)
+    reverse_whitened = np.linalg.solve(factor, -displacement)
+    log_q_forward = -0.5 * float(forward_whitened @ forward_whitened)
+    log_q_reverse = -0.5 * float(reverse_whitened @ reverse_whitened)
+    assert log_q_forward == pytest.approx(log_q_reverse, abs=0.0)
+
+
+@pytest.mark.parametrize(
+    "prediction",
+    [np.array(1.0), np.ones((1, 1)), np.array([np.nan])],
+)
+def test_scalar_forward_prediction_contract(prediction: np.ndarray) -> None:
+    pf = ParticleFilter(
+        4,
+        lambda rng, n: np.zeros((n, 1)),
+        lambda value: prediction,
+        1.0,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        ess_target=0.1,
+    )
+    message = "finite" if np.any(~np.isfinite(prediction)) else "prediction shape"
+    with pytest.raises(ValueError, match=message):
+        pf.update(Observation([0.0], 0.0))
+
+
+@pytest.mark.parametrize(
+    "prediction",
+    [
+        lambda n: np.ones(n),
+        lambda n: np.ones((n, 2)),
+        lambda n: np.full((n, 1), np.nan),
+    ],
+)
+def test_batch_forward_prediction_contract(prediction: object) -> None:
+    pf = ParticleFilter(
+        4,
+        lambda rng, n: np.zeros((n, 1)),
+        lambda value: value,
+        1.0,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        forward_model_batch=lambda values: prediction(len(values)),  # type: ignore[operator]
+        ess_target=0.1,
+    )
+    produced = prediction(4)  # type: ignore[operator]
+    message = "finite" if np.any(~np.isfinite(produced)) else "prediction shape"
+    with pytest.raises(ValueError, match=message):
+        pf.update(Observation([0.0], 0.0))
+
+
+def test_later_update_rejects_changed_channel_count() -> None:
+    pf = ParticleFilter(
+        4,
+        lambda rng, n: np.zeros((n, 1)),
+        lambda value: np.ones(1),
+        1.0,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        ess_target=0.1,
+    )
+    pf.update(Observation([0.0], 0.0))
+
+    with pytest.raises(ValueError, match="channel count"):
+        pf.update(Observation([0.0, 0.0], 1.0))
 
 
 @pytest.mark.parametrize("seed", [3, 11])

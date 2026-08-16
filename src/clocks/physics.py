@@ -67,8 +67,12 @@ def compute_distances(
     positions = _finite_array("mass_positions", mass_positions, ndim=2)
     offset = _nonnegative_float("track_offset", track_offset)
     _validate_spatial_dimensions("clock_positions", clocks, "mass_positions", positions)
-    diff = clocks[:, np.newaxis, :] - positions[np.newaxis, :, :]
-    return np.sqrt(np.sum(diff**2, axis=-1) + offset**2)
+    with np.errstate(over="ignore", invalid="ignore"):
+        diff = clocks[:, np.newaxis, :] - positions[np.newaxis, :, :]
+        distances = np.sqrt(np.sum(diff**2, axis=-1) + np.square(np.float64(offset)))
+    if not np.all(np.isfinite(distances)):
+        raise PhysicsDomainError("computed distances must be finite")
+    return distances
 
 
 def gravitational_potential(
@@ -92,13 +96,17 @@ def gravitational_potential(
         raise PhysicsDomainError("positive mass at zero distance is singular")
 
     terms = np.zeros_like(distance_array)
-    np.divide(
-        mass_array[np.newaxis, :],
-        distance_array,
-        out=terms,
-        where=distance_array > 0.0,
-    )
-    return -np.sum(terms, axis=1)
+    with np.errstate(over="ignore", invalid="ignore"):
+        np.divide(
+            mass_array[np.newaxis, :],
+            distance_array,
+            out=terms,
+            where=distance_array > 0.0,
+        )
+        potential = -np.sum(terms, axis=1)
+    if not np.all(np.isfinite(potential)):
+        raise PhysicsDomainError("computed potential must be finite")
+    return potential
 
 
 def _validate_potential(potential: NDArray[np.float64]) -> None:
@@ -189,7 +197,9 @@ def _point_mass_potential_batch(
             clock_array.positions[np.newaxis, :, np.newaxis, :]
             - clean_positions[:, np.newaxis, :, :]
         )
-        distance = np.sqrt(np.sum(diff**2, axis=-1) + clock_array.track_offset**2)
+        distance = np.sqrt(
+            np.sum(diff**2, axis=-1) + np.square(np.float64(clock_array.track_offset))
+        )
         singular = (distance == 0.0) & (clean_masses[:, np.newaxis, :] > 0.0)
         terms = np.zeros_like(distance)
         np.divide(
@@ -200,10 +210,14 @@ def _point_mass_potential_batch(
         )
         potential = -np.sum(terms, axis=2)
 
-    potential[~finite_rows] = np.nan
+    computed_finite_rows = np.all(np.isfinite(distance), axis=(1, 2)) & np.all(
+        np.isfinite(potential), axis=1
+    )
+    potential[~(finite_rows & computed_finite_rows)] = np.nan
     valid = (
         finite_rows
         & nonnegative_rows
+        & computed_finite_rows
         & ~np.any(singular, axis=(1, 2))
         & np.all(np.isfinite(potential), axis=1)
         & np.all(potential <= 0.0, axis=1)

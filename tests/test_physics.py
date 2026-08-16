@@ -46,6 +46,18 @@ class TestComputeDistances:
         dist = compute_distances(clocks, masses)
         np.testing.assert_allclose(dist, [[1.0, 4.0]])
 
+    def test_computed_distance_overflow_is_a_domain_error_without_warning(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="distance.*finite"):
+                compute_distances(np.array([[1e308]]), np.array([[-1e308]]))
+
+    def test_track_offset_overflow_is_a_domain_error_without_warning(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="distance.*finite"):
+                compute_distances(np.array([[0.0]]), np.array([[0.0]]), 1e308)
+
     @pytest.mark.parametrize(
         ("clocks", "masses", "offset", "message"),
         [
@@ -115,6 +127,15 @@ class TestGravitationalPotential:
     def test_positive_mass_at_zero_distance_is_a_domain_error(self) -> None:
         with pytest.raises(PhysicsDomainError, match="zero distance"):
             gravitational_potential(np.array([[0.0]]), np.array([0.01]))
+
+    def test_computed_potential_overflow_is_a_domain_error_without_warning(
+        self,
+    ) -> None:
+        distance = np.nextafter(0.0, 1.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="potential.*finite"):
+                gravitational_potential(np.array([[distance]]), np.array([1.0]))
 
     @pytest.mark.parametrize(
         ("distances", "masses", "message"),
@@ -235,6 +256,14 @@ class TestClockRates:
         with pytest.raises(PhysicsDomainError, match="weak-field"):
             clock_rates(MassConfig([[0.0]], [0.051]), offset_clocks)
 
+    def test_computed_overflow_is_a_domain_error_without_warning(self) -> None:
+        mass = MassConfig(np.array([[1e308]]), np.array([0.01]))
+        clocks = ClockArray(np.array([[-1e308]]))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="distance.*finite"):
+                clock_rates(mass, clocks)
+
 
 class TestClockRatesBatch:
     def test_matches_scalar_1d(self) -> None:
@@ -303,6 +332,24 @@ class TestClockRatesBatch:
         clocks = ClockArray(np.array([[0.0]]), track_offset=1.0)
         with pytest.raises(PhysicsDomainError, match="weak-field"):
             clock_rates_batch(np.array([[2.0], [0.0]]), np.array([0.01, 0.051]), clocks)
+
+    def test_computed_distance_overflow_is_a_domain_error_without_warning(self) -> None:
+        clocks = ClockArray(np.array([[-1e308]]), track_offset=0.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="point-mass state"):
+                clock_rates_batch(np.array([[1e308]]), np.array([0.01]), clocks)
+
+    def test_candidate_overflow_is_invalid_without_warning(self) -> None:
+        clocks = ClockArray(np.array([[-1e308]]), track_offset=0.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            potential, valid = _point_mass_potential_batch(
+                np.array([[[1e308]]]), np.array([[0.01]]), clocks
+            )
+
+        assert not valid[0]
+        assert not np.all(np.isfinite(potential[0]))
 
 
 class TestClockRatesBatchMulti:
