@@ -45,11 +45,10 @@ def _make_forward_model(
     """Create forward model callable for particle filter: params → rates."""
 
     def forward(params: np.ndarray) -> np.ndarray:
-        mc = MassConfig(
-            positions=np.array([[params[0]]]),
-            masses=np.array([params[1]]),
-        )
-        return clock_rates(mc, clock_array)
+        # ParticleFilter is a generic numerical primitive whose legacy jitter
+        # can propose negative components. Use the array kernel here rather
+        # than constructing a now-strict public MassConfig for each candidate.
+        return clock_rates_batch(params[:1].reshape(1, 1), params[1:2], clock_array)[0]
 
     return forward
 
@@ -1040,8 +1039,7 @@ class TestAnnealedJitter:
         rates = clock_rates(mc, ca)
 
         def forward(params: np.ndarray) -> np.ndarray:
-            m = MassConfig(positions=params[:1].reshape(1, 1), masses=params[1:])
-            return clock_rates(m, ca)
+            return clock_rates_batch(params[:1].reshape(1, 1), params[1:2], ca)[0]
 
         pf = ParticleFilter(
             n_particles=2000,

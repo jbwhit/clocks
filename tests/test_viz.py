@@ -238,7 +238,10 @@ def _make_pf_and_obs(
         prior_sampler=prior_sampler,
         forward_model=forward_model,
         noise_std=0.005,
-        jitter_std=0.02,
+        # Animation tests exercise rendering, not legacy proposal behavior.
+        # Keep candidates inside the strict MassConfig contract.
+        jitter="fixed",
+        jitter_std=0.0,
         rng=rng,
     )
     return pf, observations
@@ -593,6 +596,8 @@ class TestAnimationProcessesObservationsOnce:
                 clock_array_1d,
             ),
             noise_std=0.01,
+            jitter="fixed",
+            jitter_std=0.0,
         )
         animate_inference(
             clock_array_1d,

@@ -1,9 +1,40 @@
 """Public configuration objects for the clocks library API."""
 
-import math
 from dataclasses import dataclass
+from numbers import Integral
 
+from clocks._validation import finite_float
 from clocks.types import ClockArray, MassConfig
+
+
+def _positive_int(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a positive integer")
+    result = int(value)
+    if result <= 0:
+        raise ValueError(f"{name} must be > 0")
+    return result
+
+
+def _seed(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError("seed must be a nonnegative integer or None")
+    result = int(value)
+    if result < 0:
+        raise ValueError("seed must be a nonnegative integer or None")
+    return result
+
+
+def _finite_range(name: str, value: object) -> tuple[float, float]:
+    try:
+        lower, upper = value
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must contain exactly two values") from error
+    return finite_float(f"{name} lower endpoint", lower), finite_float(
+        f"{name} upper endpoint", upper
+    )
 
 
 @dataclass(frozen=True)
@@ -13,8 +44,10 @@ class NoiseConfig:
     observation_std: float
 
     def __post_init__(self) -> None:
-        if self.observation_std <= 0:
+        observation_std = finite_float("observation_std", self.observation_std)
+        if observation_std <= 0:
             raise ValueError("observation_std must be > 0")
+        object.__setattr__(self, "observation_std", observation_std)
 
 
 @dataclass(frozen=True)
@@ -30,10 +63,14 @@ class PriorConfig:
     mass_range: tuple[float, float]
 
     def __post_init__(self) -> None:
-        if self.position_range[0] >= self.position_range[1]:
+        position_range = _finite_range("position_range", self.position_range)
+        mass_range = _finite_range("mass_range", self.mass_range)
+        if position_range[0] >= position_range[1]:
             raise ValueError("position_range must be increasing")
-        if self.mass_range[0] <= 0 or self.mass_range[0] >= self.mass_range[1]:
+        if mass_range[0] <= 0 or mass_range[0] >= mass_range[1]:
             raise ValueError("mass_range must be positive and increasing")
+        object.__setattr__(self, "position_range", position_range)
+        object.__setattr__(self, "mass_range", mass_range)
 
 
 @dataclass(frozen=True)
@@ -60,24 +97,32 @@ class InferenceConfig:
     seed: int | None = None
 
     def __post_init__(self) -> None:
-        if self.n_particles <= 0:
-            raise ValueError("n_particles must be > 0")
-        if isinstance(self.n_masses, int):
-            if self.n_masses <= 0:
-                raise ValueError("n_masses must be > 0")
-        else:
+        n_particles = _positive_int("n_particles", self.n_particles)
+        if isinstance(self.n_masses, tuple):
             if not self.n_masses:
                 raise ValueError("n_masses candidates must not be empty")
-            if any(k <= 0 for k in self.n_masses):
-                raise ValueError("n_masses candidates must all be > 0")
-        if not math.isfinite(self.jitter_std) or self.jitter_std < 0:
-            raise ValueError(
-                f"jitter_std must be finite and >= 0, got {self.jitter_std}"
-            )
-        if not math.isfinite(self.jitter_tau) or self.jitter_tau <= 0:
-            raise ValueError(
-                f"jitter_tau must be finite and > 0, got {self.jitter_tau}"
-            )
+            try:
+                n_masses: int | tuple[int, ...] = tuple(
+                    _positive_int("n_masses candidates", count)
+                    for count in self.n_masses
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "n_masses candidates must all be positive integers"
+                ) from error
+        else:
+            n_masses = _positive_int("n_masses", self.n_masses)
+        jitter_std = finite_float("jitter_std", self.jitter_std)
+        if jitter_std < 0:
+            raise ValueError("jitter_std must be >= 0")
+        jitter_tau = finite_float("jitter_tau", self.jitter_tau)
+        if jitter_tau <= 0:
+            raise ValueError("jitter_tau must be > 0")
+        object.__setattr__(self, "n_particles", n_particles)
+        object.__setattr__(self, "n_masses", n_masses)
+        object.__setattr__(self, "jitter_std", jitter_std)
+        object.__setattr__(self, "jitter_tau", jitter_tau)
+        object.__setattr__(self, "seed", _seed(self.seed))
 
 
 @dataclass(frozen=True)
@@ -91,5 +136,9 @@ class SimulationConfig:
     seed: int | None = None
 
     def __post_init__(self) -> None:
-        if self.n_observations <= 0:
-            raise ValueError("n_observations must be > 0")
+        object.__setattr__(
+            self,
+            "n_observations",
+            _positive_int("n_observations", self.n_observations),
+        )
+        object.__setattr__(self, "seed", _seed(self.seed))

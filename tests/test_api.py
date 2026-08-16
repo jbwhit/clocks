@@ -57,6 +57,8 @@ def _make_inference_config(
     n_masses: int | tuple[int, ...] = 2,
     n_particles: int = 400,
     seed: int = 42,
+    jitter_std: float = 0.02,
+    jitter_tau: float = 15.0,
 ) -> InferenceConfig:
     return InferenceConfig(
         clock_array=_make_clock_array(),
@@ -64,7 +66,8 @@ def _make_inference_config(
         prior=_make_prior(),
         n_particles=n_particles,
         n_masses=n_masses,
-        jitter_std=0.02,
+        jitter_std=jitter_std,
+        jitter_tau=jitter_tau,
         seed=seed,
     )
 
@@ -220,9 +223,31 @@ def test_noise_config_rejects_nonpositive_std() -> None:
         NoiseConfig(observation_std=0.0)
 
 
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_noise_config_rejects_nonfinite_std(value: float) -> None:
+    with pytest.raises(ValueError, match="observation_std must be finite"):
+        NoiseConfig(observation_std=value)
+
+
 def test_prior_config_rejects_invalid_position_range() -> None:
     with pytest.raises(ValueError, match="position_range must be increasing"):
         PriorConfig(position_range=(2.0, -2.0), mass_range=(0.1, 2.0))
+
+
+@pytest.mark.parametrize(
+    ("position_range", "mass_range"),
+    [
+        ((-np.inf, 1.0), (0.1, 2.0)),
+        ((-1.0, np.inf), (0.1, 2.0)),
+        ((-1.0, 1.0), (np.nan, 2.0)),
+        ((-1.0, 1.0), (0.1, np.inf)),
+    ],
+)
+def test_prior_config_rejects_nonfinite_endpoints(
+    position_range: tuple[float, float], mass_range: tuple[float, float]
+) -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        PriorConfig(position_range=position_range, mass_range=mass_range)
 
 
 def test_inference_config_rejects_nonpositive_n_masses() -> None:
@@ -245,6 +270,48 @@ def test_inference_config_rejects_empty_candidate_models() -> None:
             n_particles=100,
             n_masses=(),
         )
+
+
+@pytest.mark.parametrize("field", ["n_particles", "n_masses"])
+def test_inference_config_rejects_bool_counts(field: str) -> None:
+    kwargs = {field: True}
+    with pytest.raises(ValueError, match=field):
+        _make_inference_config(**kwargs)
+
+
+@pytest.mark.parametrize("n_masses", [(1, True), (1, 2.5)])
+def test_inference_config_rejects_noninteger_model_counts(n_masses: tuple) -> None:
+    with pytest.raises(ValueError, match="n_masses"):
+        _make_inference_config(n_masses=n_masses)
+
+
+@pytest.mark.parametrize("seed", [True, 1.5, "1"])
+def test_inference_config_rejects_invalid_seed(seed: object) -> None:
+    with pytest.raises(ValueError, match="seed"):
+        _make_inference_config(seed=seed)
+
+
+@pytest.mark.parametrize("field", ["jitter_std", "jitter_tau"])
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_inference_config_rejects_nonfinite_numeric_controls(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        _make_inference_config(**{field: value})
+
+
+@pytest.mark.parametrize("n_observations", [True, 1.5])
+def test_simulation_config_rejects_noninteger_observation_count(
+    n_observations: object,
+) -> None:
+    with pytest.raises(ValueError, match="n_observations"):
+        _make_simulation_config(n_observations=n_observations)
+
+
+@pytest.mark.parametrize("seed", [True, 1.5, "1"])
+def test_simulation_config_rejects_invalid_seed(seed: object) -> None:
+    with pytest.raises(ValueError, match="seed"):
+        _make_simulation_config(seed=seed)
 
 
 def test_public_api_is_exported_from_package() -> None:
