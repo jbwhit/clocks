@@ -29,5 +29,5 @@ def finite_float_array(
         raise ValueError(f"{name} must be nonempty")
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must contain only finite values")
-    array.setflags(write=False)
-    return array
+    immutable_buffer = array.tobytes(order="C")
+    return np.frombuffer(immutable_buffer, dtype=np.float64).reshape(array.shape)

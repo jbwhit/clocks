@@ -159,3 +159,20 @@ def test_mass_and_particle_weights_are_defensive_read_only_copies() -> None:
         mass_config.masses[0] = 2.0
     with pytest.raises(ValueError, match="read-only"):
         state.weights[0] = 0.0
+
+
+@pytest.mark.parametrize(
+    "array",
+    [
+        MassConfig([[0.0]], [0.1]).masses,
+        ParticleState([[0.0]], [1.0], 0).weights,
+    ],
+)
+def test_public_arrays_cannot_have_writeability_reenabled(array: np.ndarray) -> None:
+    original = array.copy()
+
+    with pytest.raises(ValueError):
+        array.setflags(write=True)
+
+    assert not array.flags.writeable
+    np.testing.assert_array_equal(array, original)
