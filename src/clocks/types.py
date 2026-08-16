@@ -10,14 +10,14 @@ from clocks._validation import finite_float, finite_float_array
 
 
 def _positions_array(value: object) -> NDArray[np.float64]:
-    positions = np.array(value, dtype=np.float64, copy=True)
+    positions = np.asarray(value)
     if positions.ndim == 1:
         positions = positions.reshape(-1, 1)
     return finite_float_array("positions", positions, ndim=2)
 
 
 def _masses_array(value: object) -> NDArray[np.float64]:
-    masses = np.array(value, dtype=np.float64, copy=True)
+    masses = np.asarray(value)
     if masses.ndim == 0:
         masses = masses.reshape(1)
     return finite_float_array("masses", masses, ndim=1)

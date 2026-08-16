@@ -398,22 +398,24 @@ Expected: `GaussianObservationStats` and the new target evaluator do not exist.
 
 **Step 3: Implement immutable sufficient statistics**
 
-Add a private frozen dataclass with `n`, `sum_y`, and `sum_y2`. Its batch
-formula must be:
+Add a frozen dataclass with `n`, a fixed `origin`, `centered_sum`, and
+`centered_sum_squares`. Its batch formula must be:
 
 ```python
 quadratic = (
-    self.sum_y2
-    - 2.0 * predicted @ self.sum_y
-    + self.n * np.sum(predicted**2, axis=1)
+    self.centered_sum_squares
+    - 2.0 * (predicted - self.origin) @ self.centered_sum
+    + self.n * np.sum((predicted - self.origin) ** 2, axis=1)
 )
 normalizer = self.n * n_channels * math.log(noise_std * math.sqrt(2.0 * math.pi))
 return -normalizer - quadratic / (2.0 * noise_std**2)
 ```
 
-Represent fractional current data by adding `beta` to `n`, `beta * rates` to
-`sum_y`, and `beta * dot(rates, rates)` to `sum_y2` without mutating completed
-statistics.
+Use the first observation as the fixed origin. Represent fractional current
+data by adding `beta` to `n`, `beta * (rates - origin)` to `centered_sum`, and
+`beta * dot(rates - origin, rates - origin)` to `centered_sum_squares` without
+mutating completed statistics. Do not retain redundant raw moments: they are
+numerically unstable near unit clock rates and can overflow for finite inputs.
 
 **Step 4: Implement support-aware prediction**
 

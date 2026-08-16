@@ -13,13 +13,15 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.special import logsumexp
 
-from clocks._validation import finite_float_array
+from clocks._validation import finite_float_array, real_float_array
 from clocks.types import Observation, ParticleState, UpdateDiagnostics
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
 _WEIGHT_SUM_ATOL = 1e-12
 _WEIGHT_SUM_EPS_MULTIPLIER = 4.0
 _UNIT_INTERVAL_MAX = np.nextafter(1.0, 0.0)
+_LOG_SQRT_2PI = 0.5 * math.log(2.0 * math.pi)
+_STATS_ROUNDOFF_MULTIPLIER = 64.0
 
 
 def _finite_float(name: str, value: object) -> float:
@@ -30,6 +32,30 @@ def _finite_float(name: str, value: object) -> float:
     if not math.isfinite(result):
         raise ValueError(f"{name} must be finite")
     return result
+
+
+def _scaled_residuals(
+    first: NDArray[np.float64],
+    second: NDArray[np.float64],
+    scale: float,
+) -> NDArray[np.float64]:
+    """Subtract before scaling when possible, with an overflow-safe fallback."""
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        residual = first - second
+        scaled = residual / scale
+        overflowed = ~np.isfinite(residual)
+        if np.any(overflowed):
+            first_values = np.broadcast_to(first, residual.shape)
+            second_values = np.broadcast_to(second, residual.shape)
+            scaled[overflowed] = (
+                first_values[overflowed] / scale - second_values[overflowed] / scale
+            )
+    return scaled
+
+
+def _gaussian_log_normalizer(noise_std: float, n_values: float) -> float:
+    """Return the Gaussian log normalizer without multiplying large floats."""
+    return n_values * (math.log(noise_std) + _LOG_SQRT_2PI)
 
 
 def _validated_resampling_inputs(
@@ -111,23 +137,47 @@ def _residual_indices(
 
 @dataclass(frozen=True)
 class GaussianObservationStats:
-    """Immutable sufficient statistics for iid vector Gaussian observations."""
+    """Immutable centered statistics for iid vector Gaussian observations."""
 
     n: float
-    sum_y: NDArray[np.float64]
-    sum_y2: float
+    origin: NDArray[np.float64]
+    centered_sum: NDArray[np.float64]
+    centered_sum_squares: float
 
     def __post_init__(self) -> None:
-        count = float(self.n)
-        sums = finite_float_array("sum_y", self.sum_y, ndim=1)
-        sum_squares = float(self.sum_y2)
-        if not math.isfinite(count) or count < 0:
-            raise ValueError("n must be finite and nonnegative")
-        if not math.isfinite(sum_squares) or sum_squares < 0:
-            raise ValueError("sum_y2 must be finite and nonnegative")
+        count = _finite_float("n", self.n)
+        origin = finite_float_array("origin", self.origin, ndim=1)
+        centered_sum = finite_float_array("centered_sum", self.centered_sum, ndim=1)
+        centered_sum_squares = _finite_float(
+            "centered_sum_squares", self.centered_sum_squares
+        )
+        if count < 0:
+            raise ValueError("n must be nonnegative")
+        if centered_sum.shape != origin.shape:
+            raise ValueError(
+                f"centered_sum shape must be {origin.shape}, got {centered_sum.shape}"
+            )
+        if centered_sum_squares < 0.0:
+            raise ValueError("centered_sum_squares must be nonnegative")
+        centered_norm = math.hypot(*(float(value) for value in centered_sum))
+        consistency_bound = math.sqrt(count) * math.sqrt(centered_sum_squares)
+        inconsistent_empty = count == 0.0 and (
+            centered_norm != 0.0 or centered_sum_squares != 0.0
+        )
+        inconsistent_moments = centered_norm > consistency_bound and not math.isclose(
+            centered_norm,
+            consistency_bound,
+            rel_tol=_STATS_ROUNDOFF_MULTIPLIER * np.finfo(np.float64).eps,
+            abs_tol=0.0,
+        )
+        if inconsistent_empty or inconsistent_moments:
+            raise ValueError(
+                "centered_sum and centered_sum_squares are inconsistent with n"
+            )
         object.__setattr__(self, "n", count)
-        object.__setattr__(self, "sum_y", sums)
-        object.__setattr__(self, "sum_y2", sum_squares)
+        object.__setattr__(self, "origin", origin)
+        object.__setattr__(self, "centered_sum", centered_sum)
+        object.__setattr__(self, "centered_sum_squares", centered_sum_squares)
 
     @classmethod
     def empty(cls, n_channels: int) -> GaussianObservationStats:
@@ -135,7 +185,8 @@ class GaussianObservationStats:
             raise ValueError("n_channels must be a positive integer")
         if n_channels <= 0:
             raise ValueError("n_channels must be a positive integer")
-        return cls(0.0, np.zeros(int(n_channels)), 0.0)
+        zeros = np.zeros(int(n_channels))
+        return cls(0.0, zeros, zeros, 0.0)
 
     def add(self, observation: NDArray[np.floating]) -> GaussianObservationStats:
         return self.with_fraction(observation, 1.0)
@@ -143,45 +194,80 @@ class GaussianObservationStats:
     def with_fraction(
         self, observation: NDArray[np.floating], beta: float
     ) -> GaussianObservationStats:
-        rates = np.asarray(observation, dtype=np.float64)
-        fraction = float(beta)
-        if rates.shape != self.sum_y.shape:
+        rates = finite_float_array("observation", observation, ndim=1)
+        fraction = _finite_float("beta", beta)
+        if rates.shape != self.origin.shape:
             raise ValueError(
-                f"observation shape must be {self.sum_y.shape}, got {rates.shape}"
+                f"observation shape must be {self.origin.shape}, got {rates.shape}"
             )
-        if not np.all(np.isfinite(rates)):
-            raise ValueError("observation must be finite")
-        if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
-            raise ValueError("beta must be finite and in [0, 1]")
+        if not 0.0 <= fraction <= 1.0:
+            raise ValueError("beta must be in [0, 1]")
+        if fraction == 0.0:
+            return self
+        count = self.n + fraction
+        origin = rates if self.n == 0.0 else self.origin
+        with np.errstate(over="ignore", invalid="ignore"):
+            delta = rates - origin
+            centered_sum = self.centered_sum + fraction * delta
+            centered_sum_squares = self.centered_sum_squares + fraction * float(
+                delta @ delta
+            )
+        if not np.all(np.isfinite(centered_sum)) or not math.isfinite(
+            centered_sum_squares
+        ):
+            raise ValueError("centered observation statistics must remain finite")
         return GaussianObservationStats(
-            self.n + fraction,
-            self.sum_y + fraction * rates,
-            self.sum_y2 + fraction * float(rates @ rates),
+            count,
+            origin,
+            centered_sum,
+            centered_sum_squares,
         )
 
     def log_likelihood(
         self, predicted: NDArray[np.floating], noise_std: float
     ) -> NDArray[np.float64]:
-        predictions = np.asarray(predicted, dtype=np.float64)
-        if predictions.ndim != 2 or predictions.shape[1] != len(self.sum_y):
+        predictions = finite_float_array("predicted", predicted, ndim=2, nonempty=False)
+        if predictions.shape[1] != len(self.origin):
             raise ValueError(
                 "predicted must have shape "
-                f"(N, {len(self.sum_y)}), got {predictions.shape}"
+                f"(N, {len(self.origin)}), got {predictions.shape}"
             )
-        if not np.all(np.isfinite(predictions)):
-            raise ValueError("predictions must be finite")
-        sigma = float(noise_std)
-        if not math.isfinite(sigma) or sigma <= 0:
-            raise ValueError("noise_std must be finite and > 0")
-        quadratic = (
-            self.sum_y2
-            - 2.0 * predictions @ self.sum_y
-            + self.n * np.sum(predictions**2, axis=1)
+        sigma = _finite_float("noise_std", noise_std)
+        if sigma <= 0:
+            raise ValueError("noise_std must be > 0")
+        normalizer = _gaussian_log_normalizer(sigma, self.n * len(self.origin))
+        if self.n == 0.0:
+            return np.full(len(predictions), -normalizer)
+
+        centered_norm = math.hypot(*(float(value) for value in self.centered_sum))
+        explained_scatter = (centered_norm / math.sqrt(self.n)) ** 2
+        within_scatter = self.centered_sum_squares - explained_scatter
+        scatter_roundoff_bound = (
+            _STATS_ROUNDOFF_MULTIPLIER
+            * np.finfo(np.float64).eps
+            * (self.centered_sum_squares + explained_scatter)
         )
-        normalizer = (
-            self.n * len(self.sum_y) * math.log(sigma * math.sqrt(2.0 * math.pi))
+        if within_scatter < -scatter_roundoff_bound:
+            raise ValueError(
+                "centered statistics produced materially negative within scatter"
+            )
+        within_scatter = max(within_scatter, 0.0)
+
+        result = np.full(len(predictions), -np.inf)
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            empirical_mean = self.origin + self.centered_sum / self.n
+            scaled_mean_residual = _scaled_residuals(predictions, empirical_mean, sigma)
+            scaled_within_scatter = (np.float64(math.sqrt(within_scatter)) / sigma) ** 2
+            scaled_quadratic = scaled_within_scatter + self.n * np.sum(
+                scaled_mean_residual**2, axis=1
+            )
+        if not np.all(np.isfinite(empirical_mean)):
+            raise ValueError("centered statistics must imply a finite mean")
+        finite_quadratic = np.isfinite(scaled_quadratic)
+        result[finite_quadratic] = (
+            -normalizer - 0.5 * scaled_quadratic[finite_quadratic]
         )
-        return -normalizer - quadratic / (2.0 * sigma**2)
+        return result
 
 
 def _effective_sample_size(weights: NDArray[np.floating]) -> float:
@@ -329,8 +415,10 @@ class ParticleFilter:
         self.proposal_scale = float(proposal_scale)
         self.rng = rng if rng is not None else np.random.default_rng()
 
-        particles = np.asarray(
-            prior_sampler(self.rng, self.n_particles), dtype=np.float64
+        particles = finite_float_array(
+            "prior_sampler output",
+            prior_sampler(self.rng, self.n_particles),
+            ndim=2,
         )
         if particles.ndim != 2 or particles.shape[0] != self.n_particles:
             raise ValueError(
@@ -377,7 +465,9 @@ class ParticleFilter:
         return self._last_log_evidence_increments
 
     def _log_prior(self, particles: NDArray[np.floating]) -> NDArray[np.float64]:
-        values = np.asarray(self.log_prior_density(particles), dtype=np.float64)
+        values = real_float_array(
+            "log_prior_density output", self.log_prior_density(particles)
+        )
         if values.shape != (len(particles),):
             raise ValueError(
                 f"log_prior_density must return shape ({len(particles)},), "
@@ -396,12 +486,13 @@ class ParticleFilter:
         valid_particles = particles[valid]
         expected = (len(valid_particles), n_channels)
         if self.forward_model_batch is not None:
-            predicted = np.asarray(
-                self.forward_model_batch(valid_particles), dtype=np.float64
+            predicted = real_float_array(
+                "forward_model_batch output",
+                self.forward_model_batch(valid_particles),
             )
         else:
             rows = [
-                np.asarray(self.forward_model(row), dtype=np.float64)
+                real_float_array("forward_model output", self.forward_model(row))
                 for row in valid_particles
             ]
             predicted = np.asarray(rows, dtype=np.float64)
@@ -423,10 +514,20 @@ class ParticleFilter:
         result = np.full(len(particles), -np.inf)
         if np.any(valid):
             predictions = self._predictions(particles, valid, observation.rates.size)
-            residual = predictions - observation.rates
-            result[valid] = -observation.rates.size * math.log(
-                self.noise_std * math.sqrt(2.0 * math.pi)
-            ) - np.sum(residual**2, axis=1) / (2.0 * self.noise_std**2)
+            normalizer = _gaussian_log_normalizer(
+                self.noise_std, observation.rates.size
+            )
+            likelihood = np.full(len(predictions), -np.inf)
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                scaled_residual = _scaled_residuals(
+                    predictions, observation.rates, self.noise_std
+                )
+                squared_residual = np.sum(scaled_residual**2, axis=1)
+                finite_squared = np.isfinite(squared_residual)
+            likelihood[finite_squared] = (
+                -normalizer - 0.5 * squared_residual[finite_squared]
+            )
+            result[valid] = likelihood
         return result
 
     def _log_target(
@@ -445,7 +546,7 @@ class ParticleFilter:
         completed = self._completed_stats
         if completed is None:
             completed = GaussianObservationStats.empty(observation.rates.size)
-        elif len(completed.sum_y) != observation.rates.size:
+        elif len(completed.origin) != observation.rates.size:
             raise ValueError(
                 "observation channel count does not match previous observations"
             )
@@ -555,7 +656,7 @@ class ParticleFilter:
         if not isinstance(observation, Observation):
             raise TypeError("observation must be an Observation")
         if self._completed_stats is not None and observation.rates.shape != (
-            len(self._completed_stats.sum_y),
+            len(self._completed_stats.origin),
         ):
             raise ValueError(
                 "observation channel count does not match previous observations"

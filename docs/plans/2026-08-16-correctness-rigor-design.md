@@ -155,15 +155,21 @@ an improper flat prior.
 ### Efficient target evaluation
 
 The observation model is static with independent Gaussian noise of fixed
-standard deviation. Completed observations can therefore be represented by
-three sufficient statistics: the count `n`, component-wise sum `sum_y`, and
-scalar sum of squares `sum_y2`. For a prediction vector `mu(theta)`, the
-cumulative Gaussian log likelihood is
+standard deviation. Completed observations are represented by centered
+sufficient statistics: count `n`, a fixed observation-space `origin`, the
+component-wise sum `centered_sum = sum(y - origin)`, and the scalar
+`centered_sum_squares = sum(||y - origin||^2)`. For a prediction vector
+`mu(theta)`, the cumulative Gaussian log likelihood is
 
 \[
 -nC\log(\sigma\sqrt{2\pi})
--\frac{\sum\|y\|^2 - 2\mu^T\sum y + n\|\mu\|^2}{2\sigma^2}.
+-\frac{Q - 2(\mu-a)^T s + n\|\mu-a\|^2}{2\sigma^2},
 \]
+
+where `a` is the origin, `s` is the centered sum, and `Q` is the centered sum
+of squares. Keeping all quadratic terms at the residual scale avoids the
+catastrophic cancellation of raw first and second moments for clock rates near
+one at low noise.
 
 During tempering, the current observation contributes fractionally by `beta`.
 This lets each MH stage evaluate the complete target in `O(N * C)` without

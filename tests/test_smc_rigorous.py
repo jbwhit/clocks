@@ -2,6 +2,7 @@
 
 import copy
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -58,14 +59,165 @@ def test_sufficient_statistics_match_direct_gaussian_sum() -> None:
     np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
 
 
-def test_sufficient_statistics_are_deeply_immutable() -> None:
-    source = np.array([1.0, 2.0])
-    stats = GaussianObservationStats(3.0, source, 5.0)
-    source[0] = 99.0
+def test_sufficient_statistics_are_stable_near_unit_rates_at_low_noise() -> None:
+    scale = 1e-9
+    observations = np.array(
+        [
+            [1.0 + scale, 1.0 - 2.0 * scale],
+            [1.0 - scale, 1.0 + scale],
+            [1.0 + 2.0 * scale, 1.0 - scale],
+        ]
+    )
+    predicted = np.array(
+        [
+            [1.0, 1.0],
+            [1.0 + scale / 2.0, 1.0 - scale / 2.0],
+        ]
+    )
+    noise_std = scale / 10.0
+    stats = GaussianObservationStats.empty(2)
+    for row in observations:
+        stats = stats.add(row)
 
-    np.testing.assert_array_equal(stats.sum_y, [1.0, 2.0])
+    actual = stats.log_likelihood(predicted, noise_std)
+    residuals = observations[:, np.newaxis, :] - predicted[np.newaxis, :, :]
+    expected = -observations.shape[0] * observations.shape[1] * math.log(
+        noise_std * math.sqrt(2.0 * math.pi)
+    ) - np.sum(residuals**2, axis=(0, 2)) / (2.0 * noise_std**2)
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-8, atol=1e-8)
+
+
+def test_sufficient_statistics_match_direct_sum_for_symmetric_unit_rates() -> None:
+    values = 1.0 + 1e-9 * np.where(np.arange(100) % 2, 1, -1)
+    prediction = np.array([[1.0]])
+    sigma = 1e-9
+    stats = GaussianObservationStats.empty(1)
+    for value in values:
+        stats = stats.add(np.array([value]))
+
+    actual = stats.log_likelihood(prediction, sigma)[0]
+    expected = sum(
+        -math.log(sigma * math.sqrt(2.0 * math.pi))
+        - (value - prediction[0, 0]) ** 2 / (2.0 * sigma**2)
+        for value in values
+    )
+
+    assert actual == pytest.approx(expected, rel=1e-13, abs=1e-13)
+
+
+def test_centered_sufficient_statistics_are_deeply_immutable() -> None:
+    origin = np.array([1.0, 2.0])
+    centered_sum = np.array([0.2, -0.1])
+    stats = GaussianObservationStats(3.0, origin, centered_sum, 5.0)
+    origin[0] = 99.0
+    centered_sum[0] = 99.0
+
+    np.testing.assert_array_equal(stats.origin, [1.0, 2.0])
+    np.testing.assert_array_equal(stats.centered_sum, [0.2, -0.1])
     with pytest.raises(ValueError, match="WRITEABLE"):
-        stats.sum_y.setflags(write=True)
+        stats.origin.setflags(write=True)
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        stats.centered_sum.setflags(write=True)
+
+
+def test_centered_statistics_avoid_raw_square_overflow_for_zero_residual() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        stats = GaussianObservationStats.empty(1).add(np.array([1e308]))
+        actual = stats.log_likelihood(np.array([[1e308]]), noise_std=1.0)
+
+    expected = np.array([-math.log(math.sqrt(2.0 * math.pi))])
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
+
+
+def test_centered_statistics_reject_unrepresentable_update_without_warning() -> None:
+    stats = GaussianObservationStats.empty(1).add(np.array([1e308]))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="centered.*finite"):
+            stats.add(np.array([-1e308]))
+
+
+def test_extreme_prediction_has_negative_infinite_likelihood_without_warning() -> None:
+    stats = GaussianObservationStats.empty(1).add(np.array([1e308]))
+    predictions = np.array([[-1e308], [1e308]])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        actual = stats.log_likelihood(predictions, noise_std=1.0)
+
+    assert actual[0] == -np.inf
+    assert actual[1] == -math.log(math.sqrt(2.0 * math.pi))
+
+
+def test_large_noise_has_finite_normalizer_and_stable_scaled_residuals() -> None:
+    sigma = 1e308
+    stats = GaussianObservationStats.empty(1).add(np.array([1e308]))
+    predictions = np.array([[-1e308], [1e308]])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        actual = stats.log_likelihood(predictions, noise_std=sigma)
+
+    normalizer = math.log(sigma) + 0.5 * math.log(2.0 * math.pi)
+    np.testing.assert_allclose(actual, [-normalizer - 2.0, -normalizer])
+
+
+def test_completed_square_avoids_overflowing_cross_term_cancellation() -> None:
+    observations = np.array([0.0, 1e154])
+    stats = GaussianObservationStats.empty(1)
+    for value in observations:
+        stats = stats.add(np.array([value]))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        actual = stats.log_likelihood(np.array([[1e154]]), noise_std=1.0)[0]
+
+    expected = sum(
+        -0.5 * math.log(2.0 * math.pi) - 0.5 * (value - 1e154) ** 2
+        for value in observations
+    )
+    assert np.isfinite(actual)
+    assert actual == pytest.approx(expected, rel=1e-15)
+
+
+@pytest.mark.parametrize(
+    ("n", "centered_sum", "centered_sum_squares"),
+    [
+        (1.0, np.array([2.0]), 1.0),
+        (0.0, np.array([0.0]), 1.0),
+    ],
+)
+def test_centered_statistics_reject_materially_inconsistent_constructor(
+    n: float, centered_sum: np.ndarray, centered_sum_squares: float
+) -> None:
+    with pytest.raises(ValueError, match="inconsistent"):
+        GaussianObservationStats(
+            n=n,
+            origin=np.array([0.0]),
+            centered_sum=centered_sum,
+            centered_sum_squares=centered_sum_squares,
+        )
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda stats: stats.log_likelihood(np.array([[1.0 + 1.0j]]), 1.0),
+        lambda stats: stats.log_likelihood(np.array([[1.0]]), 1.0 + 1.0j),
+    ],
+)
+def test_sufficient_statistics_reject_complex_likelihood_inputs_without_warning(
+    operation,
+) -> None:
+    stats = GaussianObservationStats.empty(1).add(np.array([1.0]))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError):
+            operation(stats)
 
 
 @pytest.mark.parametrize("beta", [0.0, 0.37, 1.0])
@@ -154,6 +306,126 @@ def test_prior_sampler_must_return_exact_finite_supported_shape() -> None:
             1.0,
             log_prior_density=lambda values: np.where(values[:, 0] < 3, 0.0, -np.inf),
         )
+
+
+def test_prior_sampler_rejects_complex_output_without_warning() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="real-valued"):
+            ParticleFilter(
+                2,
+                lambda rng, n: np.ones((n, 1), dtype=np.complex128),
+                lambda value: value,
+                1.0,
+                log_prior_density=lambda values: np.zeros(len(values)),
+            )
+
+
+def test_log_prior_rejects_complex_output_during_construction_without_warning() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="real-valued"):
+            ParticleFilter(
+                2,
+                lambda rng, n: np.zeros((n, 1)),
+                lambda value: value,
+                1.0,
+                log_prior_density=lambda values: np.zeros(
+                    len(values), dtype=np.complex128
+                ),
+            )
+
+
+def test_log_prior_rejects_complex_output_during_update_without_warning() -> None:
+    calls = 0
+
+    def log_prior(values: np.ndarray) -> np.ndarray:
+        nonlocal calls
+        calls += 1
+        dtype = np.float64 if calls == 1 else np.complex128
+        return np.zeros(len(values), dtype=dtype)
+
+    particle_filter = ParticleFilter(
+        2,
+        lambda rng, n: np.zeros((n, 1)),
+        lambda value: value,
+        1.0,
+        log_prior_density=log_prior,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="real-valued"):
+            particle_filter.update(Observation([0.0], 0.0))
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_forward_models_reject_complex_output_without_warning(batch: bool) -> None:
+    kwargs = {}
+    if batch:
+        kwargs["forward_model_batch"] = lambda values: np.ones(
+            (len(values), 1), dtype=np.complex128
+        )
+    particle_filter = ParticleFilter(
+        2,
+        lambda rng, n: np.zeros((n, 1)),
+        lambda value: np.ones(1, dtype=np.complex128),
+        1.0,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        **kwargs,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="real-valued"):
+            particle_filter.update(Observation([0.0], 0.0))
+
+
+def test_update_maps_unrepresentable_residual_to_zero_weight_without_warning() -> None:
+    initial = np.array([[-1.0], [1.0]])
+    particle_filter = ParticleFilter(
+        2,
+        lambda rng, n: initial.copy(),
+        lambda value: np.array([np.copysign(1e308, value[0])]),
+        1.0,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        forward_model_batch=lambda values: np.copysign(1e308, values),
+        ess_target=0.1,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        state = particle_filter.update(Observation([1e308], 0.0))
+
+    np.testing.assert_array_equal(state.weights, np.array([0.0, 1.0]))
+
+
+def test_large_noise_update_uses_stable_scaled_residuals_without_warning() -> None:
+    sigma = 1e308
+    initial = np.array([[-1.0], [1.0]])
+    particle_filter = ParticleFilter(
+        2,
+        lambda rng, n: initial.copy(),
+        lambda value: np.array([np.copysign(1e308, value[0])]),
+        sigma,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        forward_model_batch=lambda values: np.copysign(1e308, values),
+        ess_target=0.1,
+    )
+    observation = Observation([1e308], 0.0)
+    normalizer = math.log(sigma) + 0.5 * math.log(2.0 * math.pi)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        direct = particle_filter._observation_log_likelihood(
+            particle_filter.state.particles, observation
+        )
+        state = particle_filter.update(observation)
+
+    np.testing.assert_allclose(direct, [-normalizer - 2.0, -normalizer])
+    expected_weights = np.exp(np.array([-2.0, 0.0]))
+    expected_weights /= expected_weights.sum()
+    np.testing.assert_allclose(state.weights, expected_weights)
 
 
 def test_next_beta_hits_target_ess_and_evidence_identity() -> None:

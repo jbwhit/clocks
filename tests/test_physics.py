@@ -21,6 +21,38 @@ from clocks.physics import (
 from clocks.types import ClockArray, MassConfig
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda: compute_distances(np.array([[0.0 + 1.0j]]), np.array([[1.0]])),
+        lambda: compute_distances(
+            np.array([[0.0]]), np.array([[1.0]]), track_offset=1.0 + 1.0j
+        ),
+        lambda: gravitational_potential(np.array([[1.0]]), np.array([0.01 + 1.0j])),
+        lambda: time_dilation_factor(np.array([-0.01 + 1.0j])),
+        lambda: clock_rates_batch(
+            np.array([[1.0 + 1.0j]]),
+            np.array([0.01]),
+            ClockArray([[0.0]], track_offset=1.0),
+        ),
+        lambda: clock_rates_density_gaussian_batch(
+            np.array([[0.0, 1.0, 0.01 + 1.0j]]),
+            ClockArray([[0.0]], track_offset=1.0),
+        ),
+        lambda: clock_rates_density_gaussian_batch(
+            np.array([[0.0, 1.0, 0.01]]),
+            ClockArray([[0.0]], track_offset=1.0),
+            integration_limit=10.0 + 1.0j,
+        ),
+    ],
+)
+def test_public_physics_inputs_reject_complex_values_without_warning(operation) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="real-valued"):
+            operation()
+
+
 class TestComputeDistances:
     def test_1d_single(self) -> None:
         clocks = np.array([[0.0], [3.0], [5.0]])

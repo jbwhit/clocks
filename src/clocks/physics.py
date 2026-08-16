@@ -9,7 +9,7 @@ from numbers import Integral
 import numpy as np
 from numpy.typing import NDArray
 
-from clocks._validation import finite_float
+from clocks._validation import finite_float, real_float_array
 from clocks.types import ClockArray, MassConfig
 
 WEAK_FIELD_LIMIT = 0.1
@@ -21,7 +21,7 @@ class PhysicsDomainError(ValueError):
 
 
 def _finite_array(name: str, value: object, *, ndim: int) -> NDArray[np.float64]:
-    array = np.asarray(value, dtype=np.float64)
+    array = real_float_array(name, value)
     if array.ndim != ndim:
         raise ValueError(f"{name} must be {ndim}-D, got shape {array.shape}")
     if 0 in array.shape:
@@ -125,7 +125,7 @@ def time_dilation_factor(
     potential: NDArray[np.floating],
 ) -> NDArray[np.float64]:
     """Return exactly ``sqrt(1 + 2 Phi)`` inside the weak-field domain."""
-    array = np.asarray(potential, dtype=np.float64)
+    array = real_float_array("potential", potential)
     if array.ndim != 1:
         raise ValueError(f"potential must be 1-D, got shape {array.shape}")
     if array.size == 0:

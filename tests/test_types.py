@@ -1,9 +1,31 @@
 """Contract tests for public simulation and inference data structures."""
 
+import warnings
+
 import numpy as np
 import pytest
 
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: MassConfig([[0.0 + 1.0j]], [0.1]),
+        lambda: MassConfig([[0.0]], [0.1 + 1.0j]),
+        lambda: ClockArray([[0.0 + 1.0j]]),
+        lambda: ClockArray([[0.0]], track_offset=1.0 + 1.0j),
+        lambda: Observation([1.0 + 1.0j], time=0.0),
+        lambda: Observation([1.0], time=1.0 + 1.0j),
+        lambda: ParticleState([[0.0 + 1.0j]], [1.0], 0),
+        lambda: ParticleState([[0.0]], [1.0 + 1.0j], 0),
+    ],
+)
+def test_public_numeric_types_reject_complex_values_without_warning(factory) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="real-valued"):
+            factory()
 
 
 def test_mass_config_coerces_documented_shorthands_to_float64() -> None:
