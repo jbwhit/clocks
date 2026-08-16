@@ -33,17 +33,17 @@ Two workflows run on GitHub Actions:
   re-renders and redeploys this site on every push to `main`, so every
   executed-cell figure you see is regenerated from source at deploy time. The
   demo GIFs, the density PNG, and the echolocation range-study PNG are the
-  exceptions: the currently committed copies are legacy, pre-remediation
-  assets pending one-shot certification and regeneration. The current
-  `uv run demo-*` commands execute the corrected code, but do not yet claim to
-  reproduce those legacy bytes or results. The development range grid uses
+  exceptions: the currently committed copies were generated explicitly from
+  the corrected code after one-shot certification. The `uv run demo-*`
+  commands regenerate their scenarios, but image encoders are not claimed to
+  be byte-deterministic across tool versions. The development range grid uses
   `uv run scripts/scan_echolocation_range.py --seed-block 0`; its controls and
-  tolerances are now frozen, while the reserved 400–411 block has not yet been
-  run once. See the
+  tolerances are frozen, and the reserved 400–411 block was run exactly once.
+  See the
   [echolocation page](../story/gravitational-echolocation.qmd).
 
-The pending protected seeds establish deterministic regression cases, not a
-population reliability estimate. SMC evidence is similarly a
+The protected fixed-seed results establish deterministic regression cases,
+not a population reliability estimate. SMC evidence is similarly a
 consistent Monte Carlo estimator with finite-particle sampling error, not a
 deterministic exact integral.
 

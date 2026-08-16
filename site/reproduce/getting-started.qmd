@@ -43,7 +43,8 @@ This runs the declared development grid on seeds 0–11. The code locks
 protected blocks starting at 400 to the scenario-default controls and rejects
 command-line overrides. Those defaults and the acceptance tolerances are
 scientifically frozen from the Task 11 development calibration. The 400–411
-block has not yet been run.
+block was then run exactly once; its tracked results are fixed-case regression
+evidence, not a population reliability estimate.
 
 ## Use the library
 

@@ -1,4 +1,4 @@
-# Development calibration freeze — 2026-08-16
+# Calibration, certification, and generated assets — 2026-08-16
 
 This report records the development-only calibration used to freeze the two
 shipped scenario configurations after the rigorous SMC remediation. It is a
@@ -14,8 +14,10 @@ ranked by the predeclared lexicographic rule:
 4. lower rejuvenation-step count.
 
 The protected seeds 400–411 were untouched while these controls, tolerances,
-and gates were selected and frozen. Certification and evidence-asset
-regeneration remain pending.
+and gates were selected and frozen. The freeze was pushed as commit `a1b016b`;
+the protected block was then executed exactly once for certification. Generated
+evidence assets were regenerated only after that certification, as recorded
+below.
 
 ## Raw development evidence
 
@@ -146,3 +148,65 @@ conservative 20.0, well below that observed development ratio.
 The selected controls, range-by-range gates, coverage count, uncertainty
 ratio, and every rounded summary line above recompute directly from the linked
 1,944-record artifact.
+
+## One-shot certification
+
+After freeze commit `a1b016b`, the reserved seeds 400–411 were executed exactly
+once with the frozen single cells and gates. The tracked
+[multi-mass certification artifact](calibration/multi_mass_2d_certification.json)
+and [echolocation certification artifact](calibration/echolocation_range_certification.json)
+contain all unrounded schema-v1 records. Their source SHA-256 hashes are,
+respectively,
+`2fb47f532ac0429f83f71eaa49ba23763bcfb230949168042139257c9b200184`
+and
+`a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941`.
+No controls, tolerances, or gates were retuned after viewing these results.
+
+The multi-mass cell passed 12/12 certification cases. Its median normalized
+error was 0.24165156854861075 and its median forward-model evaluation count
+was 833513. The deterministic replay gate remains the predeclared threshold
+of at least 10/12, rather than being tightened to the observed 12/12.
+
+The echolocation cell passed 46/72 cases overall. From close to far, the pass
+counts were 12, 12, 11, 8, 3, 0. At the close range, the median position
+standard deviation was 0.041934482917603016; maximum position and mass errors
+were 0.06890007743851188 and 0.003180807096232516. At the far range, the
+median position standard deviation was 2.789667608020031, giving a far/close
+ratio of 66.5244308246615. The deterministic replay gates remain at least
+10/12 close passes and a ratio of at least the frozen factor 20.0. Far-range
+three-standard-deviation coverage was 12/12 in certification and is reported
+as a diagnostic, not promoted after inspection into a new gate.
+
+These finite fixed-seed results are regression and calibration evidence for
+the named simulated cases, not population reliability estimates. Both
+deterministic slow replay tests subsequently passed without changing the
+frozen gates.
+
+## Corrected generated assets
+
+All seven packaged default demos were run from the certified `a1b016b` freeze,
+and the exact outputs were copied into both generated-asset trees. The
+echolocation range figure was rendered from the already-certified block-400
+JSON, without another inference run. These hashes identify the released bytes;
+they are provenance pins, not a claim that plotting and animation encoders are
+byte-deterministic across tool versions.
+
+| Asset | SHA-256 |
+|---|---|
+| `demo_1d.gif` | `417ae3523e95e85e91feca7f67e2a8bc7347006883ea27b1101f0cc164477483` |
+| `demo_2d.gif` | `eb581e327d950d7bedce87f28c383c35aa38e99792291d5ace2291ae090e1a3b` |
+| `demo_multi_mass.gif` | `bb2a3a2a74270114a516133cf2b8ef9484eb1bbc2d40b542d42d54013e30f8ad` |
+| `demo_multi_mass_2d.gif` | `ecce3ca3187010d73f5ea651826f43a1e2057ad24a45f8ad040d14979cdaa967` |
+| `demo_model_comparison.gif` | `27af99630edf6578e635d60cfd2f085442f8429ca008ce25afc935b823c6c9f2` |
+| `demo_density.png` | `a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a` |
+| `demo_echolocation_3d.gif` | `5df30d7c052c3e366216866c9b0ecc991cc777467515dd1c7699de743413d34f` |
+| `echolocation_range_study.json` | `a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941` |
+| `echolocation_range_study.png` | `6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc` |
+
+The default model-comparison asset is also a useful caution against narrating
+one finite evidence estimate as a guaranteed recovery. With K=2 truth, its
+80-observation, 2,000-particle, seed-42 run ended at K=2: 0.3990 and K=3:
+0.6010. It mildly prefers K=3 in this realization. The site reports that
+outcome directly and contrasts it with its smaller 25-observation,
+400-particle executed example rather than treating either as a universal
+model-selection verdict.

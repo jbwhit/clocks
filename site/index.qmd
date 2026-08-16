@@ -21,12 +21,12 @@ summed Newtonian potentials and a pedagogical weak-field rate map, a
 [inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
 and a series of increasingly hard detection puzzles.
 
-![Legacy 2D inference asset showing the physical setup, particle cloud, parameter traces, and observed tick rates.](assets/demo_2d.gif)
+![Current 2D inference demo showing the physical setup, particle cloud, parameter traces, and observed tick rates.](assets/demo_2d.gif)
 
-::: {.callout-warning title="Generated-evidence status"}
-The committed GIFs and PNGs predate the corrected physics and SMC
-implementation. They are illustrations, not evidence for the current code,
-until the frozen configuration is certified and the assets are regenerated.
+::: {.callout-note title="Generated-evidence status"}
+The committed GIFs and PNGs were regenerated from the corrected physics and
+SMC implementation after one-shot certification. They show named finite runs;
+they do not establish population reliability or universal recovery rates.
 :::
 
 Here is the whole round trip — simulate noisy clock readings near a hidden

@@ -155,9 +155,9 @@ Weight collapse raises `RuntimeError` instead of propagating a NaN. Low MH
 acceptance or many tempering stages can diagnose poor proposal geometry or
 a sharp update, but no single diagnostic proves convergence. The corrected
 SMC controls and acceptance tolerances are frozen from the development seeds,
-and the reserved 400–411 block has not been run. Once the protected replay is
-completed, that fixed-seed protocol will be regression and calibration
-evidence for those particular cases, not a population reliability estimate.
+and the reserved 400–411 block has now been run exactly once. That fixed-seed
+protocol is regression and calibration evidence for those particular cases,
+not a population reliability estimate.
 
 With multiple masses, ordering removes label switching from the represented
 parameterization. Proposals crossing the strict ordering boundary are

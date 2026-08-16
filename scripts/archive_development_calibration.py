@@ -1,4 +1,4 @@
-"""Validate and archive only complete development calibration evidence."""
+"""Validate and archive complete development or certification evidence."""
 
 from __future__ import annotations
 
@@ -36,6 +36,19 @@ DEVELOPMENT_CONTROL_GRID = {
 }
 MULTI_RESULT_COUNT = 27 * len(DEVELOPMENT_SEEDS)
 ECHO_RESULT_COUNT = 27 * len(ECHO_SWEEP_RANGES) * len(DEVELOPMENT_SEEDS)
+CERTIFICATION_SEEDS = (400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411)
+MULTI_CERTIFICATION_CONTROL_GRID = {
+    "ess_target": [0.7],
+    "rejuvenation_steps": [2],
+    "proposal_scale": [3.0],
+}
+ECHO_CERTIFICATION_CONTROL_GRID = {
+    "ess_target": [0.9],
+    "rejuvenation_steps": [1],
+    "proposal_scale": [1.5],
+}
+MULTI_CERTIFICATION_RESULT_COUNT = len(CERTIFICATION_SEEDS)
+ECHO_CERTIFICATION_RESULT_COUNT = len(ECHO_SWEEP_RANGES) * len(CERTIFICATION_SEEDS)
 
 MULTI_TOLERANCES = {"absolute_parameter_error": PASS_TOLERANCE.tolist()}
 ECHO_TOLERANCES = {
@@ -158,6 +171,107 @@ def _source_hash(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
+def _validate_certification_document(
+    document: Mapping[str, object], *, study: str
+) -> list[dict[str, Any]]:
+    """Require the exact one-shot block and independently validate every row."""
+    _require(
+        type(document.get("schema_version")) is int
+        and document.get("schema_version") == 1,
+        "schema_version must be integer 1",
+    )
+    _require(document.get("study") == study, f"study must be {study!r}")
+    _require(
+        type(document.get("seed_block")) is int and document.get("seed_block") == 400,
+        "certification archive requires integer seed_block=400",
+    )
+    _require(document.get("seed_role") == "protected", "seed role must be protected")
+    seeds = document.get("seeds")
+    _require(
+        seeds == list(CERTIFICATION_SEEDS)
+        and isinstance(seeds, list)
+        and all(type(seed) is int for seed in seeds),
+        "certification seeds must be exactly the integers 400-411",
+    )
+    if study == "multi_mass_2d":
+        _require(
+            _exact_json_value(
+                document.get("control_grid"), MULTI_CERTIFICATION_CONTROL_GRID
+            ),
+            "control_grid must be the frozen multi certification cell",
+        )
+        _require(
+            _exact_json_value(document.get("tolerances"), MULTI_TOLERANCES),
+            "tolerances do not match frozen gates",
+        )
+        _require("ranges" not in document, "multi-mass study must not declare ranges")
+        results = _results(document, MULTI_CERTIFICATION_RESULT_COUNT)
+        expected = set(
+            product(
+                (0.7,),
+                (2,),
+                (3.0,),
+                CERTIFICATION_SEEDS,
+            )
+        )
+        validate_multi_results(results, expected_tuples=expected)
+        return results
+    if study == "echolocation_range":
+        _require(
+            _exact_json_value(
+                document.get("control_grid"), ECHO_CERTIFICATION_CONTROL_GRID
+            ),
+            "control_grid must be the frozen echo certification cell",
+        )
+        _require(
+            _exact_json_value(document.get("tolerances"), ECHO_TOLERANCES),
+            "tolerances do not match frozen gates",
+        )
+        _require(
+            _exact_json_value(document.get("ranges"), list(ECHO_SWEEP_RANGES)),
+            "ranges do not match the declared sweep",
+        )
+        results = _results(document, ECHO_CERTIFICATION_RESULT_COUNT)
+        expected = set(
+            product(
+                (0.9,),
+                (1,),
+                (1.5,),
+                ECHO_SWEEP_RANGES,
+                CERTIFICATION_SEEDS,
+            )
+        )
+        validate_echo_results(results, expected_tuples=expected)
+        return results
+    raise ValueError(f"unknown certification study: {study!r}")
+
+
+def _canonical_certification(path: Path, *, study: str) -> dict[str, Any]:
+    document = load_study(path)
+    results = _validate_certification_document(document, study=study)
+    if study == "multi_mass_2d":
+        canonical = build_study_document(
+            study=study,
+            seed_block=400,
+            seeds=CERTIFICATION_SEEDS,
+            control_grid=MULTI_CERTIFICATION_CONTROL_GRID,
+            tolerances=MULTI_TOLERANCES,
+            results=results,
+        )
+    else:
+        canonical = build_study_document(
+            study=study,
+            seed_block=400,
+            seeds=CERTIFICATION_SEEDS,
+            control_grid=ECHO_CERTIFICATION_CONTROL_GRID,
+            tolerances=ECHO_TOLERANCES,
+            ranges=ECHO_SWEEP_RANGES,
+            results=results,
+        )
+    canonical["source"] = {"format": "schema_v1", "sha256": _source_hash(path)}
+    return canonical
+
+
 def _canonical_multi(path: Path) -> dict[str, Any]:
     document = load_study(path)
     _require_schema_metadata(
@@ -237,26 +351,61 @@ def archive_development_studies(
     return multi_output, echo_output
 
 
+def archive_certification_studies(
+    *, multi_path: Path, echo_path: Path, output_dir: Path
+) -> tuple[Path, Path]:
+    """Archive only the exact frozen one-shot certification block."""
+    multi = _canonical_certification(multi_path, study="multi_mass_2d")
+    echo = _canonical_certification(echo_path, study="echolocation_range")
+    encode_study(multi)
+    encode_study(echo)
+    multi_output = output_dir / "multi_mass_2d_certification.json"
+    echo_output = output_dir / "echolocation_range_certification.json"
+    write_study(multi_output, multi)
+    write_study(echo_output, echo)
+    return multi_output, echo_output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--certification",
+        action="store_true",
+        help="archive exact schema-v1 seed-block-400 evidence",
+    )
+    parser.add_argument(
         "--multi-input",
         type=Path,
-        default=Path("output/multi_mass_2d_study_seed_block_0.json"),
     )
     parser.add_argument(
         "--echo-input",
         type=Path,
-        default=Path("output/echolocation_range_study.json"),
         help="schema-v1 block-specific output or the fully validated legacy dev JSON",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("docs/calibration"))
     args = parser.parse_args()
-    written = archive_development_studies(
-        multi_path=args.multi_input,
-        echo_path=args.echo_input,
-        output_dir=args.output_dir,
-    )
+    if args.certification:
+        multi_path = args.multi_input or Path(
+            "output/multi_mass_2d_study_seed_block_400.json"
+        )
+        echo_path = args.echo_input or Path(
+            "output/echolocation_range_study_seed_block_400.json"
+        )
+        written = archive_certification_studies(
+            multi_path=multi_path,
+            echo_path=echo_path,
+            output_dir=args.output_dir,
+        )
+    else:
+        multi_path = args.multi_input or Path(
+            "output/multi_mass_2d_study_seed_block_0.json"
+        )
+        echo_path = args.echo_input or Path("output/echolocation_range_study.json")
+        written = archive_development_studies(
+            multi_path=multi_path,
+            echo_path=echo_path,
+            output_dir=args.output_dir,
+        )
     for path in written:
         print(path)
 

@@ -81,35 +81,37 @@ components as independent would give the wrong absolute
 
 ## Watching the head lock on
 
-The legacy demo places the mass at two circumradii along a fixed off-axis
+The current default demo places the mass at two circumradii along a fixed off-axis
 direction and shows eighty differential observations while the camera orbits.
 It is one fixed-seed visualization at the closest, most favorable range, not a
 reliability measurement.
 
 ![The echolocation demo. Left: the head lattice, the true exterior mass (star), and the particle cloud, camera orbiting. Right, top to bottom: parameter convergence, mass marginal, differential rates by clock.](../assets/demo_echolocation_3d.gif)
 
-This committed GIF is a pre-remediation illustration pending certification
-and regeneration, not a result from the corrected contrast-space SMC
-implementation.
+This committed GIF is the current packaged default output from the corrected
+contrast-space SMC implementation.
 
 ## How far does the sense reach?
 
 The range harness sweeps the declared circumradius grid and records position
 error, mass error, posterior standard deviations, coverage, residuals, SMC
 controls, and forward-model evaluation counts. Development seeds selected and
-froze the controls and tolerances by the declared ranking. The untouched
-400–411 block has not yet been run once for the corrected implementation.
+froze the controls and tolerances by the declared ranking. The reserved
+400–411 block was then run exactly once for the corrected implementation.
 
 ![A finite fixed-seed resolution study. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, and dashed lines show posterior standard deviations.](../assets/echolocation_range_study.png)
 
-The displayed study is the legacy pre-remediation artifact. Task 11 will
-replace it after the one-shot protected run; its current points must not be
-read as corrected-SMC evidence.
+The displayed study was regenerated directly from the certified block-400
+records. The frozen cell passed 46/72 cases overall; pass counts from close to
+far were 12, 12, 11, 8, 3, 0. The close range passed 12/12. The far/close
+median position-standard-deviation ratio was 66.524, above the frozen factor
+20 gate, and the 12/12 far-range three-standard-deviation coverage is retained
+as a diagnostic rather than promoted after inspection into a new gate.
 
-When completed, that protocol will guard against tuning directly to the
-reported holdout, but its fixed seeds will still provide regression and
-calibration evidence only for those simulated cases. It will not estimate a
-population reliability or justify a universal pass probability. The
+The completed protocol guards against tuning directly to the reported holdout,
+but its fixed seeds provide regression and calibration evidence only for those
+simulated cases. It does not estimate population reliability or justify a
+universal pass probability. The
 physically robust trend is the signal scaling: the differential gradient
 falls as $1/R^2$, while the curvature that helps separate mass from range
 falls as $1/R^3$.
@@ -242,11 +244,11 @@ Which may be the most meditative conclusion physics has on offer.
 ::: {.callout-note title="Reproduce"}
 `uv run demo-echolocation-3d` regenerates the demo;
 `uv run scripts/scan_echolocation_range.py --seed-block 0 --workers 8 --per-run`
-runs the development grid. A future reserved run will use the scenario-default
-cell via `--seed-block 400`; protected blocks reject control overrides. The
-development defaults and acceptance tolerances are scientifically frozen from
-seeds 0–11, while the one-shot 400–411 certification and corrected assets
-remain pending.
+runs the development grid. The reserved run used the scenario-default cell via
+`--seed-block 400`; protected blocks reject control overrides. The development
+defaults and acceptance tolerances were scientifically frozen from seeds 0–11
+before the one-shot 400–411 certification. Certification and corrected asset
+regeneration are complete.
 See
 [Getting Started](../reproduce/getting-started.qmd).
 :::

@@ -47,8 +47,20 @@ CONTROL_GRID = {
 REPO_ROOT = Path(__file__).parents[1]
 TRACKED_MULTI = REPO_ROOT / "docs/calibration/multi_mass_2d_development.json"
 TRACKED_ECHO = REPO_ROOT / "docs/calibration/echolocation_range_development.json"
+TRACKED_MULTI_CERTIFICATION = (
+    REPO_ROOT / "docs/calibration/multi_mass_2d_certification.json"
+)
+TRACKED_ECHO_CERTIFICATION = (
+    REPO_ROOT / "docs/calibration/echolocation_range_certification.json"
+)
 MULTI_SOURCE_SHA256 = "f51c2f0733d3f558daf6a4d6c50efa16fdcea392156bcca6f51aa26002be81d8"
 ECHO_SOURCE_SHA256 = "eafc3ae9b74e33b278543bd76203979a7ab3e8d9b9f36cb02a150e63c158e7d0"
+MULTI_CERTIFICATION_SOURCE_SHA256 = (
+    "2fb47f532ac0429f83f71eaa49ba23763bcfb230949168042139257c9b200184"
+)
+ECHO_CERTIFICATION_SOURCE_SHA256 = (
+    "a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941"
+)
 
 
 def _multi_results() -> list[dict]:
@@ -135,6 +147,65 @@ def _write_valid_inputs(tmp_path: Path) -> tuple[Path, Path]:
         )["results"],
     }
     calibration.write_study(echo_path, legacy_echo)
+    return multi_path, echo_path
+
+
+def _write_valid_certification_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    calibration = _calibration_module()
+    seeds = tuple(range(400, 412))
+    multi_path = tmp_path / "multi-certification.json"
+    echo_path = tmp_path / "echo-certification.json"
+    multi_results = [
+        {
+            **result,
+            "seed": result["seed"] + 400,
+        }
+        for result in _multi_results()
+        if result["ess_target"] == 0.7
+        and result["rejuvenation_steps"] == 2
+        and result["proposal_scale"] == 3.0
+    ]
+    echo_results = [
+        {
+            **result,
+            "seed": result["seed"] + 400,
+        }
+        for result in _echo_results()
+        if result["ess_target"] == 0.9
+        and result["rejuvenation_steps"] == 1
+        and result["proposal_scale"] == 1.5
+    ]
+    multi = calibration.build_study_document(
+        study="multi_mass_2d",
+        seed_block=400,
+        seeds=seeds,
+        control_grid={
+            "ess_target": (0.7,),
+            "rejuvenation_steps": (2,),
+            "proposal_scale": (3.0,),
+        },
+        tolerances={"absolute_parameter_error": [2.5] * 4 + [0.012] * 2},
+        results=multi_results,
+    )
+    echo = calibration.build_study_document(
+        study="echolocation_range",
+        seed_block=400,
+        seeds=seeds,
+        control_grid={
+            "ess_target": (0.9,),
+            "rejuvenation_steps": (1,),
+            "proposal_scale": (1.5,),
+        },
+        tolerances={
+            "position_error_max": 1.0,
+            "mass_error_max": 0.04,
+            "far_std_factor_min": 20.0,
+        },
+        ranges=RANGES,
+        results=echo_results,
+    )
+    calibration.write_study(multi_path, multi)
+    calibration.write_study(echo_path, echo)
     return multi_path, echo_path
 
 
@@ -360,6 +431,96 @@ def test_tracked_development_artifacts_reproduce_frozen_winners_and_gates() -> N
     assert far_close_ratio == pytest.approx(66.22618610746335)
 
 
+def test_tracked_certification_artifacts_are_canonical_and_reproduce_outcomes() -> None:
+    calibration = _calibration_module()
+    archive = _archive_module()
+    multi = calibration.load_study(TRACKED_MULTI_CERTIFICATION)
+    echo = calibration.load_study(TRACKED_ECHO_CERTIFICATION)
+
+    archive._validate_certification_document(multi, study="multi_mass_2d")
+    archive._validate_certification_document(echo, study="echolocation_range")
+    assert TRACKED_MULTI_CERTIFICATION.read_text() == calibration.encode_study(multi)
+    assert TRACKED_ECHO_CERTIFICATION.read_text() == calibration.encode_study(echo)
+    assert multi["source"] == {
+        "format": "schema_v1",
+        "sha256": MULTI_CERTIFICATION_SOURCE_SHA256,
+    }
+    assert echo["source"] == {
+        "format": "schema_v1",
+        "sha256": ECHO_CERTIFICATION_SOURCE_SHA256,
+    }
+    for study, expected_hash in (
+        (multi, MULTI_CERTIFICATION_SOURCE_SHA256),
+        (echo, ECHO_CERTIFICATION_SOURCE_SHA256),
+    ):
+        reconstructed_source = deepcopy(study)
+        reconstructed_source.pop("source")
+        assert (
+            sha256(calibration.encode_study(reconstructed_source).encode()).hexdigest()
+            == expected_hash
+        )
+
+    multi_results = multi["results"]
+    assert len(multi_results) == 12
+    assert sum(result["passed"] for result in multi_results) == 12
+    assert statistics.median(
+        result["normalized_error"] for result in multi_results
+    ) == pytest.approx(0.24165156854861075)
+    assert (
+        statistics.median(
+            result["forward_model_evaluations"] for result in multi_results
+        )
+        == 833513
+    )
+
+    echo_results = echo["results"]
+    assert len(echo_results) == 72
+    assert sum(result["passed"] for result in echo_results) == 46
+    by_range: dict[float, list[dict]] = defaultdict(list)
+    for result in echo_results:
+        by_range[result["range_r"]].append(result)
+    ranges = sorted(by_range)
+    assert [sum(result["passed"] for result in by_range[r]) for r in ranges] == [
+        12,
+        12,
+        11,
+        8,
+        3,
+        0,
+    ]
+    close = by_range[2.0]
+    far = by_range[8.0]
+    close_median_std = statistics.median(result["pos_std"] for result in close)
+    far_median_std = statistics.median(result["pos_std"] for result in far)
+    assert close_median_std == pytest.approx(0.041934482917603016)
+    assert max(result["position_error"] for result in close) == pytest.approx(
+        0.06890007743851188
+    )
+    assert max(result["mass_error"] for result in close) == pytest.approx(
+        0.003180807096232516
+    )
+    assert far_median_std == pytest.approx(2.789667608020031)
+    assert sum(result["covered_3sigma"] for result in far) == 12
+    assert far_median_std / close_median_std == pytest.approx(66.5244308246615)
+
+
+def test_acceptance_replays_pin_literal_certification_block_without_skips() -> None:
+    multi = (REPO_ROOT / "tests/test_acceptance_multi_mass_2d.py").read_text()
+    echo = (REPO_ROOT / "tests/test_acceptance_echolocation_3d.py").read_text()
+
+    assert "@pytest.mark.skip" not in multi
+    assert "@pytest.mark.skip" not in echo
+    for source in (multi, echo):
+        assert "CERTIFICATION_SEEDS = (" in source
+        for seed in range(400, 412):
+            assert str(seed) in source
+    assert "at least 10 of 12" in multi
+    assert "at least 10 of 12" in echo
+    assert "EXPECTED_FAR_STD_FACTOR = 20.0" in echo
+    assert "deterministic replay" in multi.lower()
+    assert "deterministic replay" in echo.lower()
+
+
 def test_development_report_cites_raw_artifacts_and_matches_cell_summaries() -> None:
     calibration = _calibration_module()
     report = (REPO_ROOT / "docs/2026-08-16-development-calibration.md").read_text()
@@ -413,6 +574,23 @@ def test_development_report_cites_raw_artifacts_and_matches_cell_summaries() -> 
         assert actual == expected
 
 
+def test_calibration_report_records_certification_without_retuning() -> None:
+    report = (REPO_ROOT / "docs/2026-08-16-development-calibration.md").read_text()
+
+    assert "## One-shot certification" in report
+    assert "calibration/multi_mass_2d_certification.json" in report
+    assert "calibration/echolocation_range_certification.json" in report
+    assert MULTI_CERTIFICATION_SOURCE_SHA256 in report
+    assert ECHO_CERTIFICATION_SOURCE_SHA256 in report
+    assert "12/12" in report
+    assert "46/72" in report
+    assert "12, 12, 11, 8, 3, 0" in report
+    assert "66.524" in report
+    assert "No controls, tolerances, or gates were retuned" in report
+    assert "## Corrected generated assets" in report
+    assert "asset regeneration remains pending" not in report
+
+
 def test_archive_validates_and_canonicalizes_complete_development_grids(
     tmp_path: Path,
 ) -> None:
@@ -448,6 +626,82 @@ def test_archive_validates_and_canonicalizes_complete_development_grids(
         key: list(values) for key, values in CONTROL_GRID.items()
     }
     assert echo["ranges"] == list(RANGES)
+
+
+def test_archive_validates_and_canonicalizes_exact_certification_blocks(
+    tmp_path: Path,
+) -> None:
+    archive = _archive_module()
+    multi_path, echo_path = _write_valid_certification_inputs(tmp_path)
+    output_dir = tmp_path / "tracked"
+
+    written = archive.archive_certification_studies(
+        multi_path=multi_path,
+        echo_path=echo_path,
+        output_dir=output_dir,
+    )
+
+    assert written == (
+        output_dir / "multi_mass_2d_certification.json",
+        output_dir / "echolocation_range_certification.json",
+    )
+    multi = json.loads(written[0].read_text())
+    echo = json.loads(written[1].read_text())
+    assert multi["seed_block"] == echo["seed_block"] == 400
+    assert multi["seed_role"] == echo["seed_role"] == "protected"
+    assert len(multi["results"]) == 12
+    assert len(echo["results"]) == 72
+    assert multi["source"] == {
+        "format": "schema_v1",
+        "sha256": sha256(multi_path.read_bytes()).hexdigest(),
+    }
+    assert echo["source"] == {
+        "format": "schema_v1",
+        "sha256": sha256(echo_path.read_bytes()).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("target", "mutation", "match"),
+    [
+        ("multi", lambda data: data.update(seed_block=0), "seed_block=400"),
+        ("multi", lambda data: data.update(seed_block=500), "seed_block=400"),
+        ("multi", lambda data: data["seeds"].__setitem__(0, 399), "400-411"),
+        ("multi", lambda data: data["results"].pop(), "12"),
+        (
+            "multi",
+            lambda data: data["control_grid"].update(ess_target=[0.8]),
+            "control_grid",
+        ),
+        ("echo", lambda data: data.update(seed_block=0), "seed_block=400"),
+        ("echo", lambda data: data.update(seed_block=500), "seed_block=400"),
+        ("echo", lambda data: data["results"][0].update(seed=399), "result tuples"),
+        ("echo", lambda data: data["results"].pop(), "72"),
+        ("echo", lambda data: data["ranges"].pop(), "ranges"),
+    ],
+)
+def test_certification_archive_refuses_other_mixed_or_incomplete_blocks(
+    tmp_path: Path,
+    target: str,
+    mutation,
+    match: str,
+) -> None:
+    archive = _archive_module()
+    calibration = _calibration_module()
+    multi_path, echo_path = _write_valid_certification_inputs(tmp_path)
+    path = multi_path if target == "multi" else echo_path
+    data = calibration.load_study(path)
+    mutation(data)
+    calibration.write_study(path, data)
+    output_dir = tmp_path / "tracked"
+
+    with pytest.raises(ValueError, match=match):
+        archive.archive_certification_studies(
+            multi_path=multi_path,
+            echo_path=echo_path,
+            output_dir=output_dir,
+        )
+    assert not output_dir.exists()
 
 
 def test_archive_validates_strict_json_before_writing_either_artifact(

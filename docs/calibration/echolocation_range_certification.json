@@ -2053,6 +2053,10 @@
     410,
     411
   ],
+  "source": {
+    "format": "schema_v1",
+    "sha256": "a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941"
+  },
   "study": "echolocation_range",
   "tolerances": {
     "far_std_factor_min": 20.0,

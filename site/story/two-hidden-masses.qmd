@@ -12,8 +12,9 @@ problem gets qualitatively harder, not merely bigger.
 
 ![Two masses in 2D: ten randomly placed clocks, six unknowns.](../assets/demo_multi_mass_2d.gif)
 
-Both committed GIFs are pre-remediation illustrations pending certification
-and regeneration; they are not current SMC result evidence.
+Both committed GIFs are current packaged default outputs from the corrected
+SMC implementation. Each depicts one named finite realization, not a
+population recovery rate.
 
 ## Label switching — an honest limitation
 

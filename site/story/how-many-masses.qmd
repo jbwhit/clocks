@@ -13,11 +13,13 @@ pre-resampling normalizing-constant increments through each adaptive
 tempering stage. At finite particle count this is a stochastic SMC estimate,
 not an exact or deterministic integral.
 
-![Model comparison live: posterior probability over K=1, 2, 3 as observations accumulate. Truth is K=2.](../assets/demo_model_comparison.gif)
+![Current 80-observation model-comparison run over K=1, 2, 3: truth is K=2, while the final estimate mildly favors K=3.](../assets/demo_model_comparison.gif)
 
-This committed GIF predates the corrected evidence calculation and is an
-illustration pending Task 11 regeneration, not current model-comparison
-evidence.
+This committed GIF is the current packaged default run: 80 observations,
+2,000 particles per candidate, and seed 42. With K=2 truth, its final estimate
+is K=2: 0.3990 and K=3: 0.6010, so this realization mildly prefers K=3. That
+is an honest finite-data, finite-particle result—not a claim that K=3 is the
+data-generating model or that model comparison must recover truth every time.
 
 ## Occam's razor, automatic
 
@@ -36,12 +38,12 @@ ordering, and weak-field validity, so that support is part of the comparison.
 
 (One geometric note: this scenario keeps the second mass at $x = 3.0$,
 directly atop a clock — the placement the previous page avoided for
-parameter estimation; it matters less for the how-many question, as the
-verdict shows.)
+parameter estimation. It is retained here as part of the fixed scenario, not
+as a guarantee that the evidence estimate will select the true count.)
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Posterior probability per candidate K over 25 observations (truth: K=2)."
+#| fig-cap: "A separate 25-observation, 400-particle estimate ends near K=2: 0.740 and K=3: 0.260 (truth: K=2)."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import (
@@ -80,9 +82,13 @@ fig
 ```
 
 ::: {.callout-note title="Evidence is a flow, not a snapshot"}
-With only 25 noisy observations and a small particle budget, the live result
-can be uncertain. Evidence accumulates, but its Monte Carlo estimate also has
-sampling error. Comparing
-models responsibly therefore means examining particle-count and seed
-sensitivity, not reading extra decimal places as certainty.
+The embedded 25-observation, 400-particle calculation ends near K=2: 0.740 and
+K=3: 0.260, whereas the packaged 80-observation, 2,000-particle run ends near
+0.3990 and 0.6010. This is not a contradiction. A different finite data
+horizon changes the evidence supplied by the noisy realization, and a
+different finite-particle budget changes the Monte Carlo estimate of that
+evidence. Both effects matter; the difference should not be attributed solely
+to Monte Carlo noise. Comparing models responsibly means examining data
+horizon, particle-count, and seed sensitivity rather than reading one run's
+extra decimal places as certainty.
 :::

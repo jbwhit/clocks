@@ -22,8 +22,8 @@ line. The interesting changes are *geometric*:
 
 ![The 2D search: 8 clocks, one hidden mass, three unknowns (x, y, M).](../assets/demo_2d.gif)
 
-The committed GIF is a pre-remediation illustration pending Task 11
-regeneration; the executed example below uses the corrected implementation.
+The committed GIF is the current packaged default output from the corrected
+implementation; the executed example below is a separate smaller run.
 
 ## The surviving hypotheses
 

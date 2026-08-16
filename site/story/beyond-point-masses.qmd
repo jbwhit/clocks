@@ -14,8 +14,8 @@ identical particle filter on top.
 
 ![The density demo. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
 
-This committed PNG is a pre-remediation illustration pending Task 11
-regeneration; it is not evidence for the corrected SMC run.
+This committed PNG is the current packaged default output from the corrected
+SMC implementation.
 
 ## What spreading the mass does to clocks
 

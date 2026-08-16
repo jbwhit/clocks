@@ -11,8 +11,8 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
   acceptance rule and preserve each tempered target.
 - **Population-level reliability study.** The corrected SMC controls and
   tolerances are frozen from the development seeds, and the reserved 400–411
-  block has not been run. The pending protected replay can provide regression
-  and calibration evidence for its particular
+  block has now been run exactly once. The protected results provide regression
+  and calibration evidence for those particular
   cases, not a reliability estimate over a declared population. A later study
   could preregister such a population and attach confidence intervals to
   failure rates.

@@ -78,3 +78,56 @@ pytest, Ruff.
    full multi grid and archiver.
 3. Run focused fast tests, Ruff, prose checks, and `git diff --check` without
    running slow tests, development inference grids, or protected seeds.
+
+### Task 5: Post-certification evidence and deterministic replay pins
+
+**Files:**
+
+- Modify: `tests/test_calibration.py`
+- Modify: `tests/test_acceptance_multi_mass_2d.py`
+- Modify: `tests/test_acceptance_echolocation_3d.py`
+- Modify: `scripts/archive_development_calibration.py`
+- Modify: `docs/2026-08-16-development-calibration.md`
+- Modify: current-facing prose only where certification status changed
+- Create: `docs/calibration/multi_mass_2d_certification.json`
+- Create: `docs/calibration/echolocation_range_certification.json`
+
+1. Write failing fast tests for exact seed-block-400 archival, rejection of
+   development/other/mixed/incomplete inputs, provenance hashes, canonical
+   tuple counts, and reproduction of the observed certification summaries.
+2. Write failing literal guards for deterministic slow replay tests: multi
+   requires at least 10/12 passes; echo requires at least 10/12 close passes
+   and a median far/close position-standard-deviation ratio of at least 20.
+3. Implement the minimal certification archiver and replace skipped replay
+   placeholders without executing either replay.
+4. Archive only the two existing verified raw block-400 outputs and confirm
+   their hashes and canonical contents with ordinary fast tests.
+5. Update the report and live temporal language with exact observed outcomes,
+   no-retuning wording, and an explicit statement that corrected assets still
+   await regeneration.
+6. Run focused/default pytest, Ruff, prose/link checks, and the site render;
+   never run `-m slow` or any protected scan in this phase.
+
+### Task 6: Corrected generated assets and final narrative
+
+**Files:**
+
+- Modify: `tests/test_calibration.py`
+- Modify: `docs/2026-08-16-development-calibration.md`
+- Modify: `README.md` and current-facing site prose
+- Modify: `site/story/how-many-masses.qmd`
+- Preserve and validate: generated files under `assets/` and `site/assets/`
+
+1. Write failing fast contracts for the complete required asset set,
+   byte-identical root/site visual copies, GIF/PNG signatures, exact supplied
+   hashes, and semantic identity between the certified range JSON and the
+   tracked certification evidence.
+2. Write failing prose assertions that require corrected-current asset status,
+   exact certification outcomes, freeze commit `a1b016b`, and an honest account
+   of the two different model-comparison realizations.
+3. Update the report and current prose without regenerating any file. Describe
+   the default 80-observation result as mildly favoring K=3 despite K=2 truth,
+   and the embedded 25-observation result as a different finite-data,
+   finite-particle evidence estimate.
+4. Run focused/default pytest, Ruff, prose/link checks, and Quarto render. Do
+   not execute slow tests, demos, inference, or protected scans.
