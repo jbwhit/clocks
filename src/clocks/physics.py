@@ -317,7 +317,8 @@ def _density_potential_batch(
     potential = np.empty((params_batch.shape[0], len(clock_array.positions)))
     for index, clock_position in enumerate(clock_array.positions[:, 0]):
         distance = np.sqrt((x_grid - clock_position) ** 2 + clock_array.track_offset**2)
-        potential[:, index] = np.trapezoid(-density / distance, x_grid, axis=1)
+        with np.errstate(over="ignore", invalid="ignore"):
+            potential[:, index] = np.trapezoid(-density / distance, x_grid, axis=1)
     return potential
 
 
@@ -369,7 +370,10 @@ def clock_rates_density_gaussian(
             distance = np.sqrt((x - xc) ** 2 + clock_array.track_offset**2)
             return float(-density / distance)
 
-        potential[index], _ = quad(integrand, lo, hi)
+        quadrature = quad(integrand, lo, hi, full_output=1)
+        if len(quadrature) != 3 or not np.isfinite(quadrature[0]):
+            raise PhysicsDomainError("density quadrature failed")
+        potential[index] = quadrature[0]
     return time_dilation_factor(potential)
 
 
@@ -389,5 +393,7 @@ def clock_rates_density_gaussian_batch(
         raise ValueError("n_quad must be an integer >= 2")
     _density_integration_bounds(values[:, 0], values[:, 1], limit, clock_array)
     potential = _density_potential_batch(values, clock_array, limit, count)
+    if not np.all(np.isfinite(potential)):
+        raise PhysicsDomainError("computed density potential must be finite")
     rates = time_dilation_factor(potential.reshape(-1))
     return rates.reshape(potential.shape)

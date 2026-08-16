@@ -688,6 +688,24 @@ class TestGaussianDensity:
             with pytest.raises(PhysicsDomainError, match="integration bounds"):
                 clock_rates_density_gaussian_batch(params, self._make_clock_array())
 
+    def test_density_scalar_rejects_extreme_finite_amplitude_without_warning(
+        self,
+    ) -> None:
+        params = np.array([0.0, 1.0, 1e308])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="density quadrature"):
+                clock_rates_density_gaussian(params, self._make_clock_array())
+
+    def test_density_batch_rejects_extreme_finite_amplitude_without_warning(
+        self,
+    ) -> None:
+        params = np.array([[0.0, 1.0, 1e308]])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(PhysicsDomainError, match="density potential"):
+                clock_rates_density_gaussian_batch(params, self._make_clock_array())
+
 
 class TestBatchEquivalence3D:
     def test_clock_rates_batch_matches_loop_in_3d(self) -> None:
