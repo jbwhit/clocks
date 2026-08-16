@@ -718,6 +718,40 @@ class TestEcholocationDashboard:
 
 
 class TestAnimateEcholocation:
+    @staticmethod
+    def _paired_streams() -> tuple[list[Observation], list[Observation]]:
+        from clocks._scenarios import make_echo_observations
+
+        _, display, filters = make_echo_observations(
+            seed=0, range_r=2.0, n_observations=1
+        )
+        return display, filters
+
+    def _assert_semantic_pair_rejected(
+        self,
+        display: list[Observation],
+        filters: list[Observation],
+        message: str,
+        tmp_path: Path,
+    ) -> None:
+        from clocks._scenarios import (
+            build_echolocation_filter,
+            build_head_lattice,
+            echo_mass_config,
+        )
+
+        pf = build_echolocation_filter(seed=0, n_particles=20)
+        with pytest.raises(ValueError, match=message):
+            animate_echolocation(
+                clock_array=build_head_lattice(),
+                mass_config=echo_mass_config(2.0),
+                observations=display,
+                filter_observations=filters,
+                pf=pf,
+                output_path=tmp_path / "unused.gif",
+            )
+        assert pf.state.observations_seen == 0
+
     def test_creates_gif_and_processes_all_observations(self, tmp_path: Path) -> None:
         from clocks._scenarios import (
             build_echolocation_filter,
@@ -787,3 +821,24 @@ class TestAnimateEcholocation:
                 pf=build_echolocation_filter(seed=0, n_particles=20),
                 output_path=tmp_path / "unused.gif",
             )
+
+    def test_rejects_mismatched_observation_times(self, tmp_path: Path) -> None:
+        display, filters = self._paired_streams()
+        filters[0] = Observation(filters[0].rates, filters[0].time + 1.0)
+        self._assert_semantic_pair_rejected(display, filters, "time", tmp_path)
+
+    def test_rejects_display_observation_that_is_not_centered(
+        self, tmp_path: Path
+    ) -> None:
+        display, filters = self._paired_streams()
+        display[0] = Observation(display[0].rates + 1e-4, display[0].time)
+        self._assert_semantic_pair_rejected(display, filters, "centered", tmp_path)
+
+    def test_rejects_filter_observation_from_different_data(
+        self, tmp_path: Path
+    ) -> None:
+        display, filters = self._paired_streams()
+        changed = filters[0].rates.copy()
+        changed[0] += 1e-4
+        filters[0] = Observation(changed, filters[0].time)
+        self._assert_semantic_pair_rejected(display, filters, "contrast", tmp_path)

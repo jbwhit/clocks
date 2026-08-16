@@ -8,6 +8,7 @@ demos, scan harnesses, and acceptance tests.
 import math
 from collections.abc import Callable
 from itertools import product
+from numbers import Integral
 from typing import TypedDict
 
 import numpy as np
@@ -277,7 +278,13 @@ def _center(rates: NDArray[np.floating]) -> NDArray[np.floating]:
 
 def contrast_matrix(n_clocks: int) -> NDArray[np.float64]:
     """Return orthonormal contrasts perpendicular to the common mode."""
-    return np.asarray(helmert(n_clocks, full=False), dtype=np.float64)
+    if (
+        isinstance(n_clocks, (bool, np.bool_))
+        or not isinstance(n_clocks, Integral)
+        or n_clocks < 2
+    ):
+        raise ValueError("n_clocks must be a non-bool integer >= 2")
+    return np.asarray(helmert(int(n_clocks), full=False), dtype=np.float64)
 
 
 def _make_echo_forward_models(
@@ -312,6 +319,7 @@ def make_echo_observations(
 ) -> tuple[SimulationResult, list[Observation], list[Observation]]:
     """Return simulation, centered display data, and likelihood contrasts."""
     clock_array = build_head_lattice()
+    validate_echo_geometry(range_r, ECHO_M_TRUE, clock_array)
     sim = simulate(
         SimulationConfig(
             clock_array=clock_array,

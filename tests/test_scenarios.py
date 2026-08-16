@@ -2,6 +2,7 @@
 
 import importlib.util
 import inspect
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -87,6 +88,44 @@ def test_development_seed_block_uses_declared_grid_and_allows_overrides(
     ):
         with pytest.raises(ValueError, match="control"):
             scan._control_cells(0, *invalid_controls)
+    for duplicate_controls in (
+        ([0.8, 0.80], None, None),
+        (None, [2, 2], None),
+        (None, None, [2.38, 2.380]),
+    ):
+        with pytest.raises(ValueError, match="duplicate"):
+            scan._control_cells(0, *duplicate_controls)
+
+
+def test_echolocation_scan_protects_ranges_and_rejects_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scan = _load_scan("scan_echolocation_range")
+    assert hasattr(scan, "_ranges_for_block")
+    canonical = scan._ranges_for_block(500, None)
+    assert canonical == list(scan.ECHO_SWEEP_RANGES)
+    with pytest.raises(ValueError, match="explicit range overrides"):
+        scan._ranges_for_block(500, list(scan.ECHO_SWEEP_RANGES))
+    with pytest.raises(ValueError, match="duplicate"):
+        scan._ranges_for_block(0, [2.0, 2])
+    assert scan._ranges_for_block(0, [2.0, 3.0]) == [2.0, 3.0]
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scan_echolocation_range.py",
+            "--seed-block",
+            "500",
+            "--ranges",
+            "2.0",
+            "--figure-only",
+        ],
+    )
+    monkeypatch.setattr(scan, "load_study", lambda _path: {"results": []})
+    monkeypatch.setattr(scan, "write_summary_figure", lambda *_args: None)
+    with pytest.raises(SystemExit):
+        scan.main()
 
 
 class TestPassRule:
@@ -195,8 +234,28 @@ class TestEchoGeometry:
         with pytest.raises(ValueError, match=r"\|2\*Phi\| <= 0.01"):
             validate_echo_geometry(ECHO_MIN_RANGE_R, ECHO_M_TRUE, head)
 
+    @pytest.mark.parametrize(
+        ("range_r", "message"),
+        [(ECHO_MIN_RANGE_R - 0.1, "exterior"), (float("nan"), "finite")],
+    )
+    def test_make_observations_rejects_invalid_geometry(
+        self, range_r: float, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            make_echo_observations(seed=0, range_r=range_r, n_observations=1)
+
 
 class TestEchoMeasurementModel:
+    @pytest.mark.parametrize("n_clocks", [0, 1, True, 2.5])
+    def test_contrast_matrix_rejects_invalid_clock_count(
+        self, n_clocks: object
+    ) -> None:
+        with pytest.raises(ValueError, match="integer >= 2"):
+            contrast_matrix(n_clocks)
+
+    def test_contrast_matrix_accepts_numpy_integer(self) -> None:
+        assert contrast_matrix(np.int64(2)).shape == (1, 2)
+
     def test_contrast_matrix_is_orthonormal_and_removes_common_mode(self) -> None:
         q = contrast_matrix(27)
         assert q.shape == (26, 27)

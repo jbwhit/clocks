@@ -44,6 +44,11 @@ DEVELOPMENT_REJUVENATION_STEPS = (1, 2, 4)
 DEVELOPMENT_PROPOSAL_SCALES = (1.5, 2.38, 3.0)
 
 
+def _reject_duplicates(name: str, values: list[float] | list[int]) -> None:
+    if len(set(values)) != len(values):
+        raise ValueError(f"{name} contains duplicate values")
+
+
 def _seeds_for_block(seed_block: int) -> tuple[int, ...]:
     """Return a valid development or reserved certification seed block."""
     if seed_block == 0:
@@ -88,8 +93,22 @@ def _control_cells(
         raise ValueError("rejuvenation-step controls must be positive integers")
     if any(not math.isfinite(value) or value <= 0.0 for value in selected_scales):
         raise ValueError("proposal-scale controls must be finite and positive")
+    _reject_duplicates("ess-target controls", selected_ess)
+    _reject_duplicates("rejuvenation-step controls", selected_steps)
+    _reject_duplicates("proposal-scale controls", selected_scales)
     cells = list(product(selected_ess, selected_steps, selected_scales))
     return cells
+
+
+def _ranges_for_block(seed_block: int, ranges: list[float] | None) -> list[float]:
+    """Use canonical ranges for protected blocks and unique ranges in development."""
+    if seed_block >= 400 and ranges is not None:
+        raise ValueError(
+            "explicit range overrides are forbidden for protected seed blocks"
+        )
+    selected = list(ECHO_SWEEP_RANGES) if ranges is None else list(ranges)
+    _reject_duplicates("ranges", selected)
+    return selected
 
 
 def _run(job: tuple[int, float, float, int, float]) -> EchoRunResult:
@@ -128,9 +147,7 @@ def _print_summary(results: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--ranges", type=float, nargs="+", default=list(ECHO_SWEEP_RANGES)
-    )
+    parser.add_argument("--ranges", type=float, nargs="+")
     parser.add_argument(
         "--seed-block",
         type=int,
@@ -157,14 +174,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.figure_only:
-        write_summary_figure(load_study(JSON_PATH), PNG_PATH)
-        print(f"Figure written to {PNG_PATH}")
-        return
-
-    # Validate at the boundary (spec sections 3a and 5).
-    if args.workers < 1:
-        parser.error("--workers must be >= 1")
     try:
         seeds = _seeds_for_block(args.seed_block)
     except ValueError as error:
@@ -175,8 +184,21 @@ def main() -> None:
         )
     except ValueError as error:
         parser.error(str(error))
+    try:
+        ranges = _ranges_for_block(args.seed_block, args.ranges)
+    except ValueError as error:
+        parser.error(str(error))
+
+    if args.figure_only:
+        write_summary_figure(load_study(JSON_PATH), PNG_PATH)
+        print(f"Figure written to {PNG_PATH}")
+        return
+
+    # Validate at the execution boundary (spec sections 3a and 5).
+    if args.workers < 1:
+        parser.error("--workers must be >= 1")
     head = build_head_lattice()
-    for range_r in args.ranges:
+    for range_r in ranges:
         validate_echo_geometry(range_r, ECHO_M_TRUE, head)
     if args.seed_block >= 400:
         print(
@@ -185,14 +207,14 @@ def main() -> None:
         )
 
     print("Noise-free centered signal vs range (SNR sanity gate):")
-    _print_snr_table(args.ranges)
+    _print_snr_table(ranges)
     if args.snr_only:
         return
 
     jobs = [
         (seed, range_r, ess_target, steps, scale)
         for ess_target, steps, scale in cells
-        for range_r in args.ranges
+        for range_r in ranges
         for seed in seeds
     ]
     with Pool(args.workers) as pool:
@@ -211,6 +233,9 @@ def main() -> None:
             result["proposal_scale"],
         )
         grouped.setdefault(key, []).append(result)
+    expected_runs_per_cell = len(seeds) * len(ranges)
+    if any(len(cell) != expected_runs_per_cell for cell in grouped.values()):
+        raise RuntimeError("scan produced unequal run counts across control cells")
     ranked = []
     for (ess_target, steps, scale), cell in sorted(grouped.items()):
         n_pass = sum(result["passed"] for result in cell)

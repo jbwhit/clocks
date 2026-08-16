@@ -20,6 +20,11 @@ DEVELOPMENT_REJUVENATION_STEPS = (1, 2, 4)
 DEVELOPMENT_PROPOSAL_SCALES = (1.5, 2.38, 3.0)
 
 
+def _reject_duplicates(name: str, values: list[float] | list[int]) -> None:
+    if len(set(values)) != len(values):
+        raise ValueError(f"{name} controls contain duplicate values")
+
+
 def _seeds_for_block(seed_block: int) -> tuple[int, ...]:
     """Return a valid development or reserved certification seed block."""
     if seed_block == 0:
@@ -64,6 +69,9 @@ def _control_cells(
         raise ValueError("rejuvenation-step controls must be positive integers")
     if any(not math.isfinite(value) or value <= 0.0 for value in selected_scales):
         raise ValueError("proposal-scale controls must be finite and positive")
+    _reject_duplicates("ess-target", selected_ess)
+    _reject_duplicates("rejuvenation-step", selected_steps)
+    _reject_duplicates("proposal-scale", selected_scales)
     cells = list(product(selected_ess, selected_steps, selected_scales))
     return cells
 
@@ -111,6 +119,9 @@ def main() -> None:
     grouped: dict[tuple, list[RunResult]] = {}
     for key, result in results:
         grouped.setdefault(key, []).append(result)
+    expected_runs_per_cell = len(seeds)
+    if any(len(cell) != expected_runs_per_cell for cell in grouped.values()):
+        raise RuntimeError("scan produced unequal run counts across control cells")
 
     ranked = []
     for (ess_target, steps, scale), cell in sorted(grouped.items()):

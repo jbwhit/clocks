@@ -38,6 +38,10 @@ from clocks.inference import ModelComparison, ParticleFilter
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
+_ECHO_CENTER_ATOL = 1e-12
+_ECHO_CONTRAST_ATOL = 1e-12
+_ECHO_CONTRAST_RTOL = 1e-10
+
 
 def _save_animation(
     anim: animation.FuncAnimation,
@@ -535,6 +539,26 @@ def animate_echolocation(
         raise ValueError(
             f"filter observations must each have {n_clocks - 1} contrast channels"
         )
+    from clocks._scenarios import contrast_matrix
+
+    q = contrast_matrix(n_clocks)
+    for index, (display, filter_observation) in enumerate(
+        zip(observations, filter_observations, strict=True)
+    ):
+        if display.time != filter_observation.time:
+            raise ValueError(f"display and filter observation times differ at {index}")
+        if not np.isclose(display.rates.mean(), 0.0, rtol=0.0, atol=_ECHO_CENTER_ATOL):
+            raise ValueError(f"display observation {index} must be centered")
+        expected_contrast = q @ display.rates
+        if not np.allclose(
+            filter_observation.rates,
+            expected_contrast,
+            rtol=_ECHO_CONTRAST_RTOL,
+            atol=_ECHO_CONTRAST_ATOL,
+        ):
+            raise ValueError(
+                f"filter observation {index} must equal the display contrast"
+            )
     true_params = np.append(mass_config.positions[0], mass_config.masses[0])
 
     fig, axes = create_echolocation_dashboard()
