@@ -7,10 +7,11 @@ title: "How Many Masses?"
 Every page so far fixed the number of masses in advance — detection with
 the answer key half-open. Real detection must infer the *model*, not just
 its parameters. The Bayesian answer is to run a separate particle filter
-for each candidate count $K$ and compare **evidence**: the probability each
-model assigned to the data it actually saw, accumulated observation by
-observation. Models that need the data explained to them lose; models that
-predicted it win.
+for each candidate count $K$ and compare **evidence**: the marginal
+probability each model assigned to the data. The implementation accumulates
+pre-resampling normalizing-constant increments through each adaptive
+tempering stage. At finite particle count this is a stochastic SMC estimate,
+not an exact or deterministic integral.
 
 ![Model comparison live: posterior probability over K=1, 2, 3 as observations accumulate. Truth is K=2.](../assets/demo_model_comparison.gif)
 
@@ -23,7 +24,9 @@ least as good. Evidence is not best-fit, though: it
 averages the likelihood over the model's whole prior. Extra parameters
 spread that average across vast regions of configuration space the data
 rejects, and the dilution is the tax. Complexity isn't punished by rule;
-it is punished by arithmetic.
+it is punished by arithmetic. Here each model's prior is a normalized
+uniform rectangle conditioned on its configured bounds, strict mass
+ordering, and weak-field validity, so that support is part of the comparison.
 
 ## Run it live
 
@@ -53,7 +56,8 @@ sim = simulate(SimulationConfig(
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
     prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
-    n_particles=400, n_masses=(1, 2, 3), seed=42,
+    n_particles=400, n_masses=(1, 2, 3),
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 
 print(f"Posterior over K: { {k: round(v, 3) for k, v in result.posterior_by_model.items()} }")
@@ -73,8 +77,8 @@ fig
 
 ::: {.callout-note title="Evidence is a flow, not a snapshot"}
 With only 25 noisy observations and a small particle budget, the verdict
-here can be less crisp than the 80-observation GIF above — and that is
-itself the lesson. Evidence accumulates; certainty about *how many things
-exist* is bought one observation at a time, exactly like certainty about
-where they are.
+here can be less crisp than the 80-observation GIF above. Evidence
+accumulates, but its Monte Carlo estimate also has sampling error. Comparing
+models responsibly therefore means examining particle-count and seed
+sensitivity, not reading extra decimal places as certainty.
 :::

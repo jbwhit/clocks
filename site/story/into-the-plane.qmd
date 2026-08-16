@@ -9,9 +9,12 @@ potential sums [$-M_j/r_{ij}$](../method/notation-and-glossary.qmd#term-index-co
 the [prior](../method/notation-and-glossary.qmd#term-prior) gains a column when the mass can hide in a plane instead of on a
 line. The interesting changes are *geometric*:
 
-- The eight clocks are scattered **asymmetrically** across the region. A
-  perfectly symmetric ring would leave mirror-image mass positions
-  indistinguishable; asymmetry is free information.
+- The eight clocks are scattered **asymmetrically** across the region.
+  Reflection of a source around a symmetric layout permutes that layout's
+  readings. Because clock channels are labeled, the permuted vector is
+  generally distinguishable from the original; a true degeneracy appears
+  only if channel identity is discarded or the data vector itself respects
+  the permutation. Asymmetry still helps by removing those special cases.
 - The clocks sit at a perpendicular offset (`track_offset=3.0`) from the
   mass plane. Without it, a hypothesis that drifts right on top of a clock
   could explain that clock's reading with an arbitrarily small mass — the
@@ -47,7 +50,8 @@ sim = simulate(SimulationConfig(
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
     prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
-    n_particles=500, n_masses=1, seed=42,
+    n_particles=500, n_masses=1,
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 
 particles = result.particle_state.particles

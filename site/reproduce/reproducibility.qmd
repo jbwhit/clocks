@@ -14,11 +14,11 @@ the seeds shown and you will get the numbers printed on the page.
 ## Tests
 
 The default suite — `uv run pytest` — covers the forward model's physical
-invariants, the particle filter (convergence, resampling variants, the
-evidence-vs-direct-computation identity, weight-collapse handling), the
-noise model, the public API surface, and every animator; two long-running
-acceptance scans are excluded by default (`uv run pytest -m slow` runs
-them). See
+domain, public data contracts, all resampling variants, adaptive tempering,
+conjugate evidence checks, MH invariance and rejection, observation
+atomicity, prior support, contrast-space likelihoods, the public API, wheel
+entry points, and visualization. Long-running fixed-seed acceptance scans are
+excluded by default (`uv run pytest -m slow` runs them). See
 [`tests/`](https://github.com/jbwhit/clocks/tree/main/tests) for the
 current inventory; the README deliberately does not quote a test count,
 because hardcoded counts go stale.
@@ -34,10 +34,17 @@ Two workflows run on GitHub Actions:
   executed-cell figure you see is regenerated from source at deploy time. The
   demo GIFs, the density PNG, and the echolocation range-study PNG are the
   exceptions: they are pre-rendered, committed assets, reproducible on your
-  machine via the `uv run demo-*` commands (the range-study PNG via
-  `uv run scripts/scan_echolocation_range.py --seed-block 300`, the
-  certification block the published figure used; see the
-  [echolocation page](../story/gravitational-echolocation.qmd)).
+  machine via the `uv run demo-*` commands. The development range grid uses
+  `uv run scripts/scan_echolocation_range.py --seed-block 0`; after controls
+  are frozen, the reserved certification command is the same with
+  `--seed-block 400`. See the
+  [echolocation page](../story/gravitational-echolocation.qmd).
+
+Fixed seeds establish deterministic regression cases. Even a one-shot
+reserved block is finite calibration/certification evidence for those cases,
+not a population reliability estimate. SMC evidence is similarly a
+consistent Monte Carlo estimator with finite-particle sampling error, not a
+deterministic exact integral.
 
 ## Locked dependencies
 

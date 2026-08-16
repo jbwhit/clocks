@@ -21,23 +21,27 @@ uv sync
 
 ## Run the demos
 
-Six animated demos plus the density figure. Rough runtimes on a laptop:
+Six animated demos plus the density figure:
 
 ```bash
-uv run demo-1d                  # → output/demo_1d.gif            (~2 min)
-uv run demo-2d                  # → output/demo_2d.gif            (~3 min)
-uv run demo-multi-mass          # → output/demo_multi_mass.gif    (~3 min)
-uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.gif (~5 min)
-uv run demo-model-comparison    # → output/demo_model_comparison.gif (~5 min)
-uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif (~5 min)
-uv run demo-density             # → output/demo_density.png       (~2 min)
+uv run demo-1d                  # → output/demo_1d.gif
+uv run demo-2d                  # → output/demo_2d.gif
+uv run demo-multi-mass          # → output/demo_multi_mass.gif
+uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.gif
+uv run demo-model-comparison    # → output/demo_model_comparison.gif
+uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
+uv run demo-density             # → output/demo_density.png
 ```
 
 The echolocation range study behind the site page:
 
 ```bash
-uv run scripts/scan_echolocation_range.py   # tuning seeds; published figure used --seed-block 300
+uv run scripts/scan_echolocation_range.py --seed-block 0 --workers 8 --per-run
 ```
+
+This runs the declared development grid on seeds 0–11. Reserved
+certification blocks start at 400 and accept only frozen controls; fixed-seed
+scan outcomes are regression/calibration evidence, not population reliability.
 
 ## Use the library
 
@@ -86,6 +90,9 @@ result = infer(
         prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
         n_particles=1500,
         n_masses=(1, 2, 3),
+        ess_target=0.8,
+        rejuvenation_steps=2,
+        proposal_scale=2.38,
         seed=42,
     ),
 )
@@ -98,5 +105,8 @@ For fixed-K inference, pass an integer to `n_masses`; to drive the filter
 observation-by-observation (e.g. for animation), use
 `build_particle_filter` — see
 [The Particle Filter](../method/the-particle-filter.qmd).
+The position and mass ranges are true support: the point-mass API conditions
+their uniform rectangle on strict mass ordering and $|2\Phi|\le0.1$ physical
+validity.
 
 Next: [Reproducibility](reproducibility.qmd) — seeds, tests, and CI.

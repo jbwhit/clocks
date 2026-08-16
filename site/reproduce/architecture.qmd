@@ -3,26 +3,25 @@ title: "Architecture"
 ---
 
 A map of `src/clocks` for anyone reading or extending the code — a
-C4-inspired **module map** (modules grouped into functional clusters),
-not a formal C4 component diagram. Solid arrows mean "imports from";
-the dashed arrow is a runtime relationship. Re-exports inside
-`clocks/__init__.py` are deliberately omitted.
+C4-inspired **module map** (modules grouped into functional clusters), not a
+formal C4 component diagram. Solid arrows mean "imports from"; dashed arrows
+show executable dispatch. Re-exports inside `clocks/__init__.py` are omitted.
 
 ```{mermaid}
 flowchart TB
-    subgraph contracts["Data contracts"]
+    subgraph contracts["Validation and data contracts"]
+        validation["_validation"]
         types
         config
         results
     end
-    subgraph physnoise["Physics & noise"]
+    subgraph physnoise["Physics and noise"]
         physics
         noise
+        support["_support"]
     end
-    subgraph infer_c["Inference"]
+    subgraph core["Inference and public API"]
         inference
-    end
-    subgraph public["Public API"]
         api
     end
     subgraph vis["Visualization"]
@@ -31,71 +30,76 @@ flowchart TB
         panels["_panels"]
         panels3d["_panels3d"]
     end
-    subgraph scen["Scenario tooling"]
-        scenarios["_scenarios"]
+    subgraph scenarios["Scenario tooling"]
+        scenario["_scenarios"]
         echo["_echo_study"]
     end
-    subgraph entry["Entry points"]
-        cli["_cli"]
+    subgraph entry["Packaged entry points"]
+        demos["_demos/*"]
     end
-    scripts_node["scripts/*.py"]
+    console["uv run demo-*"]
+    wrappers["scripts/demo_*.py"]
 
+    types --> validation
+    config --> validation
     config --> types
+    results --> validation
     results --> config
     results --> types
+    physics --> validation
     physics --> types
-    inference --> noise
-    inference --> physics
+    support --> physics
+    support --> types
+    inference --> validation
     inference --> types
+    api --> support
     api --> config
     api --> inference
     api --> noise
     api --> physics
     api --> results
-    api --> types
     viz --> animate
     viz --> panels
     viz --> panels3d
-    animate --> panels
-    animate --> panels3d
     animate --> inference
     animate --> physics
-    animate --> types
-    panels --> types
-    panels3d --> types
-    scenarios --> api
-    scenarios --> config
-    scenarios --> inference
-    scenarios --> physics
-    scenarios --> results
-    scenarios --> types
-    echo --> scenarios
+    animate --> panels
+    animate --> panels3d
+    scenario --> support
+    scenario --> api
+    scenario --> inference
+    scenario --> physics
+    echo --> scenario
     echo --> physics
-    cli -. "runs via runpy" .-> scripts_node
+    demos --> api
+    demos --> scenario
+    demos --> viz
+    console -. "pyproject entry points" .-> demos
+    wrappers -. "thin imports" .-> demos
 ```
 
-**In words** (text equivalent of the diagram): `types` is the foundation
-nearly everything builds on — only `noise` and `_cli` stand apart.
-`config` and `results` define the public configuration and result
-dataclasses on top of it. `physics` computes clock rates from mass
-configurations; `noise` (which imports nothing from the package) models
-observation noise. `inference` — the particle filter — consumes physics,
-noise, and types. `api` ties all of it into the `simulate` / `infer` /
-`simulate_and_infer` / `build_particle_filter` entry points. `viz` is a
-pure facade re-exporting the private `_animate`, `_panels`, and
-`_panels3d` plotting modules. `_scenarios` builds shared demo/test
-scenarios on the public API; `_echo_study` adds echolocation-study
-reporting on top of it. `_cli` maps the `uv run demo-*` commands onto the
-scripts in `scripts/`, executing them with `runpy` (with an `importlib`
-fallback); `_cli.py` itself imports nothing from the library, but the
-scripts it runs do.
+**In words** (text equivalent of the diagram): `_validation`, `types`, and
+`config` establish immutable public contracts. `physics` implements strict
+weak-field forward models; `_support` defines the conditional prior support
+used before those strict models are called. `inference` implements adaptive
+tempered resample-move SMC, and `api` connects it to configuration, simulation,
+physics, noise, and result objects. `viz` is the public facade over private
+animation and panel modules. `_scenarios` and `_echo_study` provide shared
+builders and reporting for demos, scans, and tests.
+
+The seven `[project.scripts]` entries in `pyproject.toml` point directly to
+`main()` functions under `clocks._demos`. Those packaged modules contain the
+implementations and select Matplotlib's headless backend before importing
+`pyplot`. Repository files under `scripts/demo_*.py` are only convenience
+wrappers importing the corresponding packaged `main()`; an installed wheel
+does not depend on the repository's `scripts/` directory.
 
 ## The public/private boundary
 
 The package's promised surface is the set of names curated in
-`clocks/__init__.py::__all__` — the API entry points, the config and
-result dataclasses, core types, and selected physics, noise, inference,
-and viz names. Entire modules are *not* the promised surface, and every
-underscore-prefixed module (`_animate`, `_panels`, `_panels3d`,
-`_scenarios`, `_echo_study`, `_cli`) is internal: import from `clocks`
-directly, not from its internals.
+`clocks/__init__.py::__all__` — the API entry points, configuration and result
+dataclasses, core types, and selected physics, noise, inference, and
+visualization names. Entire modules are *not* the promised surface. Modules
+whose names begin with an underscore, including `_support`, `_scenarios`,
+`_echo_study`, and `_demos`, are internal; library callers should import from
+`clocks` directly.

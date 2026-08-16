@@ -16,7 +16,7 @@ region of space, watch which ones run slow, and you can infer where the
 hidden mass is and how heavy it is, a gravity detector built from nothing
 but timekeeping. This site builds that detector: a
 [forward model](method/notation-and-glossary.qmd#term-forward-model) from
-general relativity, a
+summed Newtonian potentials and a pedagogical weak-field rate map, a
 [particle filter](method/the-particle-filter.qmd#sec-intro) for the
 [inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
 and a series of increasingly hard detection puzzles.
@@ -43,7 +43,8 @@ sim = simulate(SimulationConfig(
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
     prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
-    n_particles=400, n_masses=1, seed=42,
+    n_particles=400, n_masses=1,
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 x, m = result.posterior_mean
 sx, sm = result.posterior_std

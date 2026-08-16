@@ -17,16 +17,20 @@ problem gets qualitatively harder, not merely bigger.
 "Mass 1" and "mass 2" are *our* labels; the physics doesn't care. A
 hypothesis with the masses swapped predicts identical clock rates, so the
 true [posterior](../method/notation-and-glossary.qmd#term-posterior) is perfectly bimodal — and the mean of a bimodal cloud lands
-meaninglessly between the modes. The library breaks the symmetry by fiat:
-particles are sorted so $x_1 < x_2$ at sampling and again after every
-[resampling jitter](../method/the-particle-filter.qmd#sec-resampling).
+meaninglessly between the modes. The library instead represents the
+normalized ordered version of the exchangeable prior: initial position-mass
+pairs are sorted together so $x_1 < x_2$. During
+[rejuvenation](../method/the-particle-filter.qmd#sec-resampling), a proposal
+that crosses that strict boundary is rejected. Sorting proposals after they
+are drawn would obscure the proposal density and is not used.
 
 What this does **not** solve: when the two masses nearly share an
 x-coordinate, the sort boundary slices right through the posterior, and
-inference quality degrades. This repo felt that concretely — the 1D demo's
+sampling can become difficult. The 1D demo's
 second mass originally sat at $x_2 = 3.0$, exactly on top of a clock and
 close enough to cause trouble, and was moved to $4.5$ to keep the demo
-crisp. Sorting is a pragmatic fix, not a principled one, and we say so.
+crisp. Ordering is an identifiable parameterization, not evidence that the
+physical masses have intrinsic labels.
 
 ## Superposition is the enemy
 
@@ -66,10 +70,9 @@ plt.close(fig)
 fig
 ```
 
-The filter still separates them — five clocks each contribute a small
-disagreement, and 80 noisy observations compound those disagreements into
-certainty. That is the entire trick of the method: no single reading is
-decisive, and none has to be.
+In the demonstrated run, the filter separates them: five clocks each
+contribute a small disagreement, and 80 noisy observations compound those
+disagreements. No single reading is decisive, and none has to be.
 
 ::: {.callout-note title="The question behind the question"}
 If two masses can imitate one this well, how would you ever know *how many*

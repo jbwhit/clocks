@@ -7,8 +7,9 @@ title: "Units and Scales"
 The simulation sets $G = c = 1$. One choice of units removes two constants
 from every equation: the potential simplifies to $\Phi = -M/r$ (setting
 $G=1$), and the tick rate simplifies to $\sqrt{1 + 2\Phi}$ (setting
-$c=1$), turning positions, masses, and times into pure dimensionless
-numbers. Nothing physical is lost — only bookkeeping.
+$c=1$), turning positions, masses, and times into dimensionless simulation
+numbers. This unit choice removes bookkeeping; it does not make the model
+itself more exact.
 
 ## What M = 0.10 means
 
@@ -37,9 +38,14 @@ for i, (r, rate) in enumerate(zip(distances, rates)):
     print(f"  clock {i}: r = {r:5.2f}  (r/r_s = {r / r_s:4.2f})  rate = {rate:.4f}")
 ```
 
-The project treats the displayed formula as a weak-field surrogate. For
-several masses it sums the $-M/r$ potentials, then rejects any state that
-would exceed the same $|2\Phi| \le 0.1$ policy.
+The project treats $\sqrt{1+2\Phi}$, together with summed Newtonian
+potentials $\Phi_i=-\sum_j M_j/r_{ij}$, as a pedagogical weak-field
+surrogate. It is not an exact strong-field solution and the potential sum
+is not a general superposition law of general relativity. Direct physics
+calls reject nonfinite, positive, singular, or overly deep potentials;
+inference assigns candidates outside the same domain zero prior support.
+The conservative operational policy $|2\Phi| \le 0.1$ keeps the model in
+its declared regime rather than merely keeping the square root real.
 
 ## Scaling to reality
 
@@ -53,9 +59,9 @@ $10^{-17}$, which is exactly why the
 lattice clocks: that is the instrument class where this stops being a toy.
 
 The plain summary: the simulation compresses the dynamic range so the
-inference story is visible to the eye. It does not change the math — the
-forward model, the degeneracies, and the filter are the same at
-$10^{-1}$ and $10^{-18}$; only the noise budget moves.
+inference story is visible to the eye. The qualitative inverse-problem
+geometry carries over to much weaker signals, but this surrogate deliberately
+omits higher-order relativistic physics and real instrument systematics.
 
 ::: {.callout-note title="Convention"}
 Every number on this site is in simulation units unless it is explicitly

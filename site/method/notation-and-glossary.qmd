@@ -35,9 +35,11 @@ masses; $c$ indexes clocks ($r_c$).
 | $N$ | Number of particles in the filter's cloud | [The Particle Filter](the-particle-filter.qmd) |
 | $w_i$ | Weight of particle $i$ (weights sum to one) | [The Particle Filter](the-particle-filter.qmd) |
 | $\theta_i$ | Particle $i$'s full parameter hypothesis, e.g. $(x, M)$ | [The Particle Filter](the-particle-filter.qmd) |
+| $\beta$ | Tempering exponent for the newest observation, advanced adaptively from 0 to 1 | [The Particle Filter](the-particle-filter.qmd) |
+| $\pi_{t,\beta}$ | Intermediate target after observations before $t$ and a fraction $\beta$ of observation $t$ | [The Particle Filter](the-particle-filter.qmd) |
 | $K$ | Number of masses a model assumes | [How Many Masses?](../story/how-many-masses.qmd) |
 | ESS | Effective sample size, $1/\sum_i w_i^2$ | [The Particle Filter](the-particle-filter.qmd#sec-resampling) |
-| evidence, log-evidence | Marginal likelihood of the observed data under a model, accumulated observation by observation | [How Many Masses?](../story/how-many-masses.qmd) |
+| evidence, log-evidence | SMC Monte Carlo estimate of a model's marginal likelihood, accumulated before resampling at each tempering stage | [How Many Masses?](../story/how-many-masses.qmd) |
 
 ::: {.callout-note title="Two overloaded symbols"}
 **$\sigma$** means observation noise on the inference pages but Gaussian
@@ -54,7 +56,8 @@ clock's fractional-frequency instability after averaging for time $\tau$.
 
 - [**Weak field**]{#term-weak-field} — the regime where gravity is a small
   correction ($|2\Phi/c^2| \ll 1$) and the tick rate
-  $\sqrt{1 + 2\Phi/c^2}$ applies; see
+  $\sqrt{1 + 2\Phi/c^2}$ is used as a pedagogical surrogate; this project
+  enforces the conservative policy $|2\Phi| \le 0.1$ in simulation units; see
   [Clocks as Gravimeters](../story/clocks-as-gravimeters.qmd).
 - [**Time dilation**]{#term-time-dilation} — clocks deeper in a
   gravitational well tick slower relative to distant ones; the measurable
@@ -74,10 +77,11 @@ clock's fractional-frequency instability after averaging for time $\tau$.
   broken by sufficiently informative array geometry
   ([One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd)).
 - [**Particle filter**]{#term-particle-filter} — the site's inference
-  engine: a cloud of weighted hypotheses, reweighted by each observation
+  engine: adaptive tempered resample-move SMC over a cloud of hypotheses
   ([The Particle Filter](the-particle-filter.qmd)).
 - [**Prior**]{#term-prior} — what the filter assumes before any data:
-  uniform ranges for positions and masses
+  a uniform rectangle over the configured position and mass ranges,
+  conditioned on ordering and weak-field validity
   ([The Particle Filter](the-particle-filter.qmd)).
 - [**Likelihood**]{#term-likelihood} — how well a hypothesis predicts an
   observed set of clock rates; Gaussian in the observation noise
@@ -86,15 +90,17 @@ clock's fractional-frequency instability after averaging for time $\tau$.
   cloud approximates it; the cloud's spread is the filter's *claimed*
   uncertainty ([The Search in One Dimension](../story/the-search-in-one-dimension.qmd)).
 - [**Evidence**]{#term-evidence} — the marginal likelihood a model
-  assigned to the data it actually saw; what
+  assigned to the data it actually saw, estimated consistently by SMC but
+  with finite-particle sampling error; what
   [model comparison](../story/how-many-masses.qmd) ranks
   ([The Particle Filter](the-particle-filter.qmd#sec-evidence)).
 - [**Resampling**]{#term-resampling} — redrawing the cloud in proportion
-  to weight when the ESS collapses; systematic, stratified, or residual
+  to weight at an adaptive tempering stage; systematic, stratified, or residual
   ([The Particle Filter](the-particle-filter.qmd#sec-resampling)).
-- [**Jitter**]{#term-jitter} — small perturbation of resampled clones so
-  they don't sit on top of each other; fixed, covariance, or annealed (the
-  default) ([The Particle Filter](the-particle-filter.qmd#sec-resampling)).
+- [**Rejuvenation**]{#term-rejuvenation} — symmetric random-walk
+  Metropolis-Hastings moves after resampling; accept/reject preserves the
+  current tempered target
+  ([The Particle Filter](the-particle-filter.qmd#sec-resampling)).
 - [**Effective sample size**]{#term-ess} — $1/\sum_i w_i^2$; how many
   particles are meaningfully alive
   ([The Particle Filter](the-particle-filter.qmd#sec-resampling)).
@@ -102,8 +108,9 @@ clock's fractional-frequency instability after averaging for time $\tau$.
   candidate mass count $K$ and comparing evidence
   ([How Many Masses?](../story/how-many-masses.qmd)).
 - [**Label switching**]{#term-label-switching} — with several masses the
-  posterior is symmetric under relabeling; broken by sorting, at a known
-  cost ([Two Hidden Masses](../story/two-hidden-masses.qmd)).
+  exchangeable posterior is symmetric under relabeling; the library
+  represents its normalized strictly x-ordered form
+  ([Two Hidden Masses](../story/two-hidden-masses.qmd)).
 - [**Observation noise**]{#term-sigma-obs} — the Gaussian noise
   $\sigma_{\text{obs}}$ added to every clock reading; the floor that
   makes many observations necessary

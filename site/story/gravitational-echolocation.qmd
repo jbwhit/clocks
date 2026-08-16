@@ -41,15 +41,17 @@ from clocks import clock_rates
 from clocks._scenarios import (
     ECHO_NOISE_STD,
     build_head_lattice,
+    contrast_matrix,
     echo_mass_config,
 )
 
 head = build_head_lattice()
 ranges = np.linspace(2.0, 10.0, 60)  # from the validated exterior minimum
 signal = []
+q = contrast_matrix(len(head.positions))
 for r in ranges:
     rates = clock_rates(echo_mass_config(float(r)), head)
-    signal.append(np.max(np.abs(rates - rates.mean())))
+    signal.append(np.max(np.abs(q @ rates)))
 
 fig, ax = plt.subplots()
 ax.semilogy(ranges, signal, color="steelblue", label="differential signal")
@@ -57,18 +59,25 @@ ax.axhline(
     ECHO_NOISE_STD, color="lightcoral", linestyle="--", label="noise floor"
 )
 ax.set_xlabel("range (circumradii)")
-ax.set_ylabel("max centered rate difference")
+ax.set_ylabel("max orthonormal contrast")
 ax.legend()
 plt.close(fig)
 fig
 ```
 
-One technical footnote. Subtracting the mean makes the observation noise
-slightly correlated — every centered rate shares the subtracted average.
-The filter nonetheless keeps the simpler independent-noise likelihood,
-which is harmless here: on centered residuals the two likelihoods differ
-only by a constant that cancels out of the particle weights. (Only the
-absolute [evidence normalization](../method/the-particle-filter.qmd#sec-evidence) shifts, and nothing on this page uses it.)
+The display subtracts the channel mean, but the likelihood uses an exact
+orthonormal contrast transform. For $C$ labeled clocks, let $Q$ have
+$C-1$ orthonormal rows perpendicular to the all-ones vector. Then
+$Q\mathbf{1}=0$ and $QQ^T=I_{C-1}$. If the raw channel noise is
+$\epsilon\sim\mathcal N(0,\sigma^2 I_C)$, the contrast noise is therefore
+
+$$Q\epsilon\sim\mathcal N(0,\sigma^2 I_{C-1}).$$
+
+The $C-1$ coordinates preserve the iid variance and the likelihood's
+normalization after the unobservable common mode is discarded. Centered
+$C$-vectors remain useful for plotting, but treating their correlated
+components as independent would give the wrong absolute
+[evidence normalization](../method/the-particle-filter.qmd#sec-evidence).
 
 ## Watching the head lock on
 
@@ -76,62 +85,36 @@ The demo places the mass at two circumradii along a fixed off-axis
 direction and lets the filter work through eighty differential
 observations. The camera nearly completes an orbit while the particle cloud — six
 thousand hypotheses spread through a box far larger than the head —
-collapses onto the true mass. (This demo run is curated for visual
-clarity: two circumradii is the closest, most favorable range, and its
-seed is fixed. The study below takes no such liberties.)
+evolves toward the true mass. This is one fixed-seed visualization at the
+closest, most favorable range, not a reliability measurement.
 
 ![The echolocation demo. Left: the head lattice, the true exterior mass (star), and the particle cloud, camera orbiting. Right, top to bottom: parameter convergence, mass marginal, differential rates by clock.](../assets/demo_echolocation_3d.gif)
 
 ## How far does the sense reach?
 
-The quantitative version: sweep the range from two to eight circumradii,
-twelve independent runs per range (certification seeds, run exactly once —
-no cherry-picking), and track both the *actual* error and the filter's own
-*claimed* uncertainty. The pass criterion is strict, and only the nearest
-range clears it.
+The range harness sweeps the declared circumradius grid and records position
+error, mass error, posterior standard deviations, coverage, residuals, SMC
+controls, and forward-model evaluation counts. Development seeds are used to
+select controls by a declared ranking; only after those controls and
+tolerances are frozen is a reserved certification block run once.
 
-![Resolution vs range. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, dashed lines are the filter's claimed uncertainty (posterior std).](../assets/echolocation_range_study.png)
+![A finite fixed-seed resolution study. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, and dashed lines show posterior standard deviations.](../assets/echolocation_range_study.png)
 
-At two circumradii the head localizes the mass in eleven of twelve runs,
-and its confidence is honest: the truth lands inside all four componentwise
-±3 posterior-standard-deviation intervals in all twelve runs. This is the
-near field, and the sense works.
-
-Past that, it fails in two very different ways. From roughly two-and-a-half
-to four-and-a-half circumradii the filter is *confidently wrong*. The
-mass–distance degeneracy drags its estimate outward along the line of
-sight — pushing the mass too far and inflating its size to compensate —
-while the reported uncertainty stays deceptively tight. 3-sigma coverage
-collapses across this band: three of twelve, then one of twelve, then zero
-of twelve as the range grows. Here the head would swear it senses a mass
-that simply is not where it thinks.
-
-Farther out, from about six to eight circumradii, the failure turns honest.
-The signal now sits so far below the level where range can be pinned that
-the posterior just goes diffuse — position uncertainty at eight circumradii
-runs roughly fifteen times the near-field value — and with that width the
-truth falls back inside the componentwise 3-sigma intervals nine and then
-eleven times out of twelve. The head no longer knows *where*; but it has
-stopped pretending to.
+That protocol guards against tuning directly to the reported holdout, but a
+fixed set of seeds is still regression and calibration evidence for those
+specific simulated runs. It is not a population reliability estimate and
+does not justify a universal pass probability. The physically robust trend
+is the signal scaling: the differential gradient falls as $1/R^2$, while
+the curvature that helps separate mass from range falls as $1/R^3$.
 
 ## Verdict
 
-Physically coherent, with a short and treacherous horizon. The differential
-signal an exterior mass leaves on a head-sized lattice dies as 1/R², and
-separating mass from range leans on a fainter curvature term dying as 1/R³.
-So the sense is sharp only out to about two circumradii; by roughly 2.6
-circumradii it is already unreliable. Just beyond that lies a band where
-the degeneracy makes the head misjudge range *with
-confidence* — the most dangerous failure a sense can have — before the
-signal finally sinks far enough that the uncertainty widens honestly and
-the false certainty dissolves. Our imagined synesthete would feel what is
-close — furniture, a doorframe, someone leaning in — as a presence with
-clear direction and rough heft; would feel things in the middle distance
-too, but misplaced, and held with a conviction they haven't earned; and
-would sense the far world only as a vague pressure with no fixed location.
-Echolocation is the right metaphor, with the right caveat: a near-field
-sense, written in spacetime instead of sound — reliable at arm's reach,
-credulous in the middle distance, and knowingly blind beyond.
+The surrogate poses a coherent inverse problem inside its $|2\Phi|\le0.1$
+domain, but exterior range is intrinsically difficult. Direction is carried
+by the leading gradient; separating a nearby small mass from a farther heavy
+one leans on the weaker curvature. Any claimed sensing horizon must therefore
+be attached to a stated noise model, prior, particle budget, SMC controls,
+pass rule, and finite seed set—not promoted to a property of the population.
 
 ## Coda: could she feel the Sun?
 
@@ -242,8 +225,8 @@ meditative minute.
 There is a familiar shape in all this. Setting the signal against the
 $10^{-18}$ floor gives the head a detection horizon of about 0.08 AU for
 a Sun-sized mass — and the Sun sits twelve times beyond its own horizon,
-just as the study above found a reach of only a few circumradii. And even
-inside the horizon, the verdict's caveat becomes absolute at astronomical
+an illustration of how quickly a differential signal loses to an instrument
+floor. And even inside the horizon, the caveat becomes absolute at astronomical
 range: the curvature term that separates mass from distance is suppressed
 by a further factor of baseline over range, about $10^{-12}$ at 1 AU. She
 could feel direction and pull, never distance — a presence, not a place.
@@ -251,7 +234,9 @@ Which may be the most meditative conclusion physics has on offer.
 
 ::: {.callout-note title="Reproduce"}
 `uv run demo-echolocation-3d` regenerates the demo;
-`uv run scripts/scan_echolocation_range.py` reruns the sweep (tuning
-seeds; the published figure used `--seed-block 300`). See
+`uv run scripts/scan_echolocation_range.py --seed-block 0 --workers 8 --per-run`
+runs the development grid. A reserved certification run uses the already
+frozen cell via `--seed-block 400`; protected blocks reject control overrides.
+See
 [Getting Started](../reproduce/getting-started.qmd).
 :::

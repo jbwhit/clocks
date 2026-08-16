@@ -16,9 +16,11 @@ The inference engine is a **particle filter**: a cloud of hypotheses —
 one thousand of them in the animation above — each one a guess at
 $(x, M)$. Every time a new observation
 arrives, each hypothesis is reweighted by how well it predicts the observed
-rates; hypotheses that keep predicting badly wither, and resampling
-multiplies the ones that survive. The cloud *is* the posterior — its spread
-is the claimed uncertainty. Mechanics, knobs, and failure modes live in
+rates. Adaptive likelihood tempering prevents one sharp observation from
+destroying the cloud at once; resampling multiplies hypotheses that survive,
+and Metropolis-Hastings moves restore diversity while preserving each
+tempered target. The weighted cloud approximates the posterior — its spread
+is the claimed uncertainty. Mechanics, controls, and failure modes live in
 [The Particle Filter](../method/the-particle-filter.qmd).
 
 ## Watch it converge
@@ -44,7 +46,8 @@ sim = simulate(SimulationConfig(
 result = infer(sim.observations, InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
     prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
-    n_particles=400, n_masses=1, seed=42,
+    n_particles=400, n_masses=1,
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 
 steps = np.arange(1, len(result.history) + 1)

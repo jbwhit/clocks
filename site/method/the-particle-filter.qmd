@@ -4,74 +4,107 @@ title: "The Particle Filter"
 
 ::: {#sec-intro}
 This page is for the reader who wants the machinery. The implementation is
-`clocks.inference.ParticleFilter` — a few hundred lines, and everything below
-maps onto it directly.
+`clocks.inference.ParticleFilter`: adaptive tempered resample-move sequential
+Monte Carlo (SMC) for a static parameter vector.
 :::
 
-## State
+## State and prior support
 
-$N$ particles, each a full hypothesis for the unknown parameters (e.g.
-$(x, M)$ in 1D), with weights summing to one. Initialization draws the
-cloud from the prior — typically uniform over the position and mass ranges.
+$N$ particles represent complete hypotheses $\theta_i$ with normalized
+weights $w_i$. The public point-mass API uses a uniform rectangular prior
+conditioned on every actual support rule:
 
-## Update
+- positions and masses lie inside the configured `PriorConfig` ranges;
+- multiple masses obey the canonical strict ordering $x_1 < \cdots < x_K$;
+  and
+- every candidate satisfies the project's $|2\Phi| \le 0.1$ weak-field
+  policy at every clock.
 
-Per observation, each particle's log-weight gains the Gaussian
-log-likelihood of the observed rates given that particle's predicted rates:
+Initialization rejection-samples from that normalized conditional prior.
+Proposals outside it have log density $-\infty$; they are rejected rather
+than clipped, reflected, sorted, or repaired. A directly constructed
+`ParticleFilter` likewise requires a `prior_sampler` and
+`log_prior_density` that describe the same distribution. If they do not,
+posterior and evidence results are undefined.
 
-$$\log w_i \mathrel{+}= -\tfrac{1}{2}\sum_c \left(\frac{r_c^{\text{obs}} - r_c^{\text{pred}}(\theta_i)}{\sigma}\right)^2 + \text{const}$$
+## One observation, several tempered stages
 
-plus a log-prior that is $-\infty$ outside the bounds (negative mass,
-position out of range) — invalid particles die instantly rather than being
-clamped. Normalization happens in log space (log-sum-exp), because with
-$\sigma = 0.005$ the raw likelihoods underflow immediately.
+Suppose observations $y_1,\ldots,y_{t-1}$ have been completed and $y_t$ has
+just arrived. One public `update()` advances through the intermediate
+targets
 
-## Resampling {#sec-resampling}
+$$
+\pi_{t,\beta}(\theta) \propto
+p(\theta)\prod_{s<t}p(y_s\mid\theta)
+p(y_t\mid\theta)^\beta,
+\qquad 0 \le \beta \le 1.
+$$
 
-A few sharp observations leave most particles with negligible weight. The
-**effective sample size** $\mathrm{ESS} = 1/\sum_i w_i^2$ measures the
-collapse; when it drops below `resample_threshold · N`, the filter redraws
-$N$ particles in proportion to weight and perturbs the clones with jitter
-so they don't sit on top of each other. Three resampling schemes are
-available: **systematic** (the default) walks one evenly-spaced comb with
-a single random offset through the cumulative weights, giving minimal
-variance; **stratified** draws one uniform sample per equal-probability
-stratum, trading a little variance for independence between strata;
-**residual** deterministically copies each particle
-$\lfloor N w_i \rfloor$ times and only randomizes the remainder. Three
-jitter modes:
+At a stage with exponent $\beta$, the filter chooses the largest next
+exponent $\beta' \le 1$ whose reweighted effective sample size remains at
+the configured target `ess_target * N`; bisection finds $\beta'$ when the
+full remaining likelihood would be too sharp. With
+$\ell_i = \log p(y_t\mid\theta_i)$,
 
-- **fixed** — isotropic Gaussian noise with absolute scale `jitter_std`.
-- **covariance** — noise shaped by the weighted empirical covariance of the
-  cloud, scaled by `jitter_std`. When the posterior is a thin diagonal
-  ridge (a "banana"), isotropic jitter pushes particles off the ridge;
-  covariance jitter slides them along it.
-- **annealed** (the default) — axis-aligned Gaussian whose per-parameter
-  scale starts at the initial particle cloud's spread (prior scale) and
-  decays exponentially, with time constant `jitter_tau` observations
-  (15, by default), to the `jitter_std` floor. Early on the cloud can
-  still escape a wrong mode; late in the run the jitter is as gentle as
-  fixed jitter.
+$$
+\widetilde w_i = w_i\exp[(\beta'-\beta)\ell_i],
+\qquad
+\mathrm{ESS} = \frac{1}{\sum_i (\widetilde w_i/\sum_j\widetilde w_j)^2}.
+$$
 
-The covariance mode has a guard worth knowing about: with too few
-effective particles the weighted covariance degenerates (`np.cov`'s
-normalization $1 - \sum w_i^2$ reaches zero at one effective particle), so
-below two effective particles — or when the cloud has collapsed to
-near-identical clones — the filter falls back to isotropic jitter for that
-resample rather than crashing or freezing.
+All normalization is done in log space. Completed independent Gaussian
+observations are retained as sufficient statistics, so an MH target
+evaluation does not replay the entire observation history.
+
+## Resampling and invariant moves {#sec-resampling}
+
+Before any resampling, the filter records the stage's normalizing-constant
+increment
+
+$$
+\log \widehat{Z}_{\beta:\beta'} =
+\log\sum_i w_i\exp[(\beta'-\beta)\ell_i].
+$$
+
+An intermediate stage is then resampled to equal weights. A final stage is
+also resampled if its ESS reaches the configured threshold. Systematic
+(the default), stratified, and residual resampling are available.
+
+Every resampling is followed by `rejuvenation_steps` random-walk
+Metropolis-Hastings steps. For a stage, the code freezes one regularized
+empirical covariance, shared by all particles, and scales it by
+`proposal_scale / sqrt(D)`. The resulting Gaussian proposal is symmetric,
+so for a proposal $\theta'$ the acceptance probability is exactly
+
+$$
+\alpha(\theta,\theta') =
+\min\left\{1,
+\frac{\pi_{t,\beta'}(\theta')}{\pi_{t,\beta'}(\theta)}
+\right\}.
+$$
+
+This accept/reject move leaves the current intermediate target invariant.
+Merely perturbing resampled copies without the MH correction would not.
 
 ## Evidence {#sec-evidence}
 
-Each update's increment $\log \sum_i w_i L_i$ is the marginal likelihood of
-that observation under the model — how well the model *predicted* the data
-before seeing it. Summed over observations this is the log-evidence, the
-quantity [model comparison](../story/how-many-masses.qmd) ranks.
+Summing the pre-resampling log increments across stages and observations
+gives the SMC estimate of the log normalizing constant. This is a
+consistent Monte Carlo evidence estimator as particle count grows; at any
+finite $N$ it has sampling error. It is neither deterministic nor an exact
+finite-particle marginal likelihood. Model comparison combines each
+model's estimate with its normalized model prior.
 
-## Watch the ESS breathe
+The filter exposes `log_evidence`, `log_evidence_history`, and the most
+recent `last_log_evidence_increments`. Per-update diagnostics report the
+number of tempering stages plus MH proposal and acceptance counts; public
+inference results retain those diagnostics in each history entry.
+
+## Watch tempering and ESS
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Effective sample size over 25 observations. Sharp likelihoods crash it; resampling (below the dashed threshold) resets it to N."
+#| fig-cap: "Final ESS and internal tempering-stage count for each public observation update."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import (
@@ -88,41 +121,42 @@ sim = simulate(SimulationConfig(
 pf = build_particle_filter(InferenceConfig(
     clock_array=clock_array, noise=NoiseConfig(observation_std=0.005),
     prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
-    n_particles=400, n_masses=1, seed=42,
+    n_particles=400, n_masses=1,
+    ess_target=0.8, rejuvenation_steps=2, proposal_scale=2.38, seed=42,
 ))
 
 ess_trace = []
+stage_trace = []
 for obs in sim.observations:
     state = pf.update(obs)
     ess_trace.append(1.0 / np.sum(state.weights**2))
+    stage_trace.append(pf.last_diagnostics.tempering_stages)
 
-fig, ax = plt.subplots()
-ax.plot(np.arange(1, 26), ess_trace, marker="o", ms=3)
-ax.axhline(0.5 * pf.n_particles, ls="--", color="gray", label="resample threshold")
-ax.set_xlabel("observation #")
-ax.set_ylabel("effective sample size")
-ax.legend()
+steps = np.arange(1, len(ess_trace) + 1)
+fig, (ax_ess, ax_stages) = plt.subplots(2, 1, sharex=True)
+ax_ess.plot(steps, ess_trace, marker="o", ms=3)
+ax_ess.axhline(
+    pf.ess_target * pf.n_particles,
+    ls="--", color="gray", label="ESS target",
+)
+ax_ess.set_ylabel("final ESS")
+ax_ess.legend()
+ax_stages.step(steps, stage_trace, where="mid")
+ax_stages.set_xlabel("observation #")
+ax_stages.set_ylabel("tempering stages")
 plt.close(fig)
 fig
 ```
 
-::: {.callout-warning title="Failure modes"}
-Three ways this machinery can lie to you, and what the library does about
-each:
+::: {.callout-warning title="What the diagnostics can and cannot show"}
+Weight collapse raises `RuntimeError` instead of propagating a NaN. Low MH
+acceptance or many tempering stages can diagnose poor proposal geometry or
+a sharp update, but no single diagnostic proves convergence. Fixed-seed
+development and certification scans are reproducible regression and
+calibration evidence for those particular runs; they are not estimates of
+population reliability.
 
-- **Weight collapse.** Every particle lands at $-\infty$ log-weight (prior
-  and data contradict). The filter raises `RuntimeError` instead of
-  propagating NaN.
-- **Particle impoverishment.** After resampling, the cloud consists of
-  near-identical clones; if the jitter is too weak the posterior freezes
-  and reports false certainty. The six-parameter two-mass-2D problem shows
-  this concretely: at a fixed jitter of `jitter_std = 0.02`, only 1/12
-  tuning seeds recovered truth. Annealing that same floor down from the
-  prior scale (the `jitter_tau = 15` default) let the cloud escape wrong
-  modes early and settle late, recovering 12/12 tuning seeds and 11/12 on
-  a held-out set of fresh seeds — which is why annealed jitter is now the
-  library default.
-- **Label switching.** With multiple masses, the posterior is symmetric
-  under relabeling; the [sorting constraint](../story/two-hidden-masses.qmd)
-  breaks it, at a known cost near the sort boundary.
+With multiple masses, ordering removes label switching from the represented
+parameterization. Proposals crossing the strict ordering boundary are
+rejected. Near that boundary, sampling can still be difficult.
 :::
