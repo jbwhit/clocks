@@ -1,5 +1,6 @@
 """Tests for visualization and animation helpers."""
 
+import inspect
 from pathlib import Path
 
 import matplotlib
@@ -725,16 +726,64 @@ class TestAnimateEcholocation:
             make_echo_observations,
         )
 
-        _, centered = make_echo_observations(seed=0, range_r=2.0, n_observations=4)
+        _, centered, contrasts = make_echo_observations(
+            seed=0, range_r=2.0, n_observations=4
+        )
         pf = build_echolocation_filter(seed=0, n_particles=300)
         out = tmp_path / "echo.gif"
         animate_echolocation(
             clock_array=build_head_lattice(),
             mass_config=echo_mass_config(2.0),
             observations=centered,
+            filter_observations=contrasts,
             pf=pf,
             output_path=out,
             fps=2,
         )
         assert out.exists()
         assert pf.state.observations_seen == 4  # frame-0 fix invariant
+
+    def test_requires_keyword_only_filter_observations(self) -> None:
+        params = inspect.signature(animate_echolocation).parameters
+        assert params["filter_observations"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["filter_observations"].default is inspect.Parameter.empty
+
+    @pytest.mark.parametrize(
+        ("n_display", "n_filter"),
+        [(0, 0), (2, 1)],
+    )
+    def test_rejects_empty_or_mismatched_observation_streams(
+        self, n_display: int, n_filter: int, tmp_path: Path
+    ) -> None:
+        from clocks._scenarios import build_echolocation_filter, build_head_lattice
+
+        observation = Observation(rates=np.zeros(27), time=0.0)
+        filter_observation = Observation(rates=np.zeros(26), time=0.0)
+        with pytest.raises(ValueError, match="same nonzero length"):
+            animate_echolocation(
+                clock_array=build_head_lattice(),
+                mass_config=MassConfig(np.array([[2.0, 3.0, 6.0]]), np.array([0.08])),
+                observations=[observation] * n_display,
+                filter_observations=[filter_observation] * n_filter,
+                pf=build_echolocation_filter(seed=0, n_particles=20),
+                output_path=tmp_path / "unused.gif",
+            )
+
+    @pytest.mark.parametrize(
+        ("display_channels", "filter_channels"),
+        [(26, 26), (27, 27)],
+    )
+    def test_rejects_invalid_display_or_filter_channel_counts(
+        self, display_channels: int, filter_channels: int, tmp_path: Path
+    ) -> None:
+        from clocks._scenarios import build_echolocation_filter, build_head_lattice
+
+        with pytest.raises(ValueError, match="channel"):
+            animate_echolocation(
+                clock_array=build_head_lattice(),
+                mass_config=MassConfig(np.array([[2.0, 3.0, 6.0]]), np.array([0.08])),
+                observations=[Observation(np.zeros(display_channels), 0.0)],
+                filter_observations=[Observation(np.zeros(filter_channels), 0.0)],
+                pf=build_echolocation_filter(seed=0, n_particles=20),
+                output_path=tmp_path / "unused.gif",
+            )

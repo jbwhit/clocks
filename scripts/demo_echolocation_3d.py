@@ -2,22 +2,15 @@
 
 A 3x3x3 lattice of 27 clocks (the "head") senses a single point mass
 placed outside it. The head has no external time reference, so the filter
-sees only mean-centered (differential) rates. The camera nearly completes
-an orbit over the animation.
+uses orthonormal contrasts while the animation shows centered labeled clock
+rates. The camera nearly completes an orbit over the animation.
 
 Demo seed and range are curated for visual clarity (disclosed in README
 and on the site page); the range study carries the quantitative argument.
 
-DEMO_RANGE_R deviates from the plan brief's suggested 4.0: empirically,
-range 4.0 does not converge for *any* tested seed (0-9) under the shipped
-annealed-jitter defaults -- the estimate is pulled outward along the
-true-mass ray with mass biased ~5x high (a real M/r degeneracy at that
-SNR, not seed noise; position error ~8-10 vs a 1.0 pass tolerance across
-all ten seeds). Range 2.0 -- the scenario's own minimum (ECHO_MIN_RANGE_R)
--- converges cleanly and robustly (max position error 0.41 across 8 seeds):
-it passed 12/12 on the tuning seeds (0-11); the one-shot certification
-sweep (seeds 300-311) later measured 11/12 there.
-See the task-8 report for the full range/seed scan.
+The demo uses the scenario's minimum exterior range for a visually resolvable
+example. Quantitative calibration and certification belong to the separate
+range study.
 """
 
 from pathlib import Path
@@ -53,7 +46,7 @@ def main() -> None:
         f"({DEMO_RANGE_R} circumradii)"
     )
 
-    _, centered_obs = make_echo_observations(DEMO_SEED, DEMO_RANGE_R)
+    _, centered_obs, filter_obs = make_echo_observations(DEMO_SEED, DEMO_RANGE_R)
     pf = build_echolocation_filter(DEMO_SEED)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -62,6 +55,7 @@ def main() -> None:
         clock_array=clock_array,
         mass_config=mass_config,
         observations=centered_obs,
+        filter_observations=filter_obs,
         pf=pf,
         output_path=OUTPUT_PATH,
         fps=4,

@@ -1,8 +1,11 @@
 """Fast tests for the shared multi-mass-2D scenario module."""
 
+import inspect
+
 import numpy as np
 import pytest
 
+import clocks._scenarios as scenarios
 from clocks._scenarios import (
     ECHO_DIRECTION,
     ECHO_M_TRUE,
@@ -14,6 +17,7 @@ from clocks._scenarios import (
     EchoRunResult,
     build_echolocation_filter,
     build_head_lattice,
+    contrast_matrix,
     echo_mass_config,
     echo_mass_position,
     generate_random_clocks,
@@ -23,7 +27,8 @@ from clocks._scenarios import (
     run_multi_mass_2d,
     validate_echo_geometry,
 )
-from clocks.physics import _point_mass_potential_batch
+from clocks.physics import _point_mass_potential_batch, clock_rates
+from clocks.types import MassConfig
 
 
 class TestPassRule:
@@ -37,10 +42,13 @@ class TestPassRule:
         assert not passes(TRUTH + np.array([0.51, 0, 0, 0, 0, 0]))
 
     def test_mass_error_beyond_tolerance_fails(self) -> None:
-        assert not passes(TRUTH + np.array([0, 0, 0, 0, 0.11, 0]))
+        assert not passes(TRUTH + np.array([0, 0, 0, 0, 0.011, 0]))
 
     def test_tolerance_values(self) -> None:
-        assert np.array_equal(PASS_TOLERANCE, np.array([0.5, 0.5, 0.5, 0.5, 0.1, 0.1]))
+        assert np.array_equal(
+            PASS_TOLERANCE,
+            np.array([0.5, 0.5, 0.5, 0.5, 0.01, 0.01]),
+        )
 
 
 class TestClockPlacement:
@@ -56,13 +64,13 @@ class TestClockPlacement:
                 assert np.linalg.norm(clocks[i] - np.array(p)) >= MIN_SEPARATION
 
 
-class TestFreezeRegression:
-    def test_seed_101_does_not_freeze(self) -> None:
-        """Seed 101 froze at t=1 under reject-and-stay (clone-freeze,
-        docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md).
-        Under reflection it must keep a live posterior."""
+class TestPosteriorUncertaintyRegression:
+    def test_seed_101_retains_uncertainty(self) -> None:
+        """A formerly degenerate seed must retain posterior uncertainty."""
         result = run_multi_mass_2d(101)
         assert result["max_posterior_std"] > 1e-6
+        assert result["normalized_error"] >= 0.0
+        assert result["forward_model_evaluations"] > 0
 
 
 class TestEchoGeometry:
@@ -121,10 +129,44 @@ class TestEchoGeometry:
             with pytest.raises(ValueError, match="finite"):
                 validate_echo_geometry(bad, ECHO_M_TRUE, head)
 
+    def test_validate_uses_shared_weak_field_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        head = build_head_lattice()
+        monkeypatch.setattr(scenarios, "WEAK_FIELD_LIMIT", 0.01)
+        with pytest.raises(ValueError, match=r"\|2\*Phi\| <= 0.01"):
+            validate_echo_geometry(ECHO_MIN_RANGE_R, ECHO_M_TRUE, head)
+
 
 class TestEchoMeasurementModel:
+    def test_contrast_matrix_is_orthonormal_and_removes_common_mode(self) -> None:
+        q = contrast_matrix(27)
+        assert q.shape == (26, 27)
+        np.testing.assert_allclose(q @ q.T, np.eye(26), atol=1e-14)
+        np.testing.assert_allclose(q @ np.ones(27), 0.0, atol=1e-14)
+
+    def test_contrast_noise_retains_iid_variance(self) -> None:
+        rng = np.random.default_rng(0)
+        draws = rng.normal(0.0, 0.001, size=(100_000, 27))
+        contrasts = draws @ contrast_matrix(27).T
+        np.testing.assert_allclose(
+            np.cov(contrasts, rowvar=False),
+            1e-6 * np.eye(26),
+            rtol=0.04,
+            atol=2e-8,
+        )
+
     def test_centered_observations_have_zero_mean(self) -> None:
-        _, centered = make_echo_observations(seed=0, range_r=2.0)
+        _, centered, contrasts = make_echo_observations(seed=0, range_r=2.0)
+        assert len(centered) == len(contrasts)
+        for display_obs, filter_obs in zip(centered, contrasts, strict=True):
+            assert display_obs.rates.shape == (27,)
+            assert filter_obs.rates.shape == (26,)
+            np.testing.assert_allclose(
+                filter_obs.rates,
+                contrast_matrix(27) @ display_obs.rates,
+                atol=1e-14,
+            )
         for obs in centered:
             assert np.isclose(obs.rates.mean(), 0.0, atol=1e-12)
 
@@ -137,8 +179,7 @@ class TestEchoMeasurementModel:
         pf = build_echolocation_filter(seed=0, n_particles=50)
         assert pf.forward_model_batch is not None
         predicted = pf.forward_model_batch(pf.state.particles)
-        assert predicted.shape == (50, 27)
-        assert np.allclose(predicted.mean(axis=1), 0.0, atol=1e-12)
+        assert predicted.shape == (50, 26)
 
     def test_scalar_forward_model_matches_batch(self) -> None:
         pf = build_echolocation_filter(seed=1, n_particles=8)
@@ -147,6 +188,28 @@ class TestEchoMeasurementModel:
         for i in range(8):
             single = pf.forward_model(pf.state.particles[i])
             assert np.allclose(single, batch[i])
+            params = pf.state.particles[i]
+            rates = clock_rates(
+                MassConfig(params[:3].reshape(1, 3), params[3:4]),
+                build_head_lattice(),
+            )
+            np.testing.assert_allclose(single, contrast_matrix(27) @ rates)
+
+    def test_filter_builder_exposes_rigorous_smc_controls(self) -> None:
+        params = inspect.signature(build_echolocation_filter).parameters
+        assert params["ess_target"].default == 0.8
+        assert params["rejuvenation_steps"].default == 2
+        assert params["proposal_scale"].default == 2.38
+        pf = build_echolocation_filter(
+            seed=0,
+            n_particles=20,
+            ess_target=0.7,
+            rejuvenation_steps=4,
+            proposal_scale=1.5,
+        )
+        assert pf.ess_target == 0.7
+        assert pf.rejuvenation_steps == 4
+        assert pf.proposal_scale == 1.5
 
     def test_prior_sampler_and_log_prior_match_physical_support(self) -> None:
         pf = build_echolocation_filter(seed=0, n_particles=100)
@@ -177,6 +240,11 @@ class TestEchoRunResult:
         assert isinstance(result["passed"], bool)
         assert isinstance(result["covered_3sigma"], bool)
         assert result["residual_over_noise"] >= 0.0
+        assert result["normalized_error"] >= 0.0
+        assert result["forward_model_evaluations"] > 0
+        assert result["ess_target"] == 0.8
+        assert result["rejuvenation_steps"] == 2
+        assert result["proposal_scale"] == 2.38
 
     def test_run_rejects_invalid_geometry(self) -> None:
         with pytest.raises(ValueError, match="exterior"):

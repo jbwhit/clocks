@@ -510,18 +510,35 @@ def animate_echolocation(
     pf: ParticleFilter,
     output_path: Path,
     fps: int = 4,
+    *,
+    filter_observations: list[Observation],
 ) -> None:
     """Animate the 3D echolocation filter with a slowly orbiting camera.
 
-    ``observations`` must be the centered observations the filter consumes
-    (the head has no external reference). The camera advances through nearly
-    one full azimuth orbit over the animation. Particles have 4 columns:
-    [x, y, z, M].
+    ``observations`` contains centered labeled clock channels for display;
+    ``filter_observations`` contains the orthonormal contrast coordinates used
+    by the likelihood. The camera advances through nearly one full azimuth
+    orbit over the animation. Particles have 4 columns: [x, y, z, M].
     """
+    if not observations or len(observations) != len(filter_observations):
+        raise ValueError(
+            "observations and filter_observations must have the same nonzero length"
+        )
+    n_clocks = len(clock_array.positions)
+    if any(len(observation.rates) != n_clocks for observation in observations):
+        raise ValueError(
+            f"display observations must each have {n_clocks} clock channels"
+        )
+    if any(
+        len(observation.rates) != n_clocks - 1 for observation in filter_observations
+    ):
+        raise ValueError(
+            f"filter observations must each have {n_clocks - 1} contrast channels"
+        )
     true_params = np.append(mass_config.positions[0], mass_config.masses[0])
 
     fig, axes = create_echolocation_dashboard()
-    states, means, stds = _precompute_filter_states(pf, observations)
+    states, means, stds = _precompute_filter_states(pf, filter_observations)
     n_frames = len(observations)
 
     def predicted_centered(frame: int) -> NDArray[np.floating]:

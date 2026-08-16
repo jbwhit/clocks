@@ -1,17 +1,18 @@
 """Slow acceptance pin: echolocation scenario on certification seeds.
 
-Deterministic re-execution of the certified runs (same seeds + same code
+Deterministic re-execution of the frozen runs (same seeds + same code
 => same result) — a regression pin, not a re-certification and not a
 population reliability estimate. The exactly-once rule (spec section 3a)
-bars using these seeds for tuning or selection; re-executing the frozen
-configuration is permitted, exactly as test_acceptance_multi_mass_2d.py
-re-executes its holdout. Excluded from default runs; execute with
-`uv run pytest -m slow`. Rerun whenever inference defaults or the
-scenario change.
+bars using these seeds for tuning or selection. Excluded from default runs;
+execute with `uv run pytest -m slow`. Rerun whenever inference defaults or
+the scenario changes.
 """
 
+import importlib.util
 import inspect
 import statistics
+from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import pytest
@@ -31,18 +32,18 @@ from clocks._scenarios import (
     run_echolocation_3d,
 )
 
-# Certified configuration, pinned as LITERALS (frozen in Task 9): the pin
+# Certification configuration, pinned as LITERALS: the pin
 # must not follow later edits to the live scenario constants. The fast
 # guard below asserts the live constants still match, so drift fails
 # loudly instead of silently redefining the certified run. On a burned
 # block (spec section 3a), update CERT_SEED_BLOCK — nothing else here
 # encodes the block.
-CERT_SEED_BLOCK = 300
+CERT_SEED_BLOCK = 400
 CERT_SEEDS = tuple(range(CERT_SEED_BLOCK, CERT_SEED_BLOCK + 12))
 CERT_CLOSE_RANGE = 2.0
 CERT_FAR_RANGE = 8.0
 CERT_POS_TOL = 1.0
-CERT_MASS_TOL = 0.075
+CERT_MASS_TOL = 0.04
 CERT_SWEEP_RANGES = (2.0, 2.6, 3.5, 4.6, 6.1, 8.0)
 CERT_M_TRUE = 0.080
 CERT_NOISE_STD = 0.001
@@ -109,3 +110,48 @@ def test_filter_construction_matches_certified_configuration() -> None:
     assert pf.proposal_scale == 2.38
     assert pf.noise_std == CERT_NOISE_STD
     assert np.all(np.isfinite(pf.log_prior_density(pf.state.particles)))
+
+
+def test_run_and_filter_accept_only_rigorous_smc_controls() -> None:
+    for callable_ in (build_echolocation_filter, run_echolocation_3d):
+        params = inspect.signature(callable_).parameters
+        assert "jitter" not in params
+        assert params["ess_target"].default == 0.8
+        assert params["rejuvenation_steps"].default == 2
+        assert params["proposal_scale"].default == 2.38
+
+
+def test_seed_block_policy_reserves_fresh_certification_blocks() -> None:
+    scan = _load_scan()
+    assert hasattr(scan, "_seeds_for_block")
+    _seeds_for_block = scan._seeds_for_block
+    assert _seeds_for_block(0) == tuple(range(12))
+    assert _seeds_for_block(400) == tuple(range(400, 412))
+    for burned_or_invalid in (-100, 200, 300, 401):
+        with pytest.raises(ValueError, match="seed block"):
+            _seeds_for_block(burned_or_invalid)
+
+
+def test_development_grid_and_single_certification_cell() -> None:
+    scan = _load_scan()
+    assert hasattr(scan, "_control_cells")
+    development = scan._control_cells(0, None, None, None)
+    assert len(development) == 27
+    assert {cell[0] for cell in development} == {0.7, 0.8, 0.9}
+    assert {cell[1] for cell in development} == {1, 2, 4}
+    assert {cell[2] for cell in development} == {1.5, 2.38, 3.0}
+    assert scan._control_cells(400, None, None, None) == [(0.8, 2, 2.38)]
+    with pytest.raises(ValueError, match="single control cell"):
+        scan._control_cells(400, [0.7, 0.8], None, None)
+    for controls in (([0.0], None, None), (None, [0], None), (None, None, [np.inf])):
+        with pytest.raises(ValueError, match="control"):
+            scan._control_cells(0, *controls)
+
+
+def _load_scan() -> ModuleType:
+    path = Path(__file__).parents[1] / "scripts" / "scan_echolocation_range.py"
+    spec = importlib.util.spec_from_file_location("scan_echolocation_range", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
