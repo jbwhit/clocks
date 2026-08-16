@@ -34,3 +34,10 @@ clean commit afterward.
 
 No reviewer claim was accepted without checking it against the design, plan,
 and current repository behavior.
+
+## Focused re-review
+
+After the corrections above were committed and pushed, AGY performed a second
+read-only review at commit `8342350d4795206634aa63b0b4357fc0b56e66f8`.
+It verified all six resolutions against the updated plan, found no regression
+or new blocker, and returned `LGTM`.
