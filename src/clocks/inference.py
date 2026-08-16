@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.special import logsumexp
 
+from clocks._validation import finite_float_array
 from clocks.types import Observation, ParticleState, UpdateDiagnostics
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
@@ -117,15 +119,12 @@ class GaussianObservationStats:
 
     def __post_init__(self) -> None:
         count = float(self.n)
-        sums = np.array(self.sum_y, dtype=np.float64, copy=True)
+        sums = finite_float_array("sum_y", self.sum_y, ndim=1)
         sum_squares = float(self.sum_y2)
         if not math.isfinite(count) or count < 0:
             raise ValueError("n must be finite and nonnegative")
-        if sums.ndim != 1 or sums.size == 0 or not np.all(np.isfinite(sums)):
-            raise ValueError("sum_y must be a nonempty finite 1-D array")
         if not math.isfinite(sum_squares) or sum_squares < 0:
             raise ValueError("sum_y2 must be finite and nonnegative")
-        sums.setflags(write=False)
         object.__setattr__(self, "n", count)
         object.__setattr__(self, "sum_y", sums)
         object.__setattr__(self, "sum_y2", sum_squares)
@@ -249,6 +248,20 @@ class ConvergenceInfo(TypedDict):
     per_param_converged: NDArray[np.bool_]
     ess: float
     estimates_stable: bool
+
+
+@dataclass(frozen=True)
+class _FilterCheckpoint:
+    state: ParticleState
+    history: tuple[ParticleState, ...]
+    diagnostics_history: tuple[UpdateDiagnostics, ...]
+    log_evidence_history: tuple[float, ...]
+    completed_stats: GaussianObservationStats | None
+    log_evidence: float
+    last_diagnostics: UpdateDiagnostics
+    last_log_evidence_increments: tuple[float, ...]
+    rng_state: object
+    rng_uses_bit_generator: bool
 
 
 class ParticleFilter:
@@ -495,7 +508,50 @@ class ParticleFilter:
         }[self.resampling]
         return helper(weights, self.n_particles, self.rng)
 
+    def _checkpoint(self) -> _FilterCheckpoint:
+        bit_generator = getattr(self.rng, "bit_generator", None)
+        if bit_generator is None:
+            rng_state = copy.deepcopy(self.rng)
+            uses_bit_generator = False
+        else:
+            rng_state = copy.deepcopy(bit_generator.state)
+            uses_bit_generator = True
+        return _FilterCheckpoint(
+            state=self._state,
+            history=tuple(self._history),
+            diagnostics_history=tuple(self._diagnostics_history),
+            log_evidence_history=tuple(self._log_evidence_history),
+            completed_stats=self._completed_stats,
+            log_evidence=self.log_evidence,
+            last_diagnostics=self.last_diagnostics,
+            last_log_evidence_increments=self._last_log_evidence_increments,
+            rng_state=rng_state,
+            rng_uses_bit_generator=uses_bit_generator,
+        )
+
+    def _restore(self, checkpoint: _FilterCheckpoint) -> None:
+        self._state = checkpoint.state
+        self._history = list(checkpoint.history)
+        self._diagnostics_history = list(checkpoint.diagnostics_history)
+        self._log_evidence_history = list(checkpoint.log_evidence_history)
+        self._completed_stats = checkpoint.completed_stats
+        self.log_evidence = checkpoint.log_evidence
+        self.last_diagnostics = checkpoint.last_diagnostics
+        self._last_log_evidence_increments = checkpoint.last_log_evidence_increments
+        if checkpoint.rng_uses_bit_generator:
+            self.rng.bit_generator.state = copy.deepcopy(checkpoint.rng_state)
+        else:
+            self.rng = copy.deepcopy(checkpoint.rng_state)
+
     def update(self, observation: Observation) -> ParticleState:
+        checkpoint = self._checkpoint()
+        try:
+            return self._update(observation)
+        except BaseException:
+            self._restore(checkpoint)
+            raise
+
+    def _update(self, observation: Observation) -> ParticleState:
         if not isinstance(observation, Observation):
             raise TypeError("observation must be an Observation")
         if self._completed_stats is not None and observation.rates.shape != (
@@ -636,8 +692,17 @@ class ModelComparison:
             self.model_prior = probabilities
 
     def update(self, observation: Observation) -> None:
-        for particle_filter in self.filters.values():
-            particle_filter.update(observation)
+        checkpoints = {
+            key: particle_filter._checkpoint()
+            for key, particle_filter in self.filters.items()
+        }
+        try:
+            for particle_filter in self.filters.values():
+                particle_filter.update(observation)
+        except BaseException:
+            for key, particle_filter in self.filters.items():
+                particle_filter._restore(checkpoints[key])
+            raise
 
     def evidence(self) -> ModelComparisonResult:
         log_evidence = {k: pf.log_evidence for k, pf in self.filters.items()}

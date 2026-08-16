@@ -12,8 +12,13 @@ from clocks.api import (
     simulate_and_infer,
 )
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
-from clocks.results import InferenceResult, SimulationResult
-from clocks.types import ClockArray, MassConfig, Observation
+from clocks.results import (
+    HistoryEntry,
+    InferenceResult,
+    ModelComparisonInferenceResult,
+    SimulationResult,
+)
+from clocks.types import ClockArray, MassConfig, Observation, UpdateDiagnostics
 
 
 def _make_clock_array() -> ClockArray:
@@ -199,6 +204,101 @@ def test_simulation_result_to_dict_serializes_arrays() -> None:
     assert payload["ground_truth"]["masses"] == [0.045, 0.03]
     assert payload["clock_array"]["positions"][0] == [-6.0]
     assert payload["observations"][0]["rates"][2] == 0.96
+
+
+def test_simulation_result_is_a_deeply_immutable_snapshot() -> None:
+    rates = np.array([0.98])
+    observations = [Observation([0.98], 0.0)]
+    result = SimulationResult(
+        clock_array=ClockArray([[0.0]], track_offset=1.0),
+        ground_truth=MassConfig([[1.0]], [0.01]),
+        true_rates=rates,
+        observations=observations,
+        noise=_make_noise(),
+    )
+    rates[0] = 0.5
+    observations.clear()
+
+    np.testing.assert_array_equal(result.true_rates, [0.98])
+    assert len(result.observations) == 1
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        result.true_rates.setflags(write=True)
+    with pytest.raises(AttributeError):
+        result.observations.append(Observation([0.5], 1.0))  # type: ignore[attr-defined]
+
+
+def _history_entry() -> HistoryEntry:
+    return HistoryEntry(
+        mean=np.array([0.1]),
+        std=np.array([0.2]),
+        ess=10.0,
+        observations_seen=1,
+        log_evidence=-0.3,
+        diagnostics=UpdateDiagnostics(1, 2, 1),
+    )
+
+
+def test_history_entry_arrays_are_deeply_immutable() -> None:
+    mean = np.array([0.1])
+    std = np.array([0.2])
+    entry = HistoryEntry(mean, std, 10.0, 1, -0.3, UpdateDiagnostics())
+    mean[0] = 9.0
+    std[0] = 9.0
+
+    np.testing.assert_array_equal(entry.mean, [0.1])
+    np.testing.assert_array_equal(entry.std, [0.2])
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        entry.mean.setflags(write=True)
+
+
+def test_inference_result_and_with_simulation_do_not_alias_mutable_inputs() -> None:
+    mean = np.array([0.1])
+    std = np.array([0.2])
+    history = [_history_entry()]
+    result = InferenceResult(mean, std, 10.0, -0.3, history)
+    simulation = SimulationResult(
+        ClockArray([[0.0]], track_offset=1.0),
+        MassConfig([[1.0]], [0.01]),
+        np.array([0.98]),
+        [Observation([0.98], 0.0)],
+        _make_noise(),
+    )
+    enriched = result.with_simulation(simulation)
+    mean[0] = 9.0
+    std[0] = 9.0
+    history.clear()
+
+    np.testing.assert_array_equal(result.posterior_mean, [0.1])
+    np.testing.assert_array_equal(enriched.posterior_std, [0.2])
+    assert len(result.history) == len(enriched.history) == 1
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        result.posterior_mean.setflags(write=True)
+    with pytest.raises(AttributeError):
+        enriched.history.append(_history_entry())  # type: ignore[attr-defined]
+
+
+def test_model_comparison_result_snapshots_nested_mappings_and_history() -> None:
+    nested = InferenceResult(np.array([0.1]), np.array([0.2]), 10.0, -0.3, [])
+    posterior = {1: 0.75, 2: 0.25}
+    evidence = {1: -0.3, 2: -1.4}
+    by_model = {1: nested, 2: nested}
+    history = [{1: 0.6, 2: 0.4}]
+    result = ModelComparisonInferenceResult(posterior, evidence, 1, by_model, history)
+    posterior[1] = 0.0
+    evidence.clear()
+    by_model.clear()
+    history[0][1] = 0.0
+    history.clear()
+
+    assert result.posterior_by_model == {1: 0.75, 2: 0.25}
+    assert result.log_evidence_by_model == {1: -0.3, 2: -1.4}
+    assert set(result.result_by_model) == {1, 2}
+    assert result.history[0] == {1: 0.6, 2: 0.4}
+    with pytest.raises(TypeError):
+        result.posterior_by_model[1] = 0.0  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.history[0][1] = 0.0  # type: ignore[index]
+    assert result.to_dict()["posterior_by_model"] == {1: 0.75, 2: 0.25}
 
 
 def test_simulate_returns_observations_and_ground_truth() -> None:

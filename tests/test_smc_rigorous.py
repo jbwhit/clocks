@@ -1,5 +1,6 @@
 """Correctness tests for adaptive tempered resample-move SMC."""
 
+import copy
 import math
 
 import numpy as np
@@ -55,6 +56,16 @@ def test_sufficient_statistics_match_direct_gaussian_sum() -> None:
     )
 
     np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+def test_sufficient_statistics_are_deeply_immutable() -> None:
+    source = np.array([1.0, 2.0])
+    stats = GaussianObservationStats(3.0, source, 5.0)
+    source[0] = 99.0
+
+    np.testing.assert_array_equal(stats.sum_y, [1.0, 2.0])
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        stats.sum_y.setflags(write=True)
 
 
 @pytest.mark.parametrize("beta", [0.0, 0.37, 1.0])
@@ -306,6 +317,92 @@ def test_stage_proposal_uses_one_frozen_symmetric_gaussian_kernel() -> None:
     assert log_q_forward == pytest.approx(log_q_reverse, abs=0.0)
 
 
+class _UnitMoveRng:
+    def normal(self, size: tuple[int, int]) -> np.ndarray:
+        return np.ones(size)
+
+    def random(self, size: int) -> np.ndarray:
+        return np.full(size, 0.25)
+
+
+def test_update_freezes_one_pre_resample_proposal_factor_per_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial = np.array([[-1.0], [0.0], [1.0]])
+    particle_filter = ParticleFilter(
+        3,
+        lambda rng, n: initial.copy(),
+        lambda value: value,
+        0.1,
+        log_prior_density=lambda values: np.zeros(len(values)),
+        rejuvenation_steps=3,
+        rng=np.random.default_rng(1),
+    )
+    particle_filter.rng = _UnitMoveRng()  # type: ignore[assignment]
+    beta_schedule = iter((0.5, 1.0))
+    factors = iter((np.array([[0.25]]), np.array([[0.5]])))
+    events: list[tuple[str, object]] = []
+    original_move = particle_filter._metropolis_move
+
+    def factor_before_resampling(
+        particles: np.ndarray, weights: np.ndarray
+    ) -> np.ndarray:
+        factor = next(factors)
+        events.append(("factor", factor))
+        return factor
+
+    def identity_resampling(weights: np.ndarray) -> np.ndarray:
+        events.append(("resample", weights.copy()))
+        return np.arange(len(weights))
+
+    def recorded_move(
+        particles: np.ndarray,
+        *,
+        beta: float,
+        observation: Observation,
+        proposal_chol: np.ndarray,
+    ) -> tuple[np.ndarray, object]:
+        events.append(("move", proposal_chol))
+        return original_move(
+            particles,
+            beta=beta,
+            observation=observation,
+            proposal_chol=proposal_chol,
+        )
+
+    monkeypatch.setattr(
+        inference_module, "_next_beta", lambda *args, **kwargs: next(beta_schedule)
+    )
+    monkeypatch.setattr(
+        particle_filter,
+        "_observation_log_likelihood",
+        lambda particles, observation: np.array([0.0, -10.0, -20.0]),
+    )
+    monkeypatch.setattr(particle_filter, "_proposal_cholesky", factor_before_resampling)
+    monkeypatch.setattr(particle_filter, "_resample_indices", identity_resampling)
+    monkeypatch.setattr(
+        particle_filter,
+        "_log_target",
+        lambda particles, **kwargs: np.zeros(len(particles)),
+    )
+    monkeypatch.setattr(particle_filter, "_metropolis_move", recorded_move)
+
+    state = particle_filter.update(Observation([0.0], 0.0))
+
+    assert [event for event, _ in events] == [
+        "factor",
+        "resample",
+        "move",
+        "factor",
+        "resample",
+        "move",
+    ]
+    assert events[2][1] is events[0][1]
+    assert events[5][1] is events[3][1]
+    np.testing.assert_array_equal(state.particles, initial + 3 * 0.25 + 3 * 0.5)
+    assert particle_filter.last_diagnostics.mh_proposals == 2 * 3 * 3
+
+
 @pytest.mark.parametrize(
     "prediction",
     [np.array(1.0), np.ones((1, 1)), np.array([np.nan])],
@@ -465,3 +562,99 @@ def test_model_comparison_combines_evidence_with_model_prior() -> None:
     expected = np.exp(np.array([-2.0 + np.log(0.25), -1.0 + np.log(0.75)]))
     expected /= expected.sum()
     assert result["posterior"] == pytest.approx({1: expected[0], 2: expected[1]})
+
+
+def _assert_filter_matches_snapshot(
+    particle_filter: ParticleFilter,
+    *,
+    state: object,
+    history: list[object],
+    diagnostics_history: list[object],
+    log_evidence_history: list[float],
+    log_evidence: float,
+    last_diagnostics: object,
+    last_increments: tuple[float, ...],
+    rng_state: dict[str, object],
+) -> None:
+    assert particle_filter.state is state
+    assert len(particle_filter.history) == len(history)
+    assert all(
+        actual is expected
+        for actual, expected in zip(particle_filter.history, history, strict=True)
+    )
+    assert particle_filter.diagnostics_history == diagnostics_history
+    assert particle_filter.log_evidence_history == log_evidence_history
+    assert particle_filter.log_evidence == log_evidence
+    assert particle_filter.last_diagnostics == last_diagnostics
+    assert particle_filter.last_log_evidence_increments == last_increments
+    assert particle_filter.rng.bit_generator.state == rng_state
+
+
+def test_failed_particle_update_rolls_back_all_state_and_rng(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    particle_filter = _normal_filter(31, n_particles=200)
+    control = _normal_filter(31, n_particles=200)
+    snapshot = {
+        "state": particle_filter.state,
+        "history": particle_filter.history,
+        "diagnostics_history": particle_filter.diagnostics_history,
+        "log_evidence_history": particle_filter.log_evidence_history,
+        "log_evidence": particle_filter.log_evidence,
+        "last_diagnostics": particle_filter.last_diagnostics,
+        "last_increments": particle_filter.last_log_evidence_increments,
+        "rng_state": copy.deepcopy(particle_filter.rng.bit_generator.state),
+    }
+    original_move = particle_filter._metropolis_move
+
+    def fail_after_rng_draw(*args: object, **kwargs: object) -> None:
+        particle_filter.rng.random()
+        raise RuntimeError("injected later-stage failure")
+
+    monkeypatch.setattr(particle_filter, "_metropolis_move", fail_after_rng_draw)
+    observation = Observation([0.45], 0.0)
+    with pytest.raises(RuntimeError, match="injected later-stage failure"):
+        particle_filter.update(observation)
+
+    _assert_filter_matches_snapshot(particle_filter, **snapshot)
+
+    monkeypatch.setattr(particle_filter, "_metropolis_move", original_move)
+    actual = particle_filter.update(observation)
+    expected = control.update(observation)
+    np.testing.assert_array_equal(actual.particles, expected.particles)
+    np.testing.assert_array_equal(actual.weights, expected.weights)
+    assert particle_filter.log_evidence == control.log_evidence
+    assert particle_filter.rng.bit_generator.state == control.rng.bit_generator.state
+
+
+def test_failed_model_comparison_update_rolls_back_every_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    filters = {1: _normal_filter(41, 200), 2: _normal_filter(42, 200)}
+    comparison = ModelComparison(filters)
+    snapshots = {
+        key: {
+            "state": particle_filter.state,
+            "history": particle_filter.history,
+            "diagnostics_history": particle_filter.diagnostics_history,
+            "log_evidence_history": particle_filter.log_evidence_history,
+            "log_evidence": particle_filter.log_evidence,
+            "last_diagnostics": particle_filter.last_diagnostics,
+            "last_increments": particle_filter.last_log_evidence_increments,
+            "rng_state": copy.deepcopy(particle_filter.rng.bit_generator.state),
+        }
+        for key, particle_filter in filters.items()
+    }
+
+    def fail_after_rng_draw(*args: object, **kwargs: object) -> None:
+        filters[2].rng.random()
+        raise RuntimeError("injected second-filter failure")
+
+    monkeypatch.setattr(filters[2], "_metropolis_move", fail_after_rng_draw)
+    before_evidence = comparison.evidence()
+    with pytest.raises(RuntimeError, match="injected second-filter failure"):
+        comparison.update(Observation([0.45], 0.0))
+
+    assert comparison.evidence() == before_evidence
+    for key, particle_filter in filters.items():
+        _assert_filter_matches_snapshot(particle_filter, **snapshots[key])

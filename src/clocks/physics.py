@@ -321,6 +321,33 @@ def _density_potential_batch(
     return potential
 
 
+def _density_integration_bounds(
+    mu: NDArray[np.float64] | np.float64,
+    sigma: NDArray[np.float64] | np.float64,
+    integration_limit: float,
+    clock_array: ClockArray,
+) -> tuple[NDArray[np.float64] | np.float64, NDArray[np.float64] | np.float64]:
+    with np.errstate(over="ignore", invalid="ignore"):
+        half_width = integration_limit * sigma
+        lo = mu - half_width
+        hi = mu + half_width
+        span = np.asarray(hi) - np.asarray(lo)
+        endpoints = np.stack((np.asarray(lo), np.asarray(hi)), axis=-1)
+        offsets = endpoints[..., np.newaxis] - clock_array.positions[:, 0]
+        distance_squared = offsets**2 + clock_array.track_offset**2
+    if (
+        not np.all(np.isfinite(lo))
+        or not np.all(np.isfinite(hi))
+        or not np.all(np.isfinite(span))
+        or not np.all(span > 0.0)
+        or not np.all(np.isfinite(distance_squared))
+    ):
+        raise PhysicsDomainError(
+            "density integration bounds and geometry must be finite"
+        )
+    return lo, hi
+
+
 def clock_rates_density_gaussian(
     params: NDArray[np.floating],
     clock_array: ClockArray,
@@ -332,8 +359,7 @@ def clock_rates_density_gaussian(
     values = _validate_density_params(params, batch=False)
     limit = _validate_density_context(clock_array, integration_limit)
     mu, sigma, amplitude = values
-    lo = mu - limit * sigma
-    hi = mu + limit * sigma
+    lo, hi = _density_integration_bounds(mu, sigma, limit, clock_array)
     potential = np.empty(len(clock_array.positions))
 
     for index, clock_position in enumerate(clock_array.positions[:, 0]):
@@ -361,6 +387,7 @@ def clock_rates_density_gaussian_batch(
     count = int(n_quad)
     if count < 2:
         raise ValueError("n_quad must be an integer >= 2")
+    _density_integration_bounds(values[:, 0], values[:, 1], limit, clock_array)
     potential = _density_potential_batch(values, clock_array, limit, count)
     rates = time_dilation_factor(potential.reshape(-1))
     return rates.reshape(potential.shape)
