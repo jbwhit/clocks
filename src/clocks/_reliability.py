@@ -1,16 +1,35 @@
-"""Exact local-identifiability mathematics for the echolocation study."""
+"""Preregistered populations and identifiability for echolocation reliability."""
 
+import hashlib
+import json
 import math
+import os
+import re
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from numbers import Integral
+from numbers import Integral, Real
+from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar
 
 import numpy as np
 from numpy.typing import NDArray
 
-from clocks._scenarios import contrast_matrix
+from clocks._scenarios import (
+    ECHO_ESS_TARGET,
+    ECHO_N_OBSERVATIONS,
+    ECHO_N_PARTICLES,
+    ECHO_NOISE_STD,
+    ECHO_PASS_MASS_TOL,
+    ECHO_PASS_POS_TOL,
+    ECHO_PROPOSAL_SCALE,
+    ECHO_R_HEAD,
+    ECHO_REJUVENATION_STEPS,
+    _validate_echolocation_truth,
+    build_head_lattice,
+    contrast_matrix,
+)
 from clocks._validation import finite_float, finite_float_array, real_float_array
 from clocks.physics import (
     PhysicsDomainError,
@@ -21,6 +40,680 @@ from clocks.physics import (
 from clocks.types import ClockArray
 
 PARAMETER_NAMES = ("angular_1", "angular_2", "log_range", "log_mass")
+
+MANIFEST_SCHEMA_VERSION = 1
+RELIABILITY_STUDY_VERSION = 1
+RELIABILITY_MASTER_SEED = 20260817
+RELIABILITY_N_STRATA = 6
+RELIABILITY_CASES_PER_STRATUM = 64
+RELIABILITY_RANGE_R_BOUNDS = (2.0, 8.0)
+RELIABILITY_MASS_BOUNDS = (0.02, 0.08)
+
+_RELIABILITY_CASE_COUNT = RELIABILITY_N_STRATA * RELIABILITY_CASES_PER_STRATUM
+_RELIABILITY_STUDY = "echolocation_population"
+_RELEASE_IDENTITY = "echolocation_population_v1_release"
+_RELEASE_STATUS = "release"
+_GENERATOR_METADATA = {
+    "bit_generator": "PCG64",
+    "generator": "numpy.random.Generator",
+    "numpy_version": np.__version__,
+    "seed_sequence": "numpy.random.SeedSequence",
+    "spawn_policy": (
+        "root.spawn(385): analysis then stratum-major cases; "
+        "case.spawn(3): parameter, observation, inference"
+    ),
+}
+_TOP_LEVEL_FIELDS = {
+    "schema_version",
+    "study_version",
+    "study",
+    "identity",
+    "status",
+    "master_seed",
+    "analysis_seed",
+    "generator",
+    "head",
+    "population",
+    "controls",
+    "acceptance",
+    "intervals",
+    "cases",
+    "semantic_sha256",
+}
+_GENERATOR_FIELDS = set(_GENERATOR_METADATA)
+_HEAD_FIELDS = {"clock_count", "geometry", "positions", "r_head", "track_offset"}
+_POPULATION_FIELDS = {"n_cases", "case_order", "range_r", "mass", "direction"}
+_RANGE_FIELDS = {
+    "distribution",
+    "bounds",
+    "n_strata",
+    "cases_per_stratum",
+    "stratum_edges",
+    "stratum_allocation",
+    "stratum_boundary_policy",
+}
+_MASS_FIELDS = {"distribution", "bounds"}
+_DIRECTION_FIELDS = {"distribution", "dimension"}
+_CONTROL_FIELDS = {
+    "n_observations",
+    "noise_std",
+    "n_particles",
+    "ess_target",
+    "rejuvenation_steps",
+    "proposal_scale",
+}
+_ACCEPTANCE_FIELDS = {
+    "position_error_max",
+    "mass_error_max",
+    "threshold_policy",
+}
+_INTERVAL_FIELDS = {"strata", "overall"}
+_STRATUM_INTERVAL_FIELDS = {"method", "count", "confidence_level"}
+_OVERALL_INTERVAL_FIELDS = {
+    "method",
+    "resamples",
+    "quantile_method",
+    "confidence_level",
+}
+_CASE_FIELDS = {
+    "case_id",
+    "case_index",
+    "stratum_index",
+    "stratum_case_index",
+    "direction",
+    "range_r",
+    "mass",
+    "position",
+    "parameter_seed",
+    "observation_seed",
+    "inference_seed",
+}
+_SEMANTIC_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def _range_stratum_edges() -> tuple[float, ...]:
+    edges = np.geomspace(
+        RELIABILITY_RANGE_R_BOUNDS[0],
+        RELIABILITY_RANGE_R_BOUNDS[1],
+        RELIABILITY_N_STRATA + 1,
+    )
+    edges[0] = RELIABILITY_RANGE_R_BOUNDS[0]
+    edges[-1] = RELIABILITY_RANGE_R_BOUNDS[1]
+    return tuple(float(value) for value in edges)
+
+
+def _seed_from_sequence(sequence: np.random.SeedSequence) -> int:
+    """Materialize a portable integer token for one spawned seed stream."""
+    words = sequence.generate_state(4, dtype=np.uint32)
+    return sum(int(word) << (32 * index) for index, word in enumerate(words))
+
+
+def _plain(value: object) -> object:
+    """Copy immutable manifest containers into strict JSON-native values."""
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    return value
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        _plain(value),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _semantic_sha256(manifest: Mapping[str, object]) -> str:
+    payload = {
+        key: value for key, value in manifest.items() if key != "semantic_sha256"
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _deep_freeze(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _deep_freeze(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
+def _object(
+    value: object, path: str, expected_fields: set[str]
+) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{path} must be an object")
+    non_string = [key for key in value if not isinstance(key, str)]
+    if non_string:
+        raise ValueError(f"{path} has non-string fields: {non_string!r}")
+    actual_fields = set(value)
+    missing = expected_fields - actual_fields
+    if missing:
+        raise ValueError(f"{path} is missing fields: {sorted(missing)}")
+    unknown = actual_fields - expected_fields
+    if unknown:
+        raise ValueError(f"{path} has unknown fields: {sorted(unknown)}")
+    return value
+
+
+def _sequence(
+    value: object, path: str, length: int
+) -> list[object] | tuple[object, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{path} must be an array of length {length}")
+    if len(value) != length:
+        raise ValueError(f"{path} must contain exactly {length} entries")
+    return value
+
+
+def _strict_integer(value: object, path: str, *, nonnegative: bool = False) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        qualifier = "nonnegative " if nonnegative else ""
+        raise ValueError(f"{path} must be a {qualifier}non-bool integer")
+    result = int(value)
+    if nonnegative and result < 0:
+        raise ValueError(f"{path} must be a nonnegative non-bool integer")
+    return result
+
+
+def _strict_number(value: object, path: str) -> float:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+        raise ValueError(f"{path} must be a finite real number")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{path} must be a finite real number")
+    return result
+
+
+def _strict_string(value: object, path: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{path} must be a string")
+    return value
+
+
+def _expect_integer(value: object, expected: int, path: str) -> int:
+    result = _strict_integer(value, path)
+    if result != expected:
+        raise ValueError(f"{path} must equal {expected}")
+    return result
+
+
+def _expect_number(value: object, expected: float, path: str) -> float:
+    result = _strict_number(value, path)
+    if result != expected:
+        raise ValueError(f"{path} must equal {expected}")
+    return result
+
+
+def _expect_string(value: object, expected: str, path: str) -> str:
+    result = _strict_string(value, path)
+    if result != expected:
+        raise ValueError(f"{path} must equal {expected!r}")
+    return result
+
+
+def _strict_vector(value: object, path: str, length: int) -> tuple[float, ...]:
+    entries = _sequence(value, path, length)
+    return tuple(
+        _strict_number(entry, f"{path}[{index}]") for index, entry in enumerate(entries)
+    )
+
+
+def _expect_vector(
+    value: object, expected: tuple[float, ...], path: str
+) -> tuple[float, ...]:
+    result = _strict_vector(value, path, len(expected))
+    if result != expected:
+        raise ValueError(f"{path} does not match the preregistered values")
+    return result
+
+
+def _case_id(stratum_index: int, stratum_case_index: int) -> str:
+    return (
+        "echolocation-population-v1-release-"
+        f"s{stratum_index:02d}-c{stratum_case_index:03d}"
+    )
+
+
+def generate_release_manifest() -> Mapping[str, object]:
+    """Generate the deterministic, realized schema-v1 release population."""
+    root = np.random.SeedSequence(RELIABILITY_MASTER_SEED)
+    root_children = root.spawn(_RELIABILITY_CASE_COUNT + 1)
+    analysis_seed = _seed_from_sequence(root_children[0])
+    edges = _range_stratum_edges()
+    cases: list[dict[str, object]] = []
+    stream_seeds = {analysis_seed}
+
+    for case_index, case_child in enumerate(root_children[1:]):
+        stratum_index, stratum_case_index = divmod(
+            case_index, RELIABILITY_CASES_PER_STRATUM
+        )
+        parameter_child, observation_child, inference_child = case_child.spawn(3)
+        parameter_seed = _seed_from_sequence(parameter_child)
+        observation_seed = _seed_from_sequence(observation_child)
+        inference_seed = _seed_from_sequence(inference_child)
+        new_seeds = {parameter_seed, observation_seed, inference_seed}
+        if len(new_seeds) != 3 or stream_seeds.intersection(new_seeds):
+            raise RuntimeError("spawned reliability stream seeds must be unique")
+        stream_seeds.update(new_seeds)
+
+        rng = np.random.Generator(np.random.PCG64(parameter_seed))
+        direction_draw = rng.normal(size=3)
+        direction_norm = math.hypot(*(float(component) for component in direction_draw))
+        while direction_norm == 0.0:
+            direction_draw = rng.normal(size=3)
+            direction_norm = math.hypot(
+                *(float(component) for component in direction_draw)
+            )
+        direction = np.asarray(direction_draw / direction_norm, dtype=np.float64)
+        log_range = rng.uniform(
+            math.log(edges[stratum_index]), math.log(edges[stratum_index + 1])
+        )
+        range_r = float(math.exp(float(log_range)))
+        mass = float(
+            math.exp(
+                float(
+                    rng.uniform(
+                        math.log(RELIABILITY_MASS_BOUNDS[0]),
+                        math.log(RELIABILITY_MASS_BOUNDS[1]),
+                    )
+                )
+            )
+        )
+        position = direction * range_r * ECHO_R_HEAD
+        cases.append(
+            {
+                "case_id": _case_id(stratum_index, stratum_case_index),
+                "case_index": case_index,
+                "stratum_index": stratum_index,
+                "stratum_case_index": stratum_case_index,
+                "direction": direction.tolist(),
+                "range_r": range_r,
+                "mass": mass,
+                "position": position.tolist(),
+                "parameter_seed": parameter_seed,
+                "observation_seed": observation_seed,
+                "inference_seed": inference_seed,
+            }
+        )
+
+    head = build_head_lattice()
+    manifest: dict[str, object] = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "study_version": RELIABILITY_STUDY_VERSION,
+        "study": _RELIABILITY_STUDY,
+        "identity": _RELEASE_IDENTITY,
+        "status": _RELEASE_STATUS,
+        "master_seed": RELIABILITY_MASTER_SEED,
+        "analysis_seed": analysis_seed,
+        "generator": dict(_GENERATOR_METADATA),
+        "head": {
+            "clock_count": 27,
+            "geometry": "3x3x3_cubic_lattice",
+            "positions": head.positions.tolist(),
+            "r_head": ECHO_R_HEAD,
+            "track_offset": head.track_offset,
+        },
+        "population": {
+            "n_cases": _RELIABILITY_CASE_COUNT,
+            "case_order": "stratum_major_then_case",
+            "range_r": {
+                "distribution": "log_uniform_stratified",
+                "bounds": list(RELIABILITY_RANGE_R_BOUNDS),
+                "n_strata": RELIABILITY_N_STRATA,
+                "cases_per_stratum": RELIABILITY_CASES_PER_STRATUM,
+                "stratum_edges": list(edges),
+                "stratum_allocation": "equal",
+                "stratum_boundary_policy": ("left_closed_right_open_final_closed"),
+            },
+            "mass": {
+                "distribution": "log_uniform",
+                "bounds": list(RELIABILITY_MASS_BOUNDS),
+            },
+            "direction": {
+                "distribution": "uniform_sphere",
+                "dimension": 3,
+            },
+        },
+        "controls": {
+            "n_observations": ECHO_N_OBSERVATIONS,
+            "noise_std": ECHO_NOISE_STD,
+            "n_particles": ECHO_N_PARTICLES,
+            "ess_target": ECHO_ESS_TARGET,
+            "rejuvenation_steps": ECHO_REJUVENATION_STEPS,
+            "proposal_scale": ECHO_PROPOSAL_SCALE,
+        },
+        "acceptance": {
+            "position_error_max": ECHO_PASS_POS_TOL,
+            "mass_error_max": ECHO_PASS_MASS_TOL,
+            "threshold_policy": "inclusive",
+        },
+        "intervals": {
+            "strata": {
+                "method": "wilson",
+                "count": RELIABILITY_N_STRATA,
+                "confidence_level": 0.95,
+            },
+            "overall": {
+                "method": "stratified_bootstrap",
+                "resamples": 10_000,
+                "quantile_method": "linear",
+                "confidence_level": 0.95,
+            },
+        },
+        "cases": cases,
+    }
+    manifest["semantic_sha256"] = _semantic_sha256(manifest)
+    validate_manifest(manifest)
+    return _deep_freeze(manifest)  # type: ignore[return-value]
+
+
+def validate_manifest(manifest: object) -> None:
+    """Strictly validate all release-manifest semantics and its payload hash."""
+    document = _object(manifest, "manifest", _TOP_LEVEL_FIELDS)
+    _expect_integer(
+        document["schema_version"], MANIFEST_SCHEMA_VERSION, "schema_version"
+    )
+    _expect_integer(
+        document["study_version"], RELIABILITY_STUDY_VERSION, "study_version"
+    )
+    _expect_string(document["study"], _RELIABILITY_STUDY, "study")
+    _expect_string(document["identity"], _RELEASE_IDENTITY, "identity")
+    _expect_string(document["status"], _RELEASE_STATUS, "status")
+    master_seed = _strict_integer(
+        document["master_seed"], "master_seed", nonnegative=True
+    )
+    if master_seed != RELIABILITY_MASTER_SEED:
+        raise ValueError(f"master_seed must equal {RELIABILITY_MASTER_SEED}")
+    analysis_seed = _strict_integer(
+        document["analysis_seed"], "analysis_seed", nonnegative=True
+    )
+    if analysis_seed == master_seed:
+        raise ValueError("analysis_seed must be distinct from master_seed")
+    expected_root_children = np.random.SeedSequence(master_seed).spawn(
+        _RELIABILITY_CASE_COUNT + 1
+    )
+    expected_analysis_seed = _seed_from_sequence(expected_root_children[0])
+    if analysis_seed != expected_analysis_seed:
+        raise ValueError("analysis_seed does not match the declared spawn policy")
+
+    generator = _object(document["generator"], "generator", _GENERATOR_FIELDS)
+    for field, expected in _GENERATOR_METADATA.items():
+        _expect_string(generator[field], expected, f"generator.{field}")
+
+    expected_head = build_head_lattice()
+    head = _object(document["head"], "head", _HEAD_FIELDS)
+    _expect_integer(head["clock_count"], 27, "head.clock_count")
+    _expect_string(head["geometry"], "3x3x3_cubic_lattice", "head.geometry")
+    positions = _sequence(head["positions"], "head.positions", 27)
+    expected_positions = expected_head.positions.tolist()
+    for index, (position, expected) in enumerate(zip(positions, expected_positions)):
+        _expect_vector(
+            position,
+            tuple(float(component) for component in expected),
+            f"head.positions[{index}]",
+        )
+    _expect_number(head["r_head"], ECHO_R_HEAD, "head.r_head")
+    _expect_number(head["track_offset"], 0.0, "head.track_offset")
+
+    population = _object(document["population"], "population", _POPULATION_FIELDS)
+    _expect_integer(
+        population["n_cases"], _RELIABILITY_CASE_COUNT, "population.n_cases"
+    )
+    _expect_string(
+        population["case_order"],
+        "stratum_major_then_case",
+        "population.case_order",
+    )
+    range_spec = _object(population["range_r"], "population.range_r", _RANGE_FIELDS)
+    _expect_string(
+        range_spec["distribution"],
+        "log_uniform_stratified",
+        "population.range_r.distribution",
+    )
+    _expect_vector(
+        range_spec["bounds"],
+        RELIABILITY_RANGE_R_BOUNDS,
+        "population.range_r.bounds",
+    )
+    _expect_integer(
+        range_spec["n_strata"],
+        RELIABILITY_N_STRATA,
+        "population.range_r.n_strata",
+    )
+    _expect_integer(
+        range_spec["cases_per_stratum"],
+        RELIABILITY_CASES_PER_STRATUM,
+        "population.range_r.cases_per_stratum",
+    )
+    edges = _expect_vector(
+        range_spec["stratum_edges"],
+        _range_stratum_edges(),
+        "population.range_r.stratum_edges",
+    )
+    _expect_string(
+        range_spec["stratum_allocation"],
+        "equal",
+        "population.range_r.stratum_allocation",
+    )
+    _expect_string(
+        range_spec["stratum_boundary_policy"],
+        "left_closed_right_open_final_closed",
+        "population.range_r.stratum_boundary_policy",
+    )
+    mass_spec = _object(population["mass"], "population.mass", _MASS_FIELDS)
+    _expect_string(
+        mass_spec["distribution"], "log_uniform", "population.mass.distribution"
+    )
+    _expect_vector(
+        mass_spec["bounds"], RELIABILITY_MASS_BOUNDS, "population.mass.bounds"
+    )
+    direction_spec = _object(
+        population["direction"], "population.direction", _DIRECTION_FIELDS
+    )
+    _expect_string(
+        direction_spec["distribution"],
+        "uniform_sphere",
+        "population.direction.distribution",
+    )
+    _expect_integer(direction_spec["dimension"], 3, "population.direction.dimension")
+
+    controls = _object(document["controls"], "controls", _CONTROL_FIELDS)
+    _expect_integer(
+        controls["n_observations"], ECHO_N_OBSERVATIONS, "controls.n_observations"
+    )
+    _expect_number(controls["noise_std"], ECHO_NOISE_STD, "controls.noise_std")
+    _expect_integer(controls["n_particles"], ECHO_N_PARTICLES, "controls.n_particles")
+    _expect_number(controls["ess_target"], ECHO_ESS_TARGET, "controls.ess_target")
+    _expect_integer(
+        controls["rejuvenation_steps"],
+        ECHO_REJUVENATION_STEPS,
+        "controls.rejuvenation_steps",
+    )
+    _expect_number(
+        controls["proposal_scale"],
+        ECHO_PROPOSAL_SCALE,
+        "controls.proposal_scale",
+    )
+
+    acceptance = _object(document["acceptance"], "acceptance", _ACCEPTANCE_FIELDS)
+    _expect_number(
+        acceptance["position_error_max"],
+        ECHO_PASS_POS_TOL,
+        "acceptance.position_error_max",
+    )
+    _expect_number(
+        acceptance["mass_error_max"],
+        ECHO_PASS_MASS_TOL,
+        "acceptance.mass_error_max",
+    )
+    _expect_string(
+        acceptance["threshold_policy"],
+        "inclusive",
+        "acceptance.threshold_policy",
+    )
+
+    intervals = _object(document["intervals"], "intervals", _INTERVAL_FIELDS)
+    stratum_intervals = _object(
+        intervals["strata"], "intervals.strata", _STRATUM_INTERVAL_FIELDS
+    )
+    _expect_string(stratum_intervals["method"], "wilson", "intervals.strata.method")
+    _expect_integer(
+        stratum_intervals["count"], RELIABILITY_N_STRATA, "intervals.strata.count"
+    )
+    _expect_number(
+        stratum_intervals["confidence_level"],
+        0.95,
+        "intervals.strata.confidence_level",
+    )
+    overall_interval = _object(
+        intervals["overall"], "intervals.overall", _OVERALL_INTERVAL_FIELDS
+    )
+    _expect_string(
+        overall_interval["method"],
+        "stratified_bootstrap",
+        "intervals.overall.method",
+    )
+    _expect_integer(
+        overall_interval["resamples"], 10_000, "intervals.overall.resamples"
+    )
+    _expect_string(
+        overall_interval["quantile_method"],
+        "linear",
+        "intervals.overall.quantile_method",
+    )
+    _expect_number(
+        overall_interval["confidence_level"],
+        0.95,
+        "intervals.overall.confidence_level",
+    )
+
+    cases = _sequence(document["cases"], "cases", _RELIABILITY_CASE_COUNT)
+    all_stream_seeds = {analysis_seed}
+    for case_index, case_value in enumerate(cases):
+        path = f"cases[{case_index}]"
+        case = _object(case_value, path, _CASE_FIELDS)
+        stratum_index, stratum_case_index = divmod(
+            case_index, RELIABILITY_CASES_PER_STRATUM
+        )
+        _expect_string(
+            case["case_id"],
+            _case_id(stratum_index, stratum_case_index),
+            f"{path}.case_id",
+        )
+        _expect_integer(case["case_index"], case_index, f"{path}.case_index")
+        _expect_integer(case["stratum_index"], stratum_index, f"{path}.stratum_index")
+        _expect_integer(
+            case["stratum_case_index"],
+            stratum_case_index,
+            f"{path}.stratum_case_index",
+        )
+        direction = _strict_vector(case["direction"], f"{path}.direction", 3)
+        direction_norm = math.hypot(*direction)
+        if not math.isclose(direction_norm, 1.0, rel_tol=0.0, abs_tol=2e-15):
+            raise ValueError(f"{path}.direction must be a unit vector")
+        range_r = _strict_number(case["range_r"], f"{path}.range_r")
+        lower = edges[stratum_index]
+        upper = edges[stratum_index + 1]
+        in_stratum = lower <= range_r < upper
+        if stratum_index == RELIABILITY_N_STRATA - 1:
+            in_stratum = lower <= range_r <= upper
+        if not in_stratum:
+            raise ValueError(f"{path}.range_r is outside its declared stratum")
+        mass = _strict_number(case["mass"], f"{path}.mass")
+        if not RELIABILITY_MASS_BOUNDS[0] <= mass <= RELIABILITY_MASS_BOUNDS[1]:
+            raise ValueError(f"{path}.mass is outside the preregistered bounds")
+        position = _strict_vector(case["position"], f"{path}.position", 3)
+        expected_position = tuple(
+            component * range_r * ECHO_R_HEAD for component in direction
+        )
+        if position != expected_position:
+            raise ValueError(
+                f"{path}.position must equal direction * range_r * head.r_head"
+            )
+        try:
+            _validate_echolocation_truth(
+                np.asarray(position, dtype=np.float64), mass, expected_head
+            )
+        except ValueError as error:
+            raise ValueError(f"{path}.physical_support is invalid: {error}") from error
+
+        expected_case_seeds = tuple(
+            _seed_from_sequence(child)
+            for child in expected_root_children[case_index + 1].spawn(3)
+        )
+        for seed_name, expected_seed in zip(
+            ("parameter_seed", "observation_seed", "inference_seed"),
+            expected_case_seeds,
+        ):
+            seed = _strict_integer(
+                case[seed_name], f"{path}.{seed_name}", nonnegative=True
+            )
+            if seed in all_stream_seeds:
+                raise ValueError(f"duplicate stream seed at {path}.{seed_name}")
+            if seed != expected_seed:
+                raise ValueError(
+                    f"{path}.{seed_name} does not match the declared spawn policy"
+                )
+            all_stream_seeds.add(seed)
+
+    semantic_hash = _strict_string(document["semantic_sha256"], "semantic_sha256")
+    if _SEMANTIC_HASH_PATTERN.fullmatch(semantic_hash) is None:
+        raise ValueError("semantic_sha256 must be 64 lowercase hexadecimal digits")
+    expected_hash = _semantic_sha256(document)
+    if semantic_hash != expected_hash:
+        raise ValueError("semantic_sha256 does not match the canonical payload")
+
+
+def encode_manifest(manifest: object) -> str:
+    """Return deterministic UTF-8-compatible canonical JSON with one newline."""
+    validate_manifest(manifest)
+    return _canonical_json(manifest) + "\n"
+
+
+def load_manifest(path: Path) -> Mapping[str, object]:
+    """Load, hash-check, and deeply freeze a release manifest."""
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"manifest contains invalid JSON: {error.msg}") from error
+    validate_manifest(value)
+    return _deep_freeze(value)  # type: ignore[return-value]
+
+
+def write_manifest(path: Path, manifest: object) -> None:
+    """Atomically write a validated canonical manifest in its destination directory."""
+    encoded = encode_manifest(manifest).encode("utf-8")
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(encoded)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, destination)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 @dataclass(frozen=True)
