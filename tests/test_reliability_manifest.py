@@ -6,6 +6,7 @@ import json
 import math
 import os
 from collections.abc import Callable
+from decimal import Decimal, localcontext
 from pathlib import Path
 from types import MappingProxyType
 
@@ -44,12 +45,12 @@ TEST_RANGE_EDGE_HEX = (
     "0x1.965fea53d6e3ap+2",
     "0x1.0000000000000p+3",
 )
-TEST_APPROVED_MANIFEST_BYTES = 189_258
+TEST_APPROVED_MANIFEST_BYTES = 189_389
 TEST_APPROVED_MANIFEST_SHA256 = (
-    "a4868fe22396987b2675c1a25f9d9b25c8a92fdec44a4402940e497dd1ba827e"
+    "aff700379a0442fdda4b538b2dac03b3aa5693fb3d47b1b935ade9240e52d991"
 )
 TEST_APPROVED_SEMANTIC_SHA256 = (
-    "98a08d394ca249edb307a7ac78f30d6708180f716105f09b4768f9ff2630fcd4"
+    "af48a8b1cdff701324a8700e42a603779cede81e633b8caad050d1148252265c"
 )
 
 
@@ -83,6 +84,34 @@ def _canonical_test_json(document: dict[str, object]) -> str:
         )
         + "\n"
     )
+
+
+# Independent re-derivation of the declared draw recipe. Production evaluates at
+# 40 digits; these use 60, so agreeing on the resulting double is evidence the
+# value is correctly rounded rather than evidence of a shared implementation.
+_TEST_PRECISION = 60
+
+
+def _test_exp(value: float) -> float:
+    with localcontext() as context:
+        context.prec = _TEST_PRECISION
+        return float(Decimal(value).exp())
+
+
+def _test_log(value: float) -> float:
+    with localcontext() as context:
+        context.prec = _TEST_PRECISION
+        return float(Decimal(value).ln())
+
+
+def _test_norm(components: object) -> float:
+    with localcontext() as context:
+        context.prec = _TEST_PRECISION
+        total = Decimal(0)
+        for component in components:
+            exact = Decimal(float(component))
+            total += exact * exact
+        return float(total.sqrt())
 
 
 def _independent_seed(sequence: np.random.SeedSequence) -> int:
@@ -307,22 +336,20 @@ def test_release_parameters_replay_the_declared_log_uniform_draw_recipe(
     for case in release_document["cases"]:
         rng = np.random.Generator(np.random.PCG64(case["parameter_seed"]))
         direction_draw = rng.normal(size=3)
-        direction_norm = math.hypot(*(float(component) for component in direction_draw))
+        direction_norm = _test_norm(direction_draw)
         while direction_norm == 0.0:
             direction_draw = rng.normal(size=3)
-            direction_norm = math.hypot(
-                *(float(component) for component in direction_draw)
-            )
+            direction_norm = _test_norm(direction_draw)
         direction = direction_draw / direction_norm
         stratum = case["stratum_index"]
-        range_r = math.exp(
-            float(rng.uniform(math.log(edges[stratum]), math.log(edges[stratum + 1])))
+        range_r = _test_exp(
+            float(rng.uniform(_test_log(edges[stratum]), _test_log(edges[stratum + 1])))
         )
-        mass = math.exp(
+        mass = _test_exp(
             float(
                 rng.uniform(
-                    math.log(TEST_MASS_BOUNDS[0]),
-                    math.log(TEST_MASS_BOUNDS[1]),
+                    _test_log(TEST_MASS_BOUNDS[0]),
+                    _test_log(TEST_MASS_BOUNDS[1]),
                 )
             )
         )
@@ -361,9 +388,11 @@ def test_release_records_exact_generator_head_controls_and_analysis(
         "bit_generator": "PCG64",
         "generator": "numpy.random.Generator",
         "parameter_draw_recipe": (
-            "normal(3), retry exact zero norm; "
+            "normal(3) / norm, retry exact zero norm; "
             "exp(uniform(log(stratum_lower), log(stratum_upper))); "
-            "exp(uniform(log(0.02), log(0.08)))"
+            "exp(uniform(log(0.02), log(0.08))); "
+            "exp, log and norm evaluated at 40 decimal digits and rounded once, "
+            "so the population does not depend on the host C library"
         ),
         "seed_sequence": "numpy.random.SeedSequence",
         "spawn_policy": (

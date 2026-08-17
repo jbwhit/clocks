@@ -38,6 +38,53 @@ from clocks.inference import ParticleFilter
 from clocks.physics import _point_mass_potential_batch, clock_rates
 from clocks.types import MassConfig, Observation, ParticleState
 
+# Fields that survive a change of platform exactly: integers, booleans, and the
+# controls echoed back from the call. Everything else is a float64 that reaches
+# the caller through BLAS and libm, which differ by a few ulps between macOS
+# arm64 and Linux x86-64.
+_EXACT_ECHO_RUN_FIELDS = (
+    "seed",
+    "range_r",
+    "passed",
+    "covered_3sigma",
+    "forward_model_evaluations",
+    "ess_target",
+    "rejuvenation_steps",
+    "proposal_scale",
+)
+_FLOAT_ECHO_RUN_FIELDS = (
+    "position_error",
+    "mass_error",
+    "pos_std",
+    "mass_std",
+    "residual_over_noise",
+    "normalized_error",
+)
+
+
+def _assert_frozen_echo_run(actual: EchoRunResult, expected: dict[str, object]) -> None:
+    """Compare a frozen replay: exact where exactness is meaningful.
+
+    Bitwise equality would pin the platform, not the behaviour -- the posterior
+    mean moves by ~4e-15 between macOS and Linux. A 1e-12 relative tolerance is
+    still hundreds of times tighter than any real change to the filter, while
+    the counts and flags stay exact because those are what a dropped
+    observation or a changed control would move.
+    """
+    assert set(actual) == set(expected)
+    for field in _EXACT_ECHO_RUN_FIELDS:
+        assert actual[field] == expected[field], field
+    for field in ("mean", "std"):
+        np.testing.assert_allclose(
+            actual[field], expected[field], rtol=1e-12, atol=0.0, err_msg=field
+        )
+    for field in _FLOAT_ECHO_RUN_FIELDS:
+        assert actual[field] == pytest.approx(expected[field], rel=1e-12), field
+    assert set(_EXACT_ECHO_RUN_FIELDS) | set(_FLOAT_ECHO_RUN_FIELDS) | {
+        "mean",
+        "std",
+    } == set(expected)
+
 
 def _load_scan(script_name: str) -> ModuleType:
     path = Path(__file__).parents[1] / "scripts" / f"{script_name}.py"
@@ -1062,11 +1109,7 @@ class TestArbitraryEcholocationCase:
             "rejuvenation_steps": 1,
             "proposal_scale": 1.5,
         }
-        assert set(fixed) == set(expected)
-        np.testing.assert_array_equal(fixed["mean"], expected["mean"])
-        np.testing.assert_array_equal(fixed["std"], expected["std"])
-        for field in set(expected) - {"mean", "std"}:
-            assert fixed[field] == expected[field]
+        _assert_frozen_echo_run(fixed, expected)
 
     def test_fixed_echo_wrapper_matches_frozen_multi_observation_run(self) -> None:
         """Frozen replay over several observations, verified against pre-PR main.
@@ -1116,11 +1159,7 @@ class TestArbitraryEcholocationCase:
             "rejuvenation_steps": 1,
             "proposal_scale": 1.5,
         }
-        assert set(fixed) == set(expected)
-        np.testing.assert_array_equal(fixed["mean"], expected["mean"])
-        np.testing.assert_array_equal(fixed["std"], expected["std"])
-        for field in set(expected) - {"mean", "std"}:
-            assert fixed[field] == expected[field]
+        _assert_frozen_echo_run(fixed, expected)
 
     def test_nondefault_smc_controls_reach_the_filter_builder(
         self, monkeypatch: pytest.MonkeyPatch

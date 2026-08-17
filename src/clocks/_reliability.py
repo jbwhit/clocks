@@ -6,8 +6,9 @@ import math
 import os
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from decimal import Decimal, localcontext
 from numbers import Integral
 from pathlib import Path
 from types import MappingProxyType
@@ -73,15 +74,17 @@ _CASE_ID_PREFIX = _RELEASE_IDENTITY.replace("_", "-")
 # The frozen schema-v1 release population. Regenerating a different population
 # under this identity is a protocol violation, not a refresh.
 RELEASE_SEMANTIC_SHA256 = (
-    "98a08d394ca249edb307a7ac78f30d6708180f716105f09b4768f9ff2630fcd4"
+    "af48a8b1cdff701324a8700e42a603779cede81e633b8caad050d1148252265c"
 )
 _GENERATOR_METADATA = {
     "bit_generator": BIT_GENERATOR_NAME,
     "generator": "numpy.random.Generator",
     "parameter_draw_recipe": (
-        "normal(3), retry exact zero norm; "
+        "normal(3) / norm, retry exact zero norm; "
         "exp(uniform(log(stratum_lower), log(stratum_upper))); "
-        "exp(uniform(log(0.02), log(0.08)))"
+        "exp(uniform(log(0.02), log(0.08))); "
+        "exp, log and norm evaluated at 40 decimal digits and rounded once, "
+        "so the population does not depend on the host C library"
     ),
     "seed_sequence": "numpy.random.SeedSequence",
     "spawn_policy": (
@@ -163,6 +166,41 @@ class _JSONObjectPairs(list[tuple[str, object]]):
 
 def _range_stratum_edges() -> tuple[float, ...]:
     return RELIABILITY_RANGE_STRATUM_EDGES
+
+
+# Generation must not depend on the host C library. exp, log and hypot are not
+# required to be correctly rounded, and they are not: two of this release's 768
+# exp draws differ by one ulp between macOS libm and glibc, which changes the
+# manifest bytes and therefore the population's identity. Each helper below
+# evaluates in decimal at _GENERATION_PRECISION significant digits -- far more
+# than the 17 a float64 can hold -- and rounds once on the way out, so the same
+# seed yields the same population on every platform.
+_GENERATION_PRECISION = 40
+
+
+def _exact_exp(value: float) -> float:
+    """Return ``exp(value)`` rounded once from a high-precision decimal."""
+    with localcontext() as context:
+        context.prec = _GENERATION_PRECISION
+        return float(Decimal(value).exp())
+
+
+def _exact_log(value: float) -> float:
+    """Return ``log(value)`` rounded once from a high-precision decimal."""
+    with localcontext() as context:
+        context.prec = _GENERATION_PRECISION
+        return float(Decimal(value).ln())
+
+
+def _exact_norm(components: Iterable[float]) -> float:
+    """Return the Euclidean norm rounded once from a high-precision decimal."""
+    with localcontext() as context:
+        context.prec = _GENERATION_PRECISION
+        total = Decimal(0)
+        for component in components:
+            exact = Decimal(component)
+            total += exact * exact
+        return float(total.sqrt())
 
 
 def _seed_from_sequence(sequence: np.random.SeedSequence) -> int:
@@ -365,26 +403,24 @@ def generate_release_manifest() -> Mapping[str, object]:
 
         rng = np.random.Generator(np.random.PCG64(parameter_seed))
         direction_draw = rng.normal(size=3)
-        direction_norm = math.hypot(*(float(component) for component in direction_draw))
+        direction_norm = _exact_norm(float(value) for value in direction_draw)
         while direction_norm == 0.0:
             direction_draw = rng.normal(size=3)
-            direction_norm = math.hypot(
-                *(float(component) for component in direction_draw)
-            )
+            direction_norm = _exact_norm(float(value) for value in direction_draw)
         direction = np.asarray(direction_draw / direction_norm, dtype=np.float64)
-        range_r = math.exp(
+        range_r = _exact_exp(
             float(
                 rng.uniform(
-                    math.log(edges[stratum_index]),
-                    math.log(edges[stratum_index + 1]),
+                    _exact_log(edges[stratum_index]),
+                    _exact_log(edges[stratum_index + 1]),
                 )
             )
         )
-        mass = math.exp(
+        mass = _exact_exp(
             float(
                 rng.uniform(
-                    math.log(RELIABILITY_MASS_BOUNDS[0]),
-                    math.log(RELIABILITY_MASS_BOUNDS[1]),
+                    _exact_log(RELIABILITY_MASS_BOUNDS[0]),
+                    _exact_log(RELIABILITY_MASS_BOUNDS[1]),
                 )
             )
         )
