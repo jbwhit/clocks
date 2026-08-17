@@ -52,6 +52,11 @@ def _semantic_sha256(document: dict[str, object]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _independent_seed(sequence: np.random.SeedSequence) -> int:
+    words = sequence.generate_state(4, dtype=np.uint32)
+    return sum(int(word) << (32 * index) for index, word in enumerate(words))
+
+
 def _changed(
     document: dict[str, object], mutation: Callable[[dict[str, object]], None]
 ) -> dict[str, object]:
@@ -195,13 +200,89 @@ def test_release_stream_seeds_are_nonnegative_non_bool_and_globally_disjoint(
     assert release_document["analysis_seed"] != TEST_MASTER_SEED
 
 
+def test_release_stream_seeds_replay_the_declared_hierarchical_spawn_recipe(
+    release_document: dict[str, object],
+) -> None:
+    root = np.random.SeedSequence(TEST_MASTER_SEED)
+    root_children = root.spawn(TEST_CASE_COUNT + 1)
+    analysis_child = root_children[0]
+
+    assert analysis_child.spawn_key == (0,)
+    assert release_document["analysis_seed"] == _independent_seed(analysis_child)
+    expected_seeds = [release_document["analysis_seed"]]
+    for case_index, (case, case_child) in enumerate(
+        zip(release_document["cases"], root_children[1:])
+    ):
+        assert case_child.spawn_key == (case_index + 1,)
+        stream_children = case_child.spawn(3)
+        assert [child.spawn_key for child in stream_children] == [
+            (case_index + 1, stream_index) for stream_index in range(3)
+        ]
+        actual = [
+            case["parameter_seed"],
+            case["observation_seed"],
+            case["inference_seed"],
+        ]
+        expected = [_independent_seed(child) for child in stream_children]
+        assert actual == expected
+        expected_seeds.extend(expected)
+
+    assert len(expected_seeds) == 1 + 3 * TEST_CASE_COUNT
+    assert len(set(expected_seeds)) == len(expected_seeds)
+
+
+def test_release_parameters_replay_the_declared_log_uniform_draw_recipe(
+    release_document: dict[str, object],
+) -> None:
+    edges = np.geomspace(
+        TEST_RANGE_R_BOUNDS[0],
+        TEST_RANGE_R_BOUNDS[1],
+        TEST_N_STRATA + 1,
+    )
+    edges[0] = TEST_RANGE_R_BOUNDS[0]
+    edges[-1] = TEST_RANGE_R_BOUNDS[1]
+
+    for case in release_document["cases"]:
+        rng = np.random.default_rng(case["parameter_seed"])
+        direction_draw = rng.normal(size=3)
+        direction_norm = math.hypot(*(float(component) for component in direction_draw))
+        while direction_norm == 0.0:
+            direction_draw = rng.normal(size=3)
+            direction_norm = math.hypot(
+                *(float(component) for component in direction_draw)
+            )
+        direction = direction_draw / direction_norm
+        stratum = case["stratum_index"]
+        range_r = math.exp(
+            float(rng.uniform(math.log(edges[stratum]), math.log(edges[stratum + 1])))
+        )
+        mass = math.exp(
+            float(
+                rng.uniform(
+                    math.log(TEST_MASS_BOUNDS[0]),
+                    math.log(TEST_MASS_BOUNDS[1]),
+                )
+            )
+        )
+        position = direction * range_r * TEST_R_HEAD
+
+        assert_allclose(case["direction"], direction, rtol=0.0, atol=0.0)
+        assert case["range_r"] == range_r
+        assert case["mass"] == mass
+        assert_allclose(case["position"], position, rtol=0.0, atol=0.0)
+
+
 def test_release_records_exact_generator_head_controls_and_analysis(
     release_document: dict[str, object],
 ) -> None:
     assert release_document["generator"] == {
         "bit_generator": "PCG64",
-        "generator": "numpy.random.Generator",
-        "numpy_version": np.__version__,
+        "generator": "numpy.random.default_rng",
+        "parameter_draw_recipe": (
+            "normal(3), retry exact zero norm; "
+            "exp(uniform(log(stratum_lower), log(stratum_upper))); "
+            "exp(uniform(log(0.02), log(0.08)))"
+        ),
         "seed_sequence": "numpy.random.SeedSequence",
         "spawn_policy": (
             "root.spawn(385): analysis then stratum-major cases; "
@@ -270,6 +351,29 @@ def test_generation_is_canonical_and_byte_stable() -> None:
     assert json.loads(first_bytes)["semantic_sha256"] == first["semantic_sha256"]
 
 
+def test_canonical_manifest_is_independent_of_runtime_numpy_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = encode_manifest(generate_release_manifest())
+    assert "numpy_version" not in json.loads(original)["generator"]
+    monkeypatch.setattr(np, "__version__", "runtime-version-must-not-be-hashed")
+    regenerated = encode_manifest(generate_release_manifest())
+
+    assert regenerated == original
+    assert "runtime-version-must-not-be-hashed" not in regenerated
+    validate_manifest(json.loads(original))
+
+
+def test_validation_treats_recorded_stream_seeds_as_authoritative(
+    release_document: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject_rng_regeneration(*args: object, **kwargs: object) -> None:
+        raise AssertionError("validation must not regenerate frozen streams")
+
+    monkeypatch.setattr(reliability.np.random, "SeedSequence", reject_rng_regeneration)
+    validate_manifest(release_document)
+
+
 def test_semantic_hash_excludes_only_itself_and_covers_payload(
     release_document: dict[str, object],
 ) -> None:
@@ -307,7 +411,7 @@ def test_validate_manifest_rejects_top_level_semantic_mutations(
     [
         ("bit_generator", "MT19937"),
         ("generator", "numpy.random.RandomState"),
-        ("numpy_version", "0.0.0"),
+        ("parameter_draw_recipe", "linear interpolation"),
         ("seed_sequence", "seed"),
         ("spawn_policy", "independent roots"),
     ],
@@ -536,6 +640,22 @@ def test_validate_manifest_accepts_explicit_final_range_and_mass_endpoints(
     validate_manifest(changed)
 
 
+def test_validate_manifest_reports_case_physical_support_failures(
+    release_document: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject_physical_support(*args: object, **kwargs: object) -> None:
+        raise ValueError("forced physical rejection")
+
+    monkeypatch.setattr(
+        reliability, "_validate_echolocation_truth", reject_physical_support
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"cases\[0\]\.physical_support.*forced physical rejection",
+    ):
+        validate_manifest(release_document)
+
+
 @pytest.mark.parametrize(
     "field", ["parameter_seed", "observation_seed", "inference_seed"]
 )
@@ -553,7 +673,7 @@ def test_validate_manifest_rejects_invalid_case_seeds(
 @pytest.mark.parametrize(
     "field", ["parameter_seed", "observation_seed", "inference_seed"]
 )
-def test_validate_manifest_rejects_changed_release_case_seeds(
+def test_semantic_hash_catches_changed_authoritative_case_seeds(
     release_document: dict[str, object], field: str
 ) -> None:
     _assert_invalid(
@@ -561,7 +681,7 @@ def test_validate_manifest_rejects_changed_release_case_seeds(
         lambda document: document["cases"][0].__setitem__(
             field, document["cases"][0][field] + 1
         ),
-        rf"cases\[0\]\.{field}",
+        "semantic_sha256",
     )
 
 
@@ -595,7 +715,7 @@ def test_validate_manifest_rejects_invalid_or_nondistinct_analysis_seed(
     )
 
 
-def test_validate_manifest_rejects_changed_release_analysis_seed(
+def test_semantic_hash_catches_changed_authoritative_analysis_seed(
     release_document: dict[str, object],
 ) -> None:
     _assert_invalid(
@@ -603,7 +723,7 @@ def test_validate_manifest_rejects_changed_release_analysis_seed(
         lambda document: document.__setitem__(
             "analysis_seed", document["analysis_seed"] + 1
         ),
-        "analysis_seed",
+        "semantic_sha256",
     )
 
 

@@ -55,8 +55,12 @@ _RELEASE_IDENTITY = "echolocation_population_v1_release"
 _RELEASE_STATUS = "release"
 _GENERATOR_METADATA = {
     "bit_generator": "PCG64",
-    "generator": "numpy.random.Generator",
-    "numpy_version": np.__version__,
+    "generator": "numpy.random.default_rng",
+    "parameter_draw_recipe": (
+        "normal(3), retry exact zero norm; "
+        "exp(uniform(log(stratum_lower), log(stratum_upper))); "
+        "exp(uniform(log(0.02), log(0.08)))"
+    ),
     "seed_sequence": "numpy.random.SeedSequence",
     "spawn_policy": (
         "root.spawn(385): analysis then stratum-major cases; "
@@ -307,7 +311,7 @@ def generate_release_manifest() -> Mapping[str, object]:
             raise RuntimeError("spawned reliability stream seeds must be unique")
         stream_seeds.update(new_seeds)
 
-        rng = np.random.Generator(np.random.PCG64(parameter_seed))
+        rng = np.random.default_rng(parameter_seed)
         direction_draw = rng.normal(size=3)
         direction_norm = math.hypot(*(float(component) for component in direction_draw))
         while direction_norm == 0.0:
@@ -316,17 +320,19 @@ def generate_release_manifest() -> Mapping[str, object]:
                 *(float(component) for component in direction_draw)
             )
         direction = np.asarray(direction_draw / direction_norm, dtype=np.float64)
-        log_range = rng.uniform(
-            math.log(edges[stratum_index]), math.log(edges[stratum_index + 1])
+        range_r = math.exp(
+            float(
+                rng.uniform(
+                    math.log(edges[stratum_index]),
+                    math.log(edges[stratum_index + 1]),
+                )
+            )
         )
-        range_r = float(math.exp(float(log_range)))
-        mass = float(
-            math.exp(
-                float(
-                    rng.uniform(
-                        math.log(RELIABILITY_MASS_BOUNDS[0]),
-                        math.log(RELIABILITY_MASS_BOUNDS[1]),
-                    )
+        mass = math.exp(
+            float(
+                rng.uniform(
+                    math.log(RELIABILITY_MASS_BOUNDS[0]),
+                    math.log(RELIABILITY_MASS_BOUNDS[1]),
                 )
             )
         )
@@ -440,12 +446,6 @@ def validate_manifest(manifest: object) -> None:
     )
     if analysis_seed == master_seed:
         raise ValueError("analysis_seed must be distinct from master_seed")
-    expected_root_children = np.random.SeedSequence(master_seed).spawn(
-        _RELIABILITY_CASE_COUNT + 1
-    )
-    expected_analysis_seed = _seed_from_sequence(expected_root_children[0])
-    if analysis_seed != expected_analysis_seed:
-        raise ValueError("analysis_seed does not match the declared spawn policy")
 
     generator = _object(document["generator"], "generator", _GENERATOR_FIELDS)
     for field, expected in _GENERATOR_METADATA.items():
@@ -648,23 +648,12 @@ def validate_manifest(manifest: object) -> None:
         except ValueError as error:
             raise ValueError(f"{path}.physical_support is invalid: {error}") from error
 
-        expected_case_seeds = tuple(
-            _seed_from_sequence(child)
-            for child in expected_root_children[case_index + 1].spawn(3)
-        )
-        for seed_name, expected_seed in zip(
-            ("parameter_seed", "observation_seed", "inference_seed"),
-            expected_case_seeds,
-        ):
+        for seed_name in ("parameter_seed", "observation_seed", "inference_seed"):
             seed = _strict_integer(
                 case[seed_name], f"{path}.{seed_name}", nonnegative=True
             )
             if seed in all_stream_seeds:
                 raise ValueError(f"duplicate stream seed at {path}.{seed_name}")
-            if seed != expected_seed:
-                raise ValueError(
-                    f"{path}.{seed_name} does not match the declared spawn policy"
-                )
             all_stream_seeds.add(seed)
 
     semantic_hash = _strict_string(document["semantic_sha256"], "semantic_sha256")
