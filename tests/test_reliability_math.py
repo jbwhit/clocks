@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from clocks._reliability import (
     IdentifiabilityResult,
     _dimensionless_jacobian,
+    _mirror_upper_triangle,
     _stable_fisher_information,
     contrast_jacobian,
     local_identifiability,
@@ -648,11 +649,49 @@ def test_symmetrization_is_exact_at_both_ends_of_the_float64_range() -> None:
 
     assert np.min(np.abs(subnormal[subnormal != 0.0])) < np.finfo(np.float64).tiny
     assert_array_equal(subnormal, subnormal.T)
-    # Every published entry is exactly one of the two computed triangles, so no
-    # bits were invented or lost on the way to symmetry.
-    assert np.all((subnormal == raw) | (subnormal == raw.T))
-    # And that is a real distinction here: averaging would have moved entries.
+    assert_array_equal(subnormal, _mirror_upper_triangle(raw))
+    # The distinction is real at this scale: averaging would move entries.
     assert np.any(subnormal != 0.5 * raw + 0.5 * raw.T)
+
+
+def test_mirror_upper_triangle_copies_without_arithmetic() -> None:
+    """Pin the symmetrization itself, independently of the host's BLAS.
+
+    The Gram matrices this is applied to come back already symmetric on arm64,
+    so every candidate symmetrization -- mirroring either triangle, averaging,
+    even an element-wise maximum -- is indistinguishable there. Feeding a
+    deliberately asymmetric matrix makes the choice observable on any platform.
+    """
+    matrix = np.array(
+        [
+            [1.0, 2.0, 3.0],
+            [9.0, 4.0, 5.0],
+            [8.0, 7.0, 6.0],
+        ]
+    )
+    mirrored = _mirror_upper_triangle(matrix)
+
+    assert_array_equal(
+        mirrored,
+        np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [2.0, 4.0, 5.0],
+                [3.0, 5.0, 6.0],
+            ]
+        ),
+    )
+    assert_array_equal(mirrored, mirrored.T)
+    # The source is left alone, and the lower triangle is discarded rather than
+    # blended: an average would put 5.5 at [0, 1] and a maximum would put 9.
+    assert_array_equal(matrix[1, 0], 9.0)
+    assert mirrored[0, 1] == 2.0
+
+    # No arithmetic means signed zeros and subnormals survive the copy.
+    signed = np.array([[-0.0, 5e-324], [1.0, 2.0]])
+    preserved = _mirror_upper_triangle(signed)
+    assert math.copysign(1.0, preserved[0, 0]) < 0.0
+    assert preserved[1, 0] == 5e-324
 
 
 def test_exact_zero_matrix_has_exact_zero_fisher_information() -> None:

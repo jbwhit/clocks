@@ -1103,6 +1103,29 @@ def _positive_count(n_observations: object) -> int:
     return value
 
 
+def _mirror_upper_triangle(matrix: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Return a copy made symmetric by copying the upper triangle downward.
+
+    A Gram matrix is symmetric in exact arithmetic, but BLAS does not promise to
+    compute both triangles with the same summation order, and on x86-64 it does
+    not. Raising on a 1-ulp asymmetry would turn a harmless numerical accident
+    into a failed evidence run, so one triangle is adopted instead.
+
+    Adopted, not averaged: this has to hold at both ends of the float64 range,
+    and both arithmetic routes to symmetry fail somewhere. ``(F + F.T) / 2``
+    overflows to infinity for entries just under the maximum, while
+    ``0.5*F + 0.5*F.T`` rounds away real bits of a subnormal -- and subnormal
+    Gram matrices are exactly what the surrounding rescaling exists to preserve.
+    Copying performs no arithmetic, so it is exact at every scale and preserves
+    signed zeros; it publishes one of two equally valid computations of the same
+    quantity rather than a rounded blend of them.
+    """
+    mirrored = matrix.copy()
+    rows, columns = np.tril_indices(mirrored.shape[0], -1)
+    mirrored[rows, columns] = mirrored[columns, rows]
+    return mirrored
+
+
 def _stable_fisher_information(
     scaled_jacobian: NDArray[np.float64],
 ) -> NDArray[np.float64]:
@@ -1120,19 +1143,7 @@ def _stable_fisher_information(
         )
     if not np.all(np.isfinite(fisher_information)):
         raise PhysicsDomainError("Fisher information must be finite")
-    # A Gram matrix is symmetric by construction, but BLAS does not promise to
-    # compute both triangles with the same summation order, and on x86-64 it
-    # does not. Raising on a 1-ulp asymmetry would turn a harmless numerical
-    # accident into a failed evidence run, so mirror one triangle instead.
-    #
-    # Mirroring rather than averaging, because this function has to hold at both
-    # ends of the float64 range: (F + F.T)/2 overflows to infinity for entries
-    # just under the maximum, and 0.5*F + 0.5*F.T rounds away real bits of a
-    # subnormal. Copying is exact everywhere and picks one of two equally valid
-    # computations of the same quantity rather than a rounded blend of them.
-    fisher_information = fisher_information.copy()
-    rows, columns = np.tril_indices(fisher_information.shape[0], -1)
-    fisher_information[rows, columns] = fisher_information[columns, rows]
+    fisher_information = _mirror_upper_triangle(fisher_information)
     information_scale = float(np.max(np.abs(fisher_information)))
     normalized_information = fisher_information / information_scale
     minimum_eigenvalue = float(np.linalg.eigvalsh(normalized_information)[0])

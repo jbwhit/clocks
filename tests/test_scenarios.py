@@ -1209,13 +1209,15 @@ class TestArbitraryEcholocationCase:
         assert result.ess_target == 0.55
         assert result.rejuvenation_steps == 3
         assert result.proposal_scale == 2.38
-        # ... and those values must genuinely differ from the defaults, or every
-        # assertion here would also hold for a runner that ignored them.
-        assert (0.55, 3, 2.38) != (
-            scenarios.ECHO_ESS_TARGET,
-            scenarios.ECHO_REJUVENATION_STEPS,
-            scenarios.ECHO_PROPOSAL_SCALE,
-        )
+        # ... and every one of them must genuinely differ from its default, or
+        # the assertions above would also hold for a runner that ignored it.
+        # One inequality per parameter: a tuple comparison is an OR, so it would
+        # still pass if a future default happened to equal one of these values.
+        assert 7 != scenarios.ECHO_N_PARTICLES
+        assert 0.003 != scenarios.ECHO_NOISE_STD
+        assert 0.55 != scenarios.ECHO_ESS_TARGET
+        assert 3 != scenarios.ECHO_REJUVENATION_STEPS
+        assert 2.38 != scenarios.ECHO_PROPOSAL_SCALE
 
     def test_every_contrast_observation_reaches_the_filter_in_order(
         self, monkeypatch: pytest.MonkeyPatch
