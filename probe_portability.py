@@ -8,6 +8,8 @@ from decimal import Decimal, localcontext
 
 import numpy as np
 
+from clocks._reliability import generate_release_manifest
+
 
 def h(values):
     return hashlib.sha256(
@@ -16,7 +18,8 @@ def h(values):
 
 
 print(
-    f"platform={platform.machine()} {platform.system()} python={sys.version.split()[0]} numpy={np.__version__}"
+    f"platform={platform.machine()} {platform.system()} "
+    f"python={sys.version.split()[0]} numpy={np.__version__}"
 )
 
 randoms, normals, uniforms = [], [], []
@@ -46,7 +49,5 @@ print(
         + [math.hypot(u, u, 3.0) for u in randoms[:200]]
     ),
 )
-
-from clocks._reliability import generate_release_manifest
 
 print("manifest digest    :", generate_release_manifest()["semantic_sha256"])
