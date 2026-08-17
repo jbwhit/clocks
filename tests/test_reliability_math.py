@@ -783,18 +783,22 @@ def test_fisher_information_is_the_symmetric_psd_gram_matrix() -> None:
         noise_std=0.002,
     )
 
+    raw_gram = result.scaled_jacobian.T @ result.scaled_jacobian
+
+    # Exact symmetry is a guarantee of the published value, not of the BLAS
+    # product it comes from: on Linux x86-64 this raw_gram's [0, 3] and [3, 0]
+    # entries differ by ~2e-14, because a blocked gemm need not sum the two
+    # triangles in the same order. Production averages the triangles, so the
+    # value handed out is symmetric bit for bit on every platform.
+    assert_array_equal(result.fisher_information, result.fisher_information.T)
     assert_allclose(
         result.fisher_information,
-        result.scaled_jacobian.T @ result.scaled_jacobian,
+        0.5 * (raw_gram + raw_gram.T),
         rtol=2e-15,
         atol=2e-15,
     )
-    assert_allclose(
-        result.fisher_information,
-        result.fisher_information.T,
-        rtol=0.0,
-        atol=0.0,
-    )
+    # Averaging moves nothing that matters: it is a rounding-scale correction.
+    assert_allclose(result.fisher_information, raw_gram, rtol=1e-14, atol=1e-13)
     assert np.linalg.eigvalsh(result.fisher_information)[0] >= -1e-12
 
 
