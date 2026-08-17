@@ -232,6 +232,26 @@ def _positive_count(n_observations: object) -> int:
     return value
 
 
+def _stable_fisher_information(
+    scaled_jacobian: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Return a representable Gram matrix without premature underflow."""
+    scale = float(np.max(np.abs(scaled_jacobian)))
+    if scale == 0.0:
+        return np.zeros((scaled_jacobian.shape[1], scaled_jacobian.shape[1]))
+    with np.errstate(invalid="ignore", over="ignore"):
+        normalized_jacobian = scaled_jacobian / scale
+        normalized_fisher = normalized_jacobian.T @ normalized_jacobian
+        fisher_information = (normalized_fisher * scale) * scale
+    if not np.any(fisher_information):
+        raise PhysicsDomainError(
+            "nonzero Fisher information is below the float64 representable range"
+        )
+    if not np.all(np.isfinite(fisher_information)):
+        raise PhysicsDomainError("Fisher information must be finite")
+    return fisher_information
+
+
 def local_identifiability(
     position: NDArray[np.floating],
     mass: float,
@@ -254,6 +274,8 @@ def local_identifiability(
         scaled_jacobian = scale * jacobian
     if not np.all(np.isfinite(scaled_jacobian)):
         raise PhysicsDomainError("scaled contrast derivatives must be finite")
+    if not np.any(scaled_jacobian) and np.any(jacobian):
+        raise PhysicsDomainError("scaled contrast derivatives underflowed completely")
 
     full_matrices = scaled_jacobian.shape[0] < scaled_jacobian.shape[1]
     _, singular_values, right_vectors = np.linalg.svd(
@@ -288,10 +310,7 @@ def local_identifiability(
         if not np.all(np.isfinite(crlb_std)):
             raise PhysicsDomainError("CRLB standard deviations must be finite")
 
-    with np.errstate(invalid="ignore", over="ignore"):
-        fisher_information = scaled_jacobian.T @ scaled_jacobian
-    if not np.all(np.isfinite(fisher_information)):
-        raise PhysicsDomainError("Fisher information must be finite")
+    fisher_information = _stable_fisher_information(scaled_jacobian)
 
     weakest_direction = right_vectors[-1]
     squared = np.square(weakest_direction)

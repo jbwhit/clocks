@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from clocks._reliability import (
     IdentifiabilityResult,
     _dimensionless_jacobian,
+    _stable_fisher_information,
     contrast_jacobian,
     local_identifiability,
     tangent_basis,
@@ -72,6 +73,21 @@ def _independent_stable_contrast_jacobian(
         mass_rows.append(-(1.0 / distance) / rate)
     contrasts = contrast_matrix(len(clocks.positions))
     return contrasts @ np.array(position_rows), contrasts @ np.array(mass_rows)
+
+
+def _independent_stable_gram(matrix: NDArray[np.float64]) -> NDArray[np.float64]:
+    scale = float(np.max(np.abs(matrix)))
+    if scale == 0.0:
+        return np.zeros((matrix.shape[1], matrix.shape[1]))
+    normalized = matrix / scale
+    gram = np.empty((matrix.shape[1], matrix.shape[1]))
+    for first in range(matrix.shape[1]):
+        for second in range(matrix.shape[1]):
+            normalized_entry = math.fsum(
+                float(row[first]) * float(row[second]) for row in normalized
+            )
+            gram[first, second] = (normalized_entry * scale) * scale
+    return gram
 
 
 @pytest.mark.parametrize(
@@ -430,9 +446,12 @@ def test_crlb_std_is_stable_for_tiny_valid_singular_values() -> None:
             for column in range(4)
         ]
     )
+    expected_fisher = _independent_stable_gram(expected_scaled)
+    direct_fisher = expected_scaled.T @ expected_scaled
 
     assert np.all(np.isfinite(expected_std))
     assert np.all(expected_std > 1e160)
+    assert not np.array_equal(direct_fisher, expected_fisher)
     result = local_identifiability(
         position,
         mass,
@@ -442,6 +461,39 @@ def test_crlb_std_is_stable_for_tiny_valid_singular_values() -> None:
     )
     assert result.crlb_std is not None
     assert_allclose(result.crlb_std, expected_std, rtol=2e-14, atol=0.0)
+    assert_array_equal(result.fisher_information, expected_fisher)
+    assert_array_equal(result.fisher_information, result.fisher_information.T)
+
+    # Raw eigensolvers can emit a negative subnormal quantum. Normalize first
+    # so the tolerance tracks floating-point operations, not absolute scale.
+    fisher_scale = float(np.max(np.abs(result.fisher_information)))
+    normalized_fisher = result.fisher_information / fisher_scale
+    minimum_eigenvalue = float(np.linalg.eigvalsh(normalized_fisher)[0])
+    operation_scale = max(1.0, float(np.max(np.sum(np.abs(normalized_fisher), axis=1))))
+    psd_tolerance = (
+        np.finfo(np.float64).eps * max(normalized_fisher.shape) * operation_scale
+    )
+    assert minimum_eigenvalue >= -psd_tolerance
+
+
+def test_exact_zero_matrix_has_exact_zero_fisher_information() -> None:
+    assert_array_equal(_stable_fisher_information(np.zeros((3, 4))), np.zeros((4, 4)))
+
+
+def test_complete_scaled_jacobian_underflow_is_rejected() -> None:
+    position = np.array([3e20, 4e20, 7e20])
+    clocks = build_head_lattice()
+    dimensionless = _independent_dimensionless_jacobian(position, 0.08, clocks)
+
+    assert np.any(dimensionless != 0.0)
+    with pytest.raises(PhysicsDomainError, match="underflowed completely"):
+        local_identifiability(
+            position,
+            0.08,
+            clocks,
+            n_observations=1,
+            noise_std=np.finfo(np.float64).max,
+        )
 
 
 def test_underdetermined_array_reports_implicit_zero_and_matching_null() -> None:
