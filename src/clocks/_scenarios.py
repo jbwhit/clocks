@@ -262,12 +262,7 @@ def _validate_echolocation_truth(
     if not math.isfinite(radius):
         raise ValueError("truth_position norm must be finite")
     range_r = radius / ECHO_R_HEAD
-    if range_r < ECHO_MIN_RANGE_R and not math.isclose(
-        range_r,
-        ECHO_MIN_RANGE_R,
-        rel_tol=4.0 * np.finfo(np.float64).eps,
-        abs_tol=0.0,
-    ):
+    if range_r < ECHO_MIN_RANGE_R:
         raise ValueError(
             f"truth_position is below the exterior minimum {ECHO_MIN_RANGE_R} "
             "circumradii"
@@ -466,24 +461,22 @@ def _make_echo_forward_models(
     return forward, forward_batch
 
 
-def _make_echolocation_observations(
+def _simulate_echolocation_observations(
     *,
-    truth_position: object,
-    truth_mass: object,
+    truth_position: NDArray[np.float64],
+    truth_mass: float,
     observation_seed: int,
     n_observations: int,
     noise_std: float,
 ) -> tuple[SimulationResult, list[Observation], list[Observation]]:
-    """Simulate arbitrary truth and form display and likelihood observations."""
+    """Simulate validated truth and form display and likelihood observations."""
     clock_array = build_head_lattice()
-    position, mass, _ = _validate_echolocation_truth(
-        truth_position, truth_mass, clock_array
-    )
     sim = simulate(
         SimulationConfig(
             clock_array=clock_array,
             ground_truth=MassConfig(
-                positions=position.reshape(1, 3), masses=np.array([mass])
+                positions=truth_position.reshape(1, 3),
+                masses=np.array([truth_mass]),
             ),
             noise=NoiseConfig(observation_std=noise_std),
             n_observations=n_observations,
@@ -510,7 +503,7 @@ def make_echo_observations(
     """Return simulation, centered display data, and likelihood contrasts."""
     clock_array = build_head_lattice()
     validate_echo_geometry(range_r, ECHO_M_TRUE, clock_array)
-    return _make_echolocation_observations(
+    return _simulate_echolocation_observations(
         truth_position=echo_mass_position(range_r),
         truth_mass=ECHO_M_TRUE,
         observation_seed=seed,
@@ -590,9 +583,40 @@ def run_echolocation_case(
     position, mass, range_r = _validate_echolocation_truth(
         truth_position, truth_mass, clock_array
     )
-    sim, _, filter_observations = _make_echolocation_observations(
+    return _run_validated_echolocation_case(
         truth_position=position,
         truth_mass=mass,
+        range_r=range_r,
+        observation_seed=observation_seed,
+        inference_seed=inference_seed,
+        n_particles=n_particles,
+        n_observations=n_observations,
+        noise_std=noise_std,
+        ess_target=ess_target,
+        rejuvenation_steps=rejuvenation_steps,
+        proposal_scale=proposal_scale,
+    )
+
+
+def _run_validated_echolocation_case(
+    *,
+    truth_position: NDArray[np.float64],
+    truth_mass: float,
+    range_r: float,
+    observation_seed: int,
+    inference_seed: int,
+    n_particles: int,
+    n_observations: int,
+    noise_std: float,
+    ess_target: float,
+    rejuvenation_steps: int,
+    proposal_scale: float,
+) -> EcholocationCaseResult:
+    """Run the shared inference path after geometry validation."""
+    clock_array = build_head_lattice()
+    sim, _, filter_observations = _simulate_echolocation_observations(
+        truth_position=truth_position,
+        truth_mass=truth_mass,
         observation_seed=observation_seed,
         n_observations=n_observations,
         noise_std=noise_std,
@@ -628,7 +652,7 @@ def run_echolocation_case(
             for index in range(terminal_state.particles.shape[1])
         ]
     )
-    truth = np.append(position, mass)
+    truth = np.append(truth_position, truth_mass)
     error = np.abs(mean - truth)
     position_error = float(np.linalg.norm(mean[:3] - truth[:3]))
     mass_error = float(error[3])
@@ -637,12 +661,12 @@ def run_echolocation_case(
         raise RuntimeError("posterior mean position must have a finite positive norm")
     if mean[3] <= 0.0 or not math.isfinite(float(mean[3])):
         raise RuntimeError("posterior mean mass must be finite and positive")
-    truth_direction = position / (range_r * ECHO_R_HEAD)
+    truth_direction = truth_position / (range_r * ECHO_R_HEAD)
     estimate_direction = mean[:3] / estimated_radius
     cosine = float(np.clip(np.dot(truth_direction, estimate_direction), -1.0, 1.0))
     angular_error_rad = math.acos(cosine)
     log_range_error = abs(math.log(estimated_radius) - math.log(range_r * ECHO_R_HEAD))
-    log_mass_error = abs(math.log(float(mean[3])) - math.log(mass))
+    log_mass_error = abs(math.log(float(mean[3])) - math.log(truth_mass))
     predicted_rates = clock_rates(
         MassConfig(positions=mean[:3].reshape(1, 3), masses=mean[3:4]),
         clock_array,
@@ -653,8 +677,8 @@ def run_echolocation_case(
         / sim.noise.observation_std
     )
     return EcholocationCaseResult(
-        truth_position=position,
-        truth_mass=mass,
+        truth_position=truth_position,
+        truth_mass=truth_mass,
         observation_seed=observation_seed,
         inference_seed=inference_seed,
         n_particles=int(n_particles),
@@ -706,13 +730,15 @@ def run_echolocation_3d(
     """One end-to-end echolocation run at a given range (in circumradii)."""
     clock_array = build_head_lattice()
     validate_echo_geometry(range_r, ECHO_M_TRUE, clock_array)
-    result = run_echolocation_case(
+    result = _run_validated_echolocation_case(
         truth_position=echo_mass_position(range_r),
         truth_mass=ECHO_M_TRUE,
+        range_r=range_r,
         observation_seed=seed,
         inference_seed=seed,
         n_particles=n_particles,
         n_observations=n_observations,
+        noise_std=ECHO_NOISE_STD,
         ess_target=ess_target,
         rejuvenation_steps=rejuvenation_steps,
         proposal_scale=proposal_scale,

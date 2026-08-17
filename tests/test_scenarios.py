@@ -2,6 +2,7 @@
 
 import importlib.util
 import inspect
+import math
 import sys
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -607,6 +608,66 @@ class TestArbitraryEcholocationCase:
         assert result.rejuvenation_steps == 1
         assert result.proposal_scale == 1.5
 
+        truth_position = self._truth_position()
+        truth = np.append(truth_position, 0.065)
+        expected_position_error = math.hypot(
+            *(float(value) for value in result.mean[:3] - truth_position)
+        )
+        expected_mass_error = abs(float(result.mean[3]) - 0.065)
+        truth_radius = math.hypot(*(float(value) for value in truth_position))
+        estimated_radius = math.hypot(*(float(value) for value in result.mean[:3]))
+        clipped_dot = float(
+            np.clip(
+                np.dot(
+                    truth_position / truth_radius,
+                    result.mean[:3] / estimated_radius,
+                ),
+                -1.0,
+                1.0,
+            )
+        )
+        expected_angular_error = math.acos(clipped_dot)
+        expected_log_range_error = abs(
+            math.log(estimated_radius) - math.log(truth_radius)
+        )
+        expected_log_mass_error = abs(math.log(float(result.mean[3])) - math.log(0.065))
+        expected_coverage = (truth >= result.marginal_95_lower) & (
+            truth <= result.marginal_95_upper
+        )
+        expected_pos_std = math.hypot(*(float(value) for value in result.std[:3]))
+        expected_mass_std = float(result.std[3])
+        expected_normalized_error = 0.5 * (
+            expected_position_error / scenarios.ECHO_PASS_POS_TOL
+            + expected_mass_error / scenarios.ECHO_PASS_MASS_TOL
+        )
+        clocks = build_head_lattice()
+        true_rates = clock_rates(
+            MassConfig(truth_position.reshape(1, 3), np.array([0.065])), clocks
+        )
+        predicted_rates = clock_rates(
+            MassConfig(result.mean[:3].reshape(1, 3), result.mean[3:4]), clocks
+        )
+        true_centered = true_rates - math.fsum(
+            float(rate) for rate in true_rates
+        ) / len(true_rates)
+        predicted_centered = predicted_rates - math.fsum(
+            float(rate) for rate in predicted_rates
+        ) / len(predicted_rates)
+        expected_residual = float(
+            np.max(np.abs(predicted_centered - true_centered)) / 0.002
+        )
+
+        assert result.position_error == pytest.approx(expected_position_error)
+        assert result.mass_error == pytest.approx(expected_mass_error)
+        assert result.angular_error_rad == pytest.approx(expected_angular_error)
+        assert result.log_range_error == pytest.approx(expected_log_range_error)
+        assert result.log_mass_error == pytest.approx(expected_log_mass_error)
+        np.testing.assert_array_equal(result.marginal_95_covered, expected_coverage)
+        assert result.pos_std == pytest.approx(expected_pos_std)
+        assert result.mass_std == pytest.approx(expected_mass_std)
+        assert result.normalized_error == pytest.approx(expected_normalized_error)
+        assert result.residual_over_noise == pytest.approx(expected_residual)
+
     def test_arbitrary_result_is_a_deeply_immutable_snapshot(self) -> None:
         result = scenarios.run_echolocation_case(
             truth_position=self._truth_position(),
@@ -718,6 +779,19 @@ class TestArbitraryEcholocationCase:
                 n_observations=1,
             )
 
+    def test_arbitrary_truth_rejects_position_one_ulp_inside_exterior(self) -> None:
+        radius_inside = np.nextafter(2.0 * ECHO_R_HEAD, -np.inf)
+
+        with pytest.raises(ValueError, match="exterior"):
+            scenarios.run_echolocation_case(
+                truth_position=np.array([radius_inside, 0.0, 0.0]),
+                truth_mass=0.065,
+                observation_seed=101,
+                inference_seed=202,
+                n_particles=4,
+                n_observations=1,
+            )
+
     @pytest.mark.parametrize(
         ("truth_mass", "message"),
         [
@@ -743,41 +817,50 @@ class TestArbitraryEcholocationCase:
                 n_observations=1,
             )
 
-    def test_fixed_echo_wrapper_preserves_exact_legacy_fields(self) -> None:
-        generic = scenarios.run_echolocation_case(
-            truth_position=echo_mass_position(2.0),
-            truth_mass=ECHO_M_TRUE,
-            observation_seed=7,
-            inference_seed=7,
+    def test_fixed_echo_wrapper_matches_frozen_c6e0744_small_run(self) -> None:
+        fixed = run_echolocation_3d(
+            seed=7,
+            range_r=2.0,
             n_particles=30,
             n_observations=1,
+            ess_target=0.9,
+            rejuvenation_steps=1,
+            proposal_scale=1.5,
         )
-        fixed = run_echolocation_3d(
-            seed=7, range_r=2.0, n_particles=30, n_observations=1
-        )
-
-        expected_fields = {
-            "seed",
-            "range_r",
-            "passed",
-            "mean",
-            "std",
-            "position_error",
-            "mass_error",
-            "pos_std",
-            "mass_std",
-            "covered_3sigma",
-            "residual_over_noise",
-            "normalized_error",
-            "forward_model_evaluations",
-            "ess_target",
-            "rejuvenation_steps",
-            "proposal_scale",
+        expected = {
+            "seed": 7,
+            "range_r": 2.0,
+            "passed": True,
+            "mean": np.array(
+                [
+                    1.1365954774440301,
+                    1.5184478329925997,
+                    3.020741480218203,
+                    0.08909366235239165,
+                ]
+            ),
+            "std": np.array(
+                [
+                    0.10900237729155642,
+                    0.1002304279955645,
+                    0.15431612366017894,
+                    0.009787139507277973,
+                ]
+            ),
+            "position_error": 0.1592597117326266,
+            "mass_error": 0.009093662352391646,
+            "pos_std": 0.21387174421341518,
+            "mass_std": 0.009787139507277973,
+            "covered_3sigma": True,
+            "residual_over_noise": 1.3604684572596781,
+            "normalized_error": 0.1933006352712089,
+            "forward_model_evaluations": 2094,
+            "ess_target": 0.9,
+            "rejuvenation_steps": 1,
+            "proposal_scale": 1.5,
         }
-        assert set(fixed) == expected_fields
-        np.testing.assert_array_equal(fixed["mean"], generic.mean)
-        np.testing.assert_array_equal(fixed["std"], generic.std)
-        assert fixed["range_r"] == 2.0
-        assert generic.range_r == pytest.approx(2.0)
-        for field in expected_fields - {"seed", "range_r", "mean", "std"}:
-            assert fixed[field] == getattr(generic, field)
+        assert set(fixed) == set(expected)
+        np.testing.assert_array_equal(fixed["mean"], expected["mean"])
+        np.testing.assert_array_equal(fixed["std"], expected["std"])
+        for field in set(expected) - {"mean", "std"}:
+            assert fixed[field] == expected[field]
