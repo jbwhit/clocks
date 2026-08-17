@@ -39,6 +39,22 @@ def _central_difference(
     return np.column_stack(columns)
 
 
+def _independent_dimensionless_jacobian(
+    position: NDArray[np.float64], mass: float, clocks: ClockArray
+) -> NDArray[np.float64]:
+    position_jacobian, mass_jacobian = contrast_jacobian(position, mass, clocks)
+    basis = tangent_basis(position)
+    radius = np.linalg.norm(position)
+    return np.column_stack(
+        (
+            position_jacobian @ (radius * basis[:, 0]),
+            position_jacobian @ (radius * basis[:, 1]),
+            position_jacobian @ position,
+            mass_jacobian * mass,
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "position",
     [
@@ -234,6 +250,32 @@ def test_local_identifiability_scales_with_count_and_noise() -> None:
     assert_allclose(half_noise.singular_values, 2.0 * baseline.singular_values)
 
 
+def test_scaled_jacobian_and_singular_values_match_independent_oracles() -> None:
+    position = np.array([5.5, -3.0, 4.0])
+    mass = 0.045
+    clocks = build_head_lattice()
+    n_observations = 91
+    noise_std = 0.002
+    result = local_identifiability(
+        position,
+        mass,
+        clocks,
+        n_observations=n_observations,
+        noise_std=noise_std,
+    )
+    dimensionless = _independent_dimensionless_jacobian(position, mass, clocks)
+    expected_scaled = np.sqrt(n_observations) / noise_std * dimensionless
+    expected_singular_values = np.linalg.svd(result.scaled_jacobian, compute_uv=False)
+
+    assert_allclose(result.scaled_jacobian, expected_scaled, rtol=2e-15, atol=2e-15)
+    assert_allclose(
+        result.singular_values,
+        expected_singular_values,
+        rtol=2e-15,
+        atol=2e-15,
+    )
+
+
 def test_rank_uses_the_documented_machine_precision_tolerance() -> None:
     result = local_identifiability(
         np.array([3.0, 4.0, 7.0]),
@@ -287,6 +329,15 @@ def test_condition_number_and_crlb_are_only_available_at_full_rank() -> None:
     assert full_rank.condition_number is not None
     assert np.isfinite(full_rank.condition_number)
     assert full_rank.condition_number >= 1.0
+    expected_scaled = (
+        np.sqrt(80)
+        / 0.001
+        * _independent_dimensionless_jacobian(position, 0.08, build_head_lattice())
+    )
+    expected_singular_values = np.linalg.svd(expected_scaled, compute_uv=False)
+    assert full_rank.condition_number == pytest.approx(
+        expected_singular_values[0] / expected_singular_values[-1], rel=2e-15
+    )
     assert full_rank.crlb_std is not None
     expected_covariance = np.linalg.inv(full_rank.fisher_information)
     assert_allclose(
@@ -302,24 +353,37 @@ def test_condition_number_and_crlb_are_only_available_at_full_rank() -> None:
 
 
 def test_weakest_mode_loadings_are_grouped_squared_components() -> None:
+    position = np.array([3.0, 4.0, 7.0])
+    clocks = build_head_lattice()
     result = local_identifiability(
-        np.array([3.0, 4.0, 7.0]),
+        position,
         0.08,
-        build_head_lattice(),
+        clocks,
         n_observations=80,
         noise_std=0.001,
     )
     loadings = result.weakest_mode_loadings
+    expected_scaled = (
+        np.sqrt(80)
+        / 0.001
+        * _independent_dimensionless_jacobian(position, 0.08, clocks)
+    )
+    _, _, expected_right_vectors = np.linalg.svd(expected_scaled, full_matrices=False)
+    expected_weakest = expected_right_vectors[-1]
+    direction_error = min(
+        np.linalg.norm(result.weakest_direction - expected_weakest),
+        np.linalg.norm(result.weakest_direction + expected_weakest),
+    )
+    expected_squared = np.square(expected_weakest)
+    expected_squared /= expected_squared.sum()
 
+    assert direction_error <= 2e-15
+    assert set(loadings) == {"angular", "log_range", "log_mass"}
     assert loadings["angular"] == pytest.approx(
-        float(np.sum(result.weakest_direction[:2] ** 2)), abs=2e-15
+        float(np.sum(expected_squared[:2])), abs=2e-15
     )
-    assert loadings["log_range"] == pytest.approx(
-        float(result.weakest_direction[2] ** 2), abs=2e-15
-    )
-    assert loadings["log_mass"] == pytest.approx(
-        float(result.weakest_direction[3] ** 2), abs=2e-15
-    )
+    assert loadings["log_range"] == pytest.approx(float(expected_squared[2]), abs=2e-15)
+    assert loadings["log_mass"] == pytest.approx(float(expected_squared[3]), abs=2e-15)
     assert all(value >= 0.0 for value in loadings.values())
     assert sum(loadings.values()) == pytest.approx(1.0, abs=2e-15)
 
