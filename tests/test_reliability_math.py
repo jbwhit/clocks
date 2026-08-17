@@ -486,14 +486,37 @@ def test_complete_scaled_jacobian_underflow_is_rejected() -> None:
     dimensionless = _independent_dimensionless_jacobian(position, 0.08, clocks)
 
     assert np.any(dimensionless != 0.0)
-    with pytest.raises(PhysicsDomainError, match="underflowed completely"):
-        local_identifiability(
-            position,
-            0.08,
-            clocks,
-            n_observations=1,
-            noise_std=np.finfo(np.float64).max,
-        )
+    previous_errors = np.seterr(under="warn")
+    try:
+        with pytest.raises(PhysicsDomainError, match="underflowed completely"):
+            local_identifiability(
+                position,
+                0.08,
+                clocks,
+                n_observations=1,
+                noise_std=np.finfo(np.float64).max,
+            )
+    finally:
+        np.seterr(**previous_errors)
+
+
+def test_unrepresentable_subnormal_fisher_information_is_rejected() -> None:
+    clocks = ClockArray(build_head_lattice().positions[:2])
+
+    previous_errors = np.seterr(under="warn")
+    try:
+        with pytest.raises(
+            PhysicsDomainError, match="Fisher information is not representably PSD"
+        ):
+            local_identifiability(
+                np.array([3.0, 4.0, 7.0]),
+                0.08,
+                clocks,
+                n_observations=80,
+                noise_std=2.5588262897963646e159,
+            )
+    finally:
+        np.seterr(**previous_errors)
 
 
 def test_underdetermined_array_reports_implicit_zero_and_matching_null() -> None:

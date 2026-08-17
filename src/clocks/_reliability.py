@@ -239,7 +239,7 @@ def _stable_fisher_information(
     scale = float(np.max(np.abs(scaled_jacobian)))
     if scale == 0.0:
         return np.zeros((scaled_jacobian.shape[1], scaled_jacobian.shape[1]))
-    with np.errstate(invalid="ignore", over="ignore"):
+    with np.errstate(invalid="ignore", over="ignore", under="ignore"):
         normalized_jacobian = scaled_jacobian / scale
         normalized_fisher = normalized_jacobian.T @ normalized_jacobian
         fisher_information = (normalized_fisher * scale) * scale
@@ -249,6 +249,19 @@ def _stable_fisher_information(
         )
     if not np.all(np.isfinite(fisher_information)):
         raise PhysicsDomainError("Fisher information must be finite")
+    if not np.array_equal(fisher_information, fisher_information.T):
+        raise PhysicsDomainError("Fisher information must be symmetric")
+    information_scale = float(np.max(np.abs(fisher_information)))
+    normalized_information = fisher_information / information_scale
+    minimum_eigenvalue = float(np.linalg.eigvalsh(normalized_information)[0])
+    operation_scale = max(
+        1.0, float(np.max(np.sum(np.abs(normalized_information), axis=1)))
+    )
+    psd_tolerance = (
+        np.finfo(np.float64).eps * max(normalized_information.shape) * operation_scale
+    )
+    if minimum_eigenvalue < -psd_tolerance:
+        raise PhysicsDomainError("Fisher information is not representably PSD")
     return fisher_information
 
 
@@ -270,7 +283,7 @@ def local_identifiability(
         raise ValueError("n_observations is too large") from error
     if not math.isfinite(scale):
         raise ValueError("sqrt(n_observations) / noise_std must be finite")
-    with np.errstate(invalid="ignore", over="ignore"):
+    with np.errstate(invalid="ignore", over="ignore", under="ignore"):
         scaled_jacobian = scale * jacobian
     if not np.all(np.isfinite(scaled_jacobian)):
         raise PhysicsDomainError("scaled contrast derivatives must be finite")
