@@ -322,7 +322,11 @@ class EchoRunResult(TypedDict):
 
 @dataclass(frozen=True)
 class EcholocationCaseResult:
-    """Immutable diagnostics for one arbitrary frozen echolocation truth."""
+    """Immutable diagnostics for one arbitrary frozen echolocation truth.
+
+    A zero Cartesian posterior mean has no defined direction or range, represented
+    by ``angular_error_rad=nan`` and ``log_range_error=inf``.
+    """
 
     truth_position: NDArray[np.float64]
     truth_mass: float
@@ -420,6 +424,16 @@ def _weighted_quantile(
         return float(sorted_values[-1])
     index = int(np.searchsorted(cumulative, q * total, side="left"))
     return float(sorted_values[min(index, len(sorted_values) - 1)])
+
+
+def _nonnegative_seed(name: str, value: object) -> int:
+    """Return a non-bool, nonnegative built-in integer seed."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+        raise ValueError(f"{name} must be a nonnegative integer")
+    seed = int(value)
+    if seed < 0:
+        raise ValueError(f"{name} must be a nonnegative integer")
+    return seed
 
 
 def _center(rates: NDArray[np.floating]) -> NDArray[np.floating]:
@@ -579,6 +593,8 @@ def run_echolocation_case(
     proposal_scale: float = ECHO_PROPOSAL_SCALE,
 ) -> EcholocationCaseResult:
     """Run echolocation for one arbitrary exterior point-mass truth."""
+    observation_seed = _nonnegative_seed("observation_seed", observation_seed)
+    inference_seed = _nonnegative_seed("inference_seed", inference_seed)
     clock_array = build_head_lattice()
     position, mass, range_r = _validate_echolocation_truth(
         truth_position, truth_mass, clock_array
@@ -629,6 +645,9 @@ def _run_validated_echolocation_case(
         rejuvenation_steps=rejuvenation_steps,
         proposal_scale=proposal_scale,
     )
+    posterior_forward_batch = pf.forward_model_batch
+    if posterior_forward_batch is None:
+        raise ValueError("scenario filters require a batch forward model")
     evaluation_count = _instrument_batch_forward(pf)
     for obs in filter_observations:
         pf.update(obs)
@@ -657,23 +676,48 @@ def _run_validated_echolocation_case(
     position_error = float(np.linalg.norm(mean[:3] - truth[:3]))
     mass_error = float(error[3])
     estimated_radius = math.hypot(*(float(component) for component in mean[:3]))
-    if estimated_radius <= 0.0 or not math.isfinite(estimated_radius):
-        raise RuntimeError("posterior mean position must have a finite positive norm")
+    if not math.isfinite(estimated_radius):
+        raise RuntimeError("posterior mean position must have a finite norm")
     if mean[3] <= 0.0 or not math.isfinite(float(mean[3])):
         raise RuntimeError("posterior mean mass must be finite and positive")
-    truth_direction = truth_position / (range_r * ECHO_R_HEAD)
-    estimate_direction = mean[:3] / estimated_radius
-    cosine = float(np.clip(np.dot(truth_direction, estimate_direction), -1.0, 1.0))
-    angular_error_rad = math.acos(cosine)
-    log_range_error = abs(math.log(estimated_radius) - math.log(range_r * ECHO_R_HEAD))
+    truth_radius = math.hypot(*(float(component) for component in truth_position))
+    if estimated_radius == 0.0:
+        angular_error_rad = math.nan
+        log_range_error = math.inf
+    else:
+        truth_direction = truth_position / truth_radius
+        estimate_direction = mean[:3] / estimated_radius
+        cross_norm = math.hypot(
+            *(
+                float(component)
+                for component in np.cross(estimate_direction, truth_direction)
+            )
+        )
+        cosine = float(np.clip(np.dot(estimate_direction, truth_direction), -1.0, 1.0))
+        angular_error_rad = math.atan2(cross_norm, cosine)
+        log_range_error = abs(math.log(estimated_radius) - math.log(truth_radius))
     log_mass_error = abs(math.log(float(mean[3])) - math.log(truth_mass))
-    predicted_rates = clock_rates(
-        MassConfig(positions=mean[:3].reshape(1, 3), masses=mean[3:4]),
-        clock_array,
+    terminal_predictions = real_float_array(
+        "terminal particle predictions",
+        posterior_forward_batch(terminal_state.particles),
     )
-    predicted_centered = _center(predicted_rates)
+    expected_prediction_shape = (
+        len(terminal_state.particles),
+        len(clock_array.positions) - 1,
+    )
+    if terminal_predictions.shape != expected_prediction_shape:
+        raise ValueError(
+            "terminal particle predictions must have shape "
+            f"{expected_prediction_shape}, got {terminal_predictions.shape}"
+        )
+    if not np.all(np.isfinite(terminal_predictions)):
+        raise ValueError("terminal particle predictions must be finite")
+    posterior_prediction = np.average(
+        terminal_predictions, weights=terminal_state.weights, axis=0
+    )
+    true_contrasts = contrast_matrix(len(clock_array.positions)) @ sim.true_rates
     residual = float(
-        np.max(np.abs(predicted_centered - _center(sim.true_rates)))
+        np.max(np.abs(posterior_prediction - true_contrasts))
         / sim.noise.observation_std
     )
     return EcholocationCaseResult(
@@ -743,6 +787,14 @@ def run_echolocation_3d(
         rejuvenation_steps=rejuvenation_steps,
         proposal_scale=proposal_scale,
     )
+    predicted_rates = clock_rates(
+        MassConfig(positions=result.mean[:3].reshape(1, 3), masses=result.mean[3:4]),
+        clock_array,
+    )
+    true_rates = clock_rates(echo_mass_config(range_r), clock_array)
+    legacy_residual = float(
+        np.max(np.abs(_center(predicted_rates) - _center(true_rates))) / ECHO_NOISE_STD
+    )
     return EchoRunResult(
         seed=seed,
         range_r=range_r,
@@ -754,7 +806,7 @@ def run_echolocation_3d(
         pos_std=result.pos_std,
         mass_std=result.mass_std,
         covered_3sigma=result.covered_3sigma,
-        residual_over_noise=result.residual_over_noise,
+        residual_over_noise=legacy_residual,
         normalized_error=result.normalized_error,
         forward_model_evaluations=result.forward_model_evaluations,
         ess_target=result.ess_target,

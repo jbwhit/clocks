@@ -47,6 +47,36 @@ def _load_scan(script_name: str) -> ModuleType:
     return module
 
 
+class _TerminalStateEchoFilter:
+    """Minimal filter double retaining a caller-supplied terminal state."""
+
+    ess_target = 0.9
+    rejuvenation_steps = 1
+    proposal_scale = 1.5
+
+    def __init__(
+        self,
+        state: ParticleState,
+        forward_model_batch: object,
+    ) -> None:
+        self.state = state
+        self.forward_model_batch = forward_model_batch
+
+    def update(self, observation: object) -> ParticleState:
+        assert callable(self.forward_model_batch)
+        self.forward_model_batch(self.state.particles)
+        return self.state
+
+    def estimate(self) -> dict[str, object]:
+        mean = np.average(self.state.particles, weights=self.state.weights, axis=0)
+        variance = np.average(
+            (self.state.particles - mean) ** 2,
+            weights=self.state.weights,
+            axis=0,
+        )
+        return {"mean": mean, "std": np.sqrt(variance), "ess": 1.0}
+
+
 def test_scan_raw_study_paths_are_seed_block_specific() -> None:
     multi = _load_scan("scan_multi_mass_2d")
     echo = _load_scan("scan_echolocation_range")
@@ -552,6 +582,8 @@ class TestArbitraryEcholocationCase:
         simulation_noise: list[float] = []
         inference_seeds: list[int] = []
         inference_noise: list[object] = []
+        built_filters: list[object] = []
+        raw_forward_batches: list[object] = []
         real_simulate = scenarios.simulate
         real_build_filter = scenarios.build_echolocation_filter
 
@@ -565,7 +597,10 @@ class TestArbitraryEcholocationCase:
         def spy_build_filter(seed: int, **kwargs: object):
             inference_seeds.append(seed)
             inference_noise.append(kwargs["noise_std"])
-            return real_build_filter(seed, **kwargs)
+            particle_filter = real_build_filter(seed, **kwargs)
+            built_filters.append(particle_filter)
+            raw_forward_batches.append(particle_filter.forward_model_batch)
+            return particle_filter
 
         monkeypatch.setattr(scenarios, "simulate", spy_simulate)
         monkeypatch.setattr(scenarios, "build_echolocation_filter", spy_build_filter)
@@ -573,8 +608,8 @@ class TestArbitraryEcholocationCase:
         result = scenarios.run_echolocation_case(
             truth_position=self._truth_position(),
             truth_mass=0.065,
-            observation_seed=101,
-            inference_seed=202,
+            observation_seed=np.int64(101),
+            inference_seed=np.int32(202),
             n_particles=40,
             n_observations=1,
             noise_std=0.002,
@@ -584,8 +619,12 @@ class TestArbitraryEcholocationCase:
         assert simulation_noise == [0.002]
         assert inference_seeds == [202]
         assert inference_noise == [0.002]
+        assert type(simulation_seeds[0]) is int
+        assert type(inference_seeds[0]) is int
         assert result.observation_seed == 101
         assert result.inference_seed == 202
+        assert type(result.observation_seed) is int
+        assert type(result.inference_seed) is int
         assert result.n_particles == 40
         assert result.n_observations == 1
         assert result.noise_std == 0.002
@@ -626,7 +665,17 @@ class TestArbitraryEcholocationCase:
                 1.0,
             )
         )
-        expected_angular_error = math.acos(clipped_dot)
+        truth_direction = truth_position / truth_radius
+        estimated_direction = result.mean[:3] / estimated_radius
+        expected_angular_error = math.atan2(
+            math.hypot(
+                *(
+                    float(value)
+                    for value in np.cross(estimated_direction, truth_direction)
+                )
+            ),
+            clipped_dot,
+        )
         expected_log_range_error = abs(
             math.log(estimated_radius) - math.log(truth_radius)
         )
@@ -644,17 +693,16 @@ class TestArbitraryEcholocationCase:
         true_rates = clock_rates(
             MassConfig(truth_position.reshape(1, 3), np.array([0.065])), clocks
         )
-        predicted_rates = clock_rates(
-            MassConfig(result.mean[:3].reshape(1, 3), result.mean[3:4]), clocks
+        true_contrasts = contrast_matrix(len(clocks.positions)) @ true_rates
+        terminal_state = built_filters[0].state  # type: ignore[attr-defined]
+        raw_forward_batch = raw_forward_batches[0]
+        assert callable(raw_forward_batch)
+        terminal_predictions = raw_forward_batch(terminal_state.particles)
+        posterior_prediction = np.average(
+            terminal_predictions, weights=terminal_state.weights, axis=0
         )
-        true_centered = true_rates - math.fsum(
-            float(rate) for rate in true_rates
-        ) / len(true_rates)
-        predicted_centered = predicted_rates - math.fsum(
-            float(rate) for rate in predicted_rates
-        ) / len(predicted_rates)
         expected_residual = float(
-            np.max(np.abs(predicted_centered - true_centered)) / 0.002
+            np.max(np.abs(posterior_prediction - true_contrasts)) / 0.002
         )
 
         assert result.position_error == pytest.approx(expected_position_error)
@@ -667,6 +715,160 @@ class TestArbitraryEcholocationCase:
         assert result.mass_std == pytest.approx(expected_mass_std)
         assert result.normalized_error == pytest.approx(expected_normalized_error)
         assert result.residual_over_noise == pytest.approx(expected_residual)
+
+    @pytest.mark.parametrize(
+        "invalid_seed",
+        [None, True, 1.5, -1, 3 + 0.0j],
+        ids=("none", "bool", "float", "negative", "complex"),
+    )
+    @pytest.mark.parametrize("seed_name", ["observation_seed", "inference_seed"])
+    def test_arbitrary_case_rejects_invalid_seeds_without_warnings(
+        self, seed_name: str, invalid_seed: object
+    ) -> None:
+        arguments: dict[str, object] = {
+            "truth_position": self._truth_position(),
+            "truth_mass": 0.065,
+            "observation_seed": 101,
+            "inference_seed": 202,
+            "n_particles": 4,
+            "n_observations": 1,
+        }
+        arguments[seed_name] = invalid_seed
+
+        with pytest.raises(ValueError, match=rf"{seed_name}.*nonnegative integer"):
+            scenarios.run_echolocation_case(**arguments)
+
+    def test_arbitrary_case_survives_nonconvex_invalid_cartesian_mean(self) -> None:
+        truth_direction = np.array([1.0, 2.0, 3.0])
+        truth_direction /= np.linalg.norm(truth_direction)
+
+        result = scenarios.run_echolocation_case(
+            truth_position=truth_direction * (8.0 * ECHO_R_HEAD),
+            truth_mass=0.065,
+            observation_seed=2,
+            inference_seed=102,
+            n_particles=10,
+            n_observations=1,
+        )
+
+        assert np.isfinite(result.residual_over_noise)
+        assert result.forward_model_evaluations == 59
+
+    def test_predictive_residual_uses_normalized_terminal_weights(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        truth_position = self._truth_position()
+        clocks = build_head_lattice()
+        truth_rates = clock_rates(
+            MassConfig(truth_position.reshape(1, 3), np.array([0.065])), clocks
+        )
+        truth_contrasts = contrast_matrix(len(clocks.positions)) @ truth_rates
+        prediction_rows = np.multiply.outer(
+            np.array([0.0, 1.0, 2.0, 3.0]), truth_contrasts
+        )
+        terminal_state = ParticleState(
+            particles=np.array(
+                [
+                    [3.5, -2.5, 4.0, 0.02],
+                    [4.0, -3.0, 4.5, 0.04],
+                    [4.5, -3.5, 5.0, 0.06],
+                    [5.0, -4.0, 5.5, 0.08],
+                ]
+            ),
+            weights=np.array([0.01, 0.01, 0.96, 0.02]),
+            observations_seen=1,
+        )
+
+        def raw_forward(particles: np.ndarray) -> np.ndarray:
+            assert len(particles) == len(prediction_rows)
+            return prediction_rows.copy()
+
+        fake_filter = _TerminalStateEchoFilter(terminal_state, raw_forward)
+        monkeypatch.setattr(
+            scenarios,
+            "build_echolocation_filter",
+            lambda *args, **kwargs: fake_filter,
+        )
+
+        result = scenarios.run_echolocation_case(
+            truth_position=truth_position,
+            truth_mass=0.065,
+            observation_seed=101,
+            inference_seed=202,
+            n_particles=4,
+            n_observations=1,
+        )
+
+        weighted_prediction = np.average(
+            prediction_rows, weights=terminal_state.weights, axis=0
+        )
+        expected = float(np.max(np.abs(weighted_prediction - truth_contrasts)) / 0.001)
+        uniform_prediction = prediction_rows.mean(axis=0)
+        uniform_residual = float(
+            np.max(np.abs(uniform_prediction - truth_contrasts)) / 0.001
+        )
+        assert result.residual_over_noise == pytest.approx(expected)
+        assert not np.isclose(expected, uniform_residual)
+        assert result.forward_model_evaluations == 4
+
+    def test_angular_error_is_exactly_zero_for_identical_directions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        truth_position = np.array([-3.0, -3.0, -1.0])
+        particle = np.append(truth_position, 0.065)
+        terminal_state = ParticleState(
+            particles=np.repeat(particle[np.newaxis, :], 4, axis=0),
+            weights=np.array([0.1, 0.2, 0.3, 0.4]),
+            observations_seen=1,
+        )
+        _, raw_forward = scenarios._make_echo_forward_models(build_head_lattice())
+        fake_filter = _TerminalStateEchoFilter(terminal_state, raw_forward)
+        monkeypatch.setattr(
+            scenarios,
+            "build_echolocation_filter",
+            lambda *args, **kwargs: fake_filter,
+        )
+
+        result = scenarios.run_echolocation_case(
+            truth_position=truth_position,
+            truth_mass=0.065,
+            observation_seed=101,
+            inference_seed=202,
+            n_particles=4,
+            n_observations=1,
+        )
+
+        assert result.angular_error_rad == 0.0
+
+    def test_zero_posterior_mean_has_explicit_undefined_direction_convention(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        terminal_state = ParticleState(
+            particles=np.array([[-4.0, 0.0, 0.0, 0.05], [4.0, 0.0, 0.0, 0.05]]),
+            weights=np.array([0.5, 0.5]),
+            observations_seen=1,
+        )
+        _, raw_forward = scenarios._make_echo_forward_models(build_head_lattice())
+        fake_filter = _TerminalStateEchoFilter(terminal_state, raw_forward)
+        monkeypatch.setattr(
+            scenarios,
+            "build_echolocation_filter",
+            lambda *args, **kwargs: fake_filter,
+        )
+
+        result = scenarios.run_echolocation_case(
+            truth_position=np.array([4.0, 4.0, 4.0]),
+            truth_mass=0.065,
+            observation_seed=101,
+            inference_seed=202,
+            n_particles=2,
+            n_observations=1,
+        )
+
+        assert math.isnan(result.angular_error_rad)
+        assert result.log_range_error == math.inf
+        assert np.isfinite(result.residual_over_noise)
+        assert result.forward_model_evaluations == 2
 
     def test_arbitrary_result_is_a_deeply_immutable_snapshot(self) -> None:
         result = scenarios.run_echolocation_case(
