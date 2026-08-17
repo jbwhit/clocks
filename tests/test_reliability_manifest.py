@@ -31,6 +31,22 @@ TEST_RANGE_R_BOUNDS = (2.0, 8.0)
 TEST_MASS_BOUNDS = (0.02, 0.08)
 TEST_R_HEAD = math.sqrt(3.0)
 TEST_CASE_COUNT = TEST_N_STRATA * TEST_CASES_PER_STRATUM
+TEST_RANGE_EDGE_HEX = (
+    "0x1.0000000000000p+1",
+    "0x1.428a2f98d728bp+1",
+    "0x1.965fea53d6e3dp+1",
+    "0x1.ffffffffffffep+1",
+    "0x1.428a2f98d728bp+2",
+    "0x1.965fea53d6e3ap+2",
+    "0x1.0000000000000p+3",
+)
+TEST_APPROVED_MANIFEST_BYTES = 189_258
+TEST_APPROVED_MANIFEST_SHA256 = (
+    "a4868fe22396987b2675c1a25f9d9b25c8a92fdec44a4402940e497dd1ba827e"
+)
+TEST_APPROVED_SEMANTIC_SHA256 = (
+    "98a08d394ca249edb307a7ac78f30d6708180f716105f09b4768f9ff2630fcd4"
+)
 
 
 @pytest.fixture(scope="module")
@@ -138,13 +154,7 @@ def test_release_population_is_realized_from_declared_log_distributions(
     mass_spec = population["mass"]
     direction_spec = population["direction"]
     edges = range_spec["stratum_edges"]
-    expected_edges = np.geomspace(
-        TEST_RANGE_R_BOUNDS[0],
-        TEST_RANGE_R_BOUNDS[1],
-        TEST_N_STRATA + 1,
-    )
-    expected_edges[0] = TEST_RANGE_R_BOUNDS[0]
-    expected_edges[-1] = TEST_RANGE_R_BOUNDS[1]
+    expected_edges = np.array([float.fromhex(value) for value in TEST_RANGE_EDGE_HEX])
 
     assert range_spec["distribution"] == "log_uniform_stratified"
     assert range_spec["stratum_allocation"] == "equal"
@@ -176,6 +186,47 @@ def test_release_population_is_realized_from_declared_log_distributions(
         )
         assert edges[stratum] <= range_r < edges[stratum + 1]
         assert TEST_MASS_BOUNDS[0] <= mass < TEST_MASS_BOUNDS[1]
+
+
+def test_release_freezes_exact_edge_bits_and_approved_canonical_bytes() -> None:
+    manifest = generate_release_manifest()
+    encoded = encode_manifest(manifest).encode("utf-8")
+    edges = manifest["population"]["range_r"]["stratum_edges"]
+
+    assert tuple(value.hex() for value in edges) == TEST_RANGE_EDGE_HEX
+    assert len(encoded) == TEST_APPROVED_MANIFEST_BYTES
+    assert hashlib.sha256(encoded).hexdigest() == TEST_APPROVED_MANIFEST_SHA256
+    assert manifest["semantic_sha256"] == TEST_APPROVED_SEMANTIC_SHA256
+
+
+@pytest.mark.parametrize("consumer", ["validate", "load"])
+@pytest.mark.parametrize("sabotage", ["raise", "one_ulp"])
+def test_frozen_manifest_consumers_are_runtime_geomspace_independent(
+    tmp_path: Path,
+    release_document: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    consumer: str,
+    sabotage: str,
+) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(_canonical_test_json(release_document), encoding="utf-8")
+
+    def fail_geomspace(*args: object, **kwargs: object) -> None:
+        raise AssertionError("frozen validation must not call numpy.geomspace")
+
+    def shifted_geomspace(*args: object, **kwargs: object) -> np.ndarray:
+        edges = np.array([float.fromhex(value) for value in TEST_RANGE_EDGE_HEX])
+        edges[3] = np.nextafter(edges[3], math.inf)
+        return edges
+
+    replacement = fail_geomspace if sabotage == "raise" else shifted_geomspace
+    monkeypatch.setattr(reliability.np, "geomspace", replacement)
+
+    if consumer == "validate":
+        validate_manifest(release_document)
+    else:
+        loaded = load_manifest(path)
+        assert loaded["semantic_sha256"] == TEST_APPROVED_SEMANTIC_SHA256
 
 
 def test_release_truths_are_in_actual_head_physical_support(
@@ -247,13 +298,7 @@ def test_release_stream_seeds_replay_the_declared_hierarchical_spawn_recipe(
 def test_release_parameters_replay_the_declared_log_uniform_draw_recipe(
     release_document: dict[str, object],
 ) -> None:
-    edges = np.geomspace(
-        TEST_RANGE_R_BOUNDS[0],
-        TEST_RANGE_R_BOUNDS[1],
-        TEST_N_STRATA + 1,
-    )
-    edges[0] = TEST_RANGE_R_BOUNDS[0]
-    edges[-1] = TEST_RANGE_R_BOUNDS[1]
+    edges = np.array([float.fromhex(value) for value in TEST_RANGE_EDGE_HEX])
 
     for case in release_document["cases"]:
         rng = np.random.Generator(np.random.PCG64(case["parameter_seed"]))

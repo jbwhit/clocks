@@ -48,6 +48,17 @@ RELIABILITY_N_STRATA = 6
 RELIABILITY_CASES_PER_STRATUM = 64
 RELIABILITY_RANGE_R_BOUNDS = (2.0, 8.0)
 RELIABILITY_MASS_BOUNDS = (0.02, 0.08)
+# Exact schema-v1 geomspace results, frozen so archived evidence never depends on
+# a future NumPy implementation or runtime rounding behavior.
+RELIABILITY_RANGE_STRATUM_EDGES = (
+    float.fromhex("0x1.0000000000000p+1"),
+    float.fromhex("0x1.428a2f98d728bp+1"),
+    float.fromhex("0x1.965fea53d6e3dp+1"),
+    float.fromhex("0x1.ffffffffffffep+1"),
+    float.fromhex("0x1.428a2f98d728bp+2"),
+    float.fromhex("0x1.965fea53d6e3ap+2"),
+    float.fromhex("0x1.0000000000000p+3"),
+)
 
 _RELIABILITY_CASE_COUNT = RELIABILITY_N_STRATA * RELIABILITY_CASES_PER_STRATUM
 _RELIABILITY_STUDY = "echolocation_population"
@@ -140,14 +151,7 @@ class _JSONObjectPairs(list[tuple[str, object]]):
 
 
 def _range_stratum_edges() -> tuple[float, ...]:
-    edges = np.geomspace(
-        RELIABILITY_RANGE_R_BOUNDS[0],
-        RELIABILITY_RANGE_R_BOUNDS[1],
-        RELIABILITY_N_STRATA + 1,
-    )
-    edges[0] = RELIABILITY_RANGE_R_BOUNDS[0]
-    edges[-1] = RELIABILITY_RANGE_R_BOUNDS[1]
-    return tuple(float(value) for value in edges)
+    return RELIABILITY_RANGE_STRATUM_EDGES
 
 
 def _seed_from_sequence(sequence: np.random.SeedSequence) -> int:
