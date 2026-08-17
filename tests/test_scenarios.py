@@ -3,6 +3,7 @@
 import importlib.util
 import inspect
 import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import ModuleType
 
@@ -33,7 +34,7 @@ from clocks._scenarios import (
     validate_echo_geometry,
 )
 from clocks.physics import _point_mass_potential_batch, clock_rates
-from clocks.types import MassConfig
+from clocks.types import MassConfig, ParticleState
 
 
 def _load_scan(script_name: str) -> ModuleType:
@@ -469,3 +470,314 @@ class TestEchoRunResult:
     def test_run_rejects_invalid_geometry(self) -> None:
         with pytest.raises(ValueError, match="exterior"):
             run_echolocation_3d(seed=0, range_r=1.0)
+
+
+class TestWeightedQuantile:
+    @pytest.mark.parametrize(
+        ("quantile", "expected"),
+        [(0.0, 10.0), (0.5, 10.0), (0.500001, 20.0), (0.8, 20.0), (1.0, 30.0)],
+    )
+    def test_quantile_exact_hand_case_with_unsorted_values(
+        self, quantile: float, expected: float
+    ) -> None:
+        actual = scenarios._weighted_quantile(
+            np.array([30.0, 10.0, 20.0]),
+            np.array([0.2, 0.5, 0.3]),
+            quantile,
+        )
+        assert actual == expected
+
+    @pytest.mark.parametrize(
+        ("quantile", "expected"),
+        [(0.0, 1.0), (0.1, 1.0), (0.100001, 2.0), (0.6, 2.0), (1.0, 3.0)],
+    )
+    def test_quantile_combines_repeated_values(
+        self, quantile: float, expected: float
+    ) -> None:
+        actual = scenarios._weighted_quantile(
+            np.array([2.0, 1.0, 3.0, 2.0]),
+            np.array([0.2, 0.1, 0.4, 0.3]),
+            quantile,
+        )
+        assert actual == expected
+
+    def test_quantile_endpoints_ignore_zero_weight_values(self) -> None:
+        values = np.array([-100.0, 4.0, 100.0])
+        weights = np.array([0.0, 2.0, 0.0])
+        assert scenarios._weighted_quantile(values, weights, 0.0) == 4.0
+        assert scenarios._weighted_quantile(values, weights, 1.0) == 4.0
+
+    @pytest.mark.parametrize(
+        "weights",
+        [
+            np.array([0.0, 0.0]),
+            np.array([1.0, -0.1]),
+            np.array([1.0, np.nan]),
+            np.array([1.0, np.inf]),
+        ],
+    )
+    def test_quantile_rejects_invalid_weights_without_warnings(
+        self, weights: np.ndarray
+    ) -> None:
+        with pytest.raises(ValueError, match="weights"):
+            scenarios._weighted_quantile(np.array([1.0, 2.0]), weights, 0.5)
+
+    @pytest.mark.parametrize(
+        ("values", "weights", "message"),
+        [
+            (np.ones((2, 1)), np.ones(2), "1-D"),
+            (np.ones(2), np.ones((2, 1)), "1-D"),
+            (np.ones(2), np.ones(3), "matching"),
+            (np.array([1.0 + 0.0j, 2.0]), np.ones(2), "real-valued"),
+            (np.ones(2), np.array([1.0 + 0.0j, 2.0]), "real-valued"),
+        ],
+    )
+    def test_quantile_rejects_complex_or_mismatched_inputs(
+        self, values: np.ndarray, weights: np.ndarray, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            scenarios._weighted_quantile(values, weights, 0.5)
+
+
+class TestArbitraryEcholocationCase:
+    @staticmethod
+    def _truth_position() -> np.ndarray:
+        return np.array([4.5, -3.75, 3.5])
+
+    def test_arbitrary_truth_runs_with_distinct_seed_provenance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        simulation_seeds: list[int | None] = []
+        simulation_noise: list[float] = []
+        inference_seeds: list[int] = []
+        inference_noise: list[object] = []
+        real_simulate = scenarios.simulate
+        real_build_filter = scenarios.build_echolocation_filter
+
+        def spy_simulate(config: object):
+            simulation_seeds.append(config.seed)  # type: ignore[attr-defined]
+            simulation_noise.append(  # type: ignore[attr-defined]
+                config.noise.observation_std
+            )
+            return real_simulate(config)
+
+        def spy_build_filter(seed: int, **kwargs: object):
+            inference_seeds.append(seed)
+            inference_noise.append(kwargs["noise_std"])
+            return real_build_filter(seed, **kwargs)
+
+        monkeypatch.setattr(scenarios, "simulate", spy_simulate)
+        monkeypatch.setattr(scenarios, "build_echolocation_filter", spy_build_filter)
+
+        result = scenarios.run_echolocation_case(
+            truth_position=self._truth_position(),
+            truth_mass=0.065,
+            observation_seed=101,
+            inference_seed=202,
+            n_particles=40,
+            n_observations=1,
+            noise_std=0.002,
+        )
+
+        assert simulation_seeds == [101]
+        assert simulation_noise == [0.002]
+        assert inference_seeds == [202]
+        assert inference_noise == [0.002]
+        assert result.observation_seed == 101
+        assert result.inference_seed == 202
+        assert result.n_particles == 40
+        assert result.n_observations == 1
+        assert result.noise_std == 0.002
+        assert result.range_r == pytest.approx(
+            np.linalg.norm(self._truth_position()) / ECHO_R_HEAD
+        )
+        assert result.mean.shape == (4,)
+        assert result.std.shape == (4,)
+        assert result.marginal_95_lower.shape == (4,)
+        assert result.marginal_95_upper.shape == (4,)
+        assert result.marginal_95_covered.shape == (4,)
+        assert result.position_error >= 0.0
+        assert result.mass_error >= 0.0
+        assert 0.0 <= result.angular_error_rad <= np.pi
+        assert result.log_range_error >= 0.0
+        assert result.log_mass_error >= 0.0
+        assert result.residual_over_noise >= 0.0
+        assert result.forward_model_evaluations > 0
+        assert result.ess_target == 0.9
+        assert result.rejuvenation_steps == 1
+        assert result.proposal_scale == 1.5
+
+    def test_arbitrary_result_is_a_deeply_immutable_snapshot(self) -> None:
+        result = scenarios.run_echolocation_case(
+            truth_position=self._truth_position(),
+            truth_mass=0.065,
+            observation_seed=101,
+            inference_seed=202,
+            n_particles=20,
+            n_observations=1,
+        )
+
+        with pytest.raises(FrozenInstanceError):
+            result.truth_mass = 0.08  # type: ignore[misc]
+        for array in (
+            result.truth_position,
+            result.mean,
+            result.std,
+            result.marginal_95_lower,
+            result.marginal_95_upper,
+            result.marginal_95_covered,
+        ):
+            assert not array.flags.writeable
+            with pytest.raises(ValueError, match="WRITEABLE"):
+                array.setflags(write=True)
+
+    def test_arbitrary_case_uses_terminal_particle_weights_for_marginal_bounds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        terminal_state = ParticleState(
+            particles=np.array(
+                [
+                    [3.5, -2.5, 4.0, 0.02],
+                    [4.0, -3.0, 4.5, 0.04],
+                    [4.5, -3.5, 5.0, 0.06],
+                    [5.0, -4.0, 5.5, 0.08],
+                ]
+            ),
+            weights=np.array([0.01, 0.01, 0.96, 0.02]),
+            observations_seen=1,
+        )
+
+        class FakeFilter:
+            ess_target = 0.9
+            rejuvenation_steps = 1
+            proposal_scale = 1.5
+            state = terminal_state
+
+            def __init__(self) -> None:
+                self.forward_model_batch = lambda particles: np.zeros(
+                    (len(particles), 26)
+                )
+
+            def update(self, observation: object) -> ParticleState:
+                assert self.forward_model_batch is not None
+                self.forward_model_batch(self.state.particles)
+                return self.state
+
+            def estimate(self) -> dict[str, object]:
+                mean = np.average(
+                    self.state.particles, weights=self.state.weights, axis=0
+                )
+                variance = np.average(
+                    (self.state.particles - mean) ** 2,
+                    weights=self.state.weights,
+                    axis=0,
+                )
+                return {"mean": mean, "std": np.sqrt(variance), "ess": 1.0}
+
+        monkeypatch.setattr(
+            scenarios, "build_echolocation_filter", lambda *args, **kwargs: FakeFilter()
+        )
+
+        result = scenarios.run_echolocation_case(
+            truth_position=self._truth_position(),
+            truth_mass=0.065,
+            observation_seed=101,
+            inference_seed=202,
+            n_particles=4,
+            n_observations=1,
+        )
+
+        np.testing.assert_array_equal(
+            result.marginal_95_lower, terminal_state.particles[2]
+        )
+        np.testing.assert_array_equal(
+            result.marginal_95_upper, terminal_state.particles[2]
+        )
+
+    @pytest.mark.parametrize(
+        ("truth_position", "message"),
+        [
+            (np.array([1.0, 2.0]), "shape"),
+            (np.ones((1, 3)), "shape"),
+            (np.array([4.0, np.nan, 4.0]), "finite"),
+            (np.array([4.0, np.inf, 4.0]), "finite"),
+            (np.array([4.0 + 0.0j, 4.0, 4.0]), "real-valued"),
+            (np.array([1.9, 1.9, 1.9]), "exterior"),
+        ],
+    )
+    def test_arbitrary_truth_rejects_invalid_positions_without_warnings(
+        self, truth_position: np.ndarray, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            scenarios.run_echolocation_case(
+                truth_position=truth_position,
+                truth_mass=0.065,
+                observation_seed=101,
+                inference_seed=202,
+                n_particles=4,
+                n_observations=1,
+            )
+
+    @pytest.mark.parametrize(
+        ("truth_mass", "message"),
+        [
+            (0.0, "positive"),
+            (-0.1, "positive"),
+            (True, "positive"),
+            (np.nan, "finite"),
+            (np.inf, "finite"),
+            (0.08 + 0.0j, "real-valued"),
+            (0.5, "weak-field"),
+        ],
+    )
+    def test_arbitrary_truth_rejects_invalid_mass_without_warnings(
+        self, truth_mass: object, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            scenarios.run_echolocation_case(
+                truth_position=np.array([2.0 * ECHO_R_HEAD, 0.0, 0.0]),
+                truth_mass=truth_mass,
+                observation_seed=101,
+                inference_seed=202,
+                n_particles=4,
+                n_observations=1,
+            )
+
+    def test_fixed_echo_wrapper_preserves_exact_legacy_fields(self) -> None:
+        generic = scenarios.run_echolocation_case(
+            truth_position=echo_mass_position(2.0),
+            truth_mass=ECHO_M_TRUE,
+            observation_seed=7,
+            inference_seed=7,
+            n_particles=30,
+            n_observations=1,
+        )
+        fixed = run_echolocation_3d(
+            seed=7, range_r=2.0, n_particles=30, n_observations=1
+        )
+
+        expected_fields = {
+            "seed",
+            "range_r",
+            "passed",
+            "mean",
+            "std",
+            "position_error",
+            "mass_error",
+            "pos_std",
+            "mass_std",
+            "covered_3sigma",
+            "residual_over_noise",
+            "normalized_error",
+            "forward_model_evaluations",
+            "ess_target",
+            "rejuvenation_steps",
+            "proposal_scale",
+        }
+        assert set(fixed) == expected_fields
+        np.testing.assert_array_equal(fixed["mean"], generic.mean)
+        np.testing.assert_array_equal(fixed["std"], generic.std)
+        assert fixed["range_r"] == 2.0
+        assert generic.range_r == pytest.approx(2.0)
+        for field in expected_fields - {"seed", "range_r", "mean", "std"}:
+            assert fixed[field] == getattr(generic, field)

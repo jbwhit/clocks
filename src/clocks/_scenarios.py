@@ -7,6 +7,7 @@ demos, scan harnesses, and acceptance tests.
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 from itertools import product
 from numbers import Integral
 from typing import TypedDict
@@ -16,6 +17,7 @@ from numpy.typing import NDArray
 from scipy.linalg import helmert
 
 from clocks._support import make_point_mass_prior_sampler, point_mass_support_mask
+from clocks._validation import finite_float, finite_float_array, real_float_array
 from clocks.api import build_particle_filter, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.inference import ParticleFilter
@@ -245,6 +247,54 @@ def validate_echo_geometry(
         )
 
 
+def _validate_echolocation_truth(
+    truth_position: object,
+    truth_mass: object,
+    clock_array: ClockArray,
+) -> tuple[NDArray[np.float64], float, float]:
+    """Validate and snapshot one exterior, weak-field 3-D truth."""
+    position = real_float_array("truth_position", truth_position)
+    if position.shape != (3,):
+        raise ValueError(f"truth_position must have shape (3,), got {position.shape}")
+    if not np.all(np.isfinite(position)):
+        raise ValueError("truth_position must contain only finite values")
+    radius = math.hypot(*(float(component) for component in position))
+    if not math.isfinite(radius):
+        raise ValueError("truth_position norm must be finite")
+    range_r = radius / ECHO_R_HEAD
+    if range_r < ECHO_MIN_RANGE_R and not math.isclose(
+        range_r,
+        ECHO_MIN_RANGE_R,
+        rel_tol=4.0 * np.finfo(np.float64).eps,
+        abs_tol=0.0,
+    ):
+        raise ValueError(
+            f"truth_position is below the exterior minimum {ECHO_MIN_RANGE_R} "
+            "circumradii"
+        )
+    if isinstance(truth_mass, (bool, np.bool_)):
+        raise ValueError("truth_mass must be a positive real-valued number")
+    mass = finite_float("truth_mass", truth_mass)
+    if mass <= 0.0:
+        raise ValueError("truth_mass must be positive")
+
+    potential, valid = _point_mass_potential_batch(
+        position.reshape(1, 1, 3), np.array([[mass]]), clock_array
+    )
+    strength = np.abs(2.0 * potential)
+    if (
+        not valid[0]
+        or not np.all(np.isfinite(strength))
+        or np.any(strength > WEAK_FIELD_LIMIT)
+    ):
+        raise ValueError(
+            "weak-field constraint violated: echo mass must produce "
+            "finite nonsingular potentials with "
+            f"|2*Phi| <= {WEAK_FIELD_LIMIT}"
+        )
+    return finite_float_array("truth_position", position, ndim=1), mass, range_r
+
+
 # Frozen 2026-08-16 from development seeds 0-11, before certification. These
 # fixed-case regression/calibration thresholds are not population guarantees.
 ECHO_PASS_POS_TOL = 1.0
@@ -273,6 +323,108 @@ class EchoRunResult(TypedDict):
     ess_target: float
     rejuvenation_steps: int
     proposal_scale: float
+
+
+@dataclass(frozen=True)
+class EcholocationCaseResult:
+    """Immutable diagnostics for one arbitrary frozen echolocation truth."""
+
+    truth_position: NDArray[np.float64]
+    truth_mass: float
+    observation_seed: int
+    inference_seed: int
+    n_particles: int
+    n_observations: int
+    noise_std: float
+    range_r: float
+    passed: bool
+    mean: NDArray[np.float64]
+    std: NDArray[np.float64]
+    marginal_95_lower: NDArray[np.float64]
+    marginal_95_upper: NDArray[np.float64]
+    marginal_95_covered: NDArray[np.bool_]
+    position_error: float
+    mass_error: float
+    pos_std: float
+    mass_std: float
+    angular_error_rad: float
+    log_range_error: float
+    log_mass_error: float
+    covered_3sigma: bool
+    residual_over_noise: float
+    normalized_error: float
+    forward_model_evaluations: int
+    ess_target: float
+    rejuvenation_steps: int
+    proposal_scale: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "truth_position",
+            finite_float_array("truth_position", self.truth_position, ndim=1),
+        )
+        for name in ("mean", "std", "marginal_95_lower", "marginal_95_upper"):
+            object.__setattr__(
+                self,
+                name,
+                finite_float_array(name, getattr(self, name), ndim=1),
+            )
+        covered = np.asarray(self.marginal_95_covered, dtype=np.bool_)
+        if covered.shape != (4,):
+            raise ValueError(
+                f"marginal_95_covered must have shape (4,), got {covered.shape}"
+            )
+        object.__setattr__(
+            self,
+            "marginal_95_covered",
+            np.frombuffer(covered.tobytes(), dtype=np.bool_),
+        )
+
+
+def _weighted_quantile(
+    values: NDArray[np.floating],
+    weights: NDArray[np.floating],
+    quantile: float,
+) -> float:
+    """Return the inverse weighted empirical CDF at ``quantile``."""
+    value_array = real_float_array("values", values)
+    weight_array = real_float_array("weights", weights)
+    if value_array.ndim != 1 or weight_array.ndim != 1:
+        raise ValueError("values and weights must be 1-D arrays")
+    if value_array.shape != weight_array.shape:
+        raise ValueError("values and weights must have matching shapes")
+    if value_array.size == 0:
+        raise ValueError("values and weights must be nonempty")
+    if not np.all(np.isfinite(value_array)):
+        raise ValueError("values must contain only finite values")
+    if not np.all(np.isfinite(weight_array)):
+        raise ValueError("weights must contain only finite values")
+    if np.any(weight_array < 0.0):
+        raise ValueError("weights must be nonnegative")
+    if isinstance(quantile, (bool, np.bool_)):
+        raise ValueError("quantile must be a real number in [0, 1]")
+    q = finite_float("quantile", quantile)
+    if not 0.0 <= q <= 1.0:
+        raise ValueError("quantile must be in [0, 1]")
+
+    positive = weight_array > 0.0
+    if not np.any(positive):
+        raise ValueError("weights must have a strictly positive total")
+    positive_values = value_array[positive]
+    positive_weights = weight_array[positive]
+    scale = float(np.max(positive_weights))
+    scaled_weights = positive_weights / scale
+    order = np.argsort(positive_values, kind="stable")
+    sorted_values = positive_values[order]
+    cumulative = np.cumsum(scaled_weights[order])
+    total = float(cumulative[-1])
+    if q == 0.0:
+        return float(sorted_values[0])
+    if q == 1.0:
+        return float(sorted_values[-1])
+    index = int(np.searchsorted(cumulative, q * total, side="left"))
+    return float(sorted_values[min(index, len(sorted_values) - 1)])
 
 
 def _center(rates: NDArray[np.floating]) -> NDArray[np.floating]:
@@ -314,23 +466,28 @@ def _make_echo_forward_models(
     return forward, forward_batch
 
 
-def make_echo_observations(
-    seed: int,
-    range_r: float,
+def _make_echolocation_observations(
     *,
-    n_observations: int = ECHO_N_OBSERVATIONS,
-    noise_std: float = ECHO_NOISE_STD,
+    truth_position: object,
+    truth_mass: object,
+    observation_seed: int,
+    n_observations: int,
+    noise_std: float,
 ) -> tuple[SimulationResult, list[Observation], list[Observation]]:
-    """Return simulation, centered display data, and likelihood contrasts."""
+    """Simulate arbitrary truth and form display and likelihood observations."""
     clock_array = build_head_lattice()
-    validate_echo_geometry(range_r, ECHO_M_TRUE, clock_array)
+    position, mass, _ = _validate_echolocation_truth(
+        truth_position, truth_mass, clock_array
+    )
     sim = simulate(
         SimulationConfig(
             clock_array=clock_array,
-            ground_truth=echo_mass_config(range_r),
+            ground_truth=MassConfig(
+                positions=position.reshape(1, 3), masses=np.array([mass])
+            ),
             noise=NoiseConfig(observation_std=noise_std),
             n_observations=n_observations,
-            seed=seed,
+            seed=observation_seed,
         )
     )
     centered = [
@@ -341,6 +498,25 @@ def make_echo_observations(
         Observation(rates=q @ obs.rates, time=obs.time) for obs in sim.observations
     ]
     return sim, centered, contrasts
+
+
+def make_echo_observations(
+    seed: int,
+    range_r: float,
+    *,
+    n_observations: int = ECHO_N_OBSERVATIONS,
+    noise_std: float = ECHO_NOISE_STD,
+) -> tuple[SimulationResult, list[Observation], list[Observation]]:
+    """Return simulation, centered display data, and likelihood contrasts."""
+    clock_array = build_head_lattice()
+    validate_echo_geometry(range_r, ECHO_M_TRUE, clock_array)
+    return _make_echolocation_observations(
+        truth_position=echo_mass_position(range_r),
+        truth_mass=ECHO_M_TRUE,
+        observation_seed=seed,
+        n_observations=n_observations,
+        noise_std=noise_std,
+    )
 
 
 def build_echolocation_filter(
@@ -396,25 +572,35 @@ def build_echolocation_filter(
     )
 
 
-def run_echolocation_3d(
-    seed: int,
-    range_r: float,
+def run_echolocation_case(
     *,
+    truth_position: object,
+    truth_mass: object,
+    observation_seed: int,
+    inference_seed: int,
     n_particles: int = ECHO_N_PARTICLES,
     n_observations: int = ECHO_N_OBSERVATIONS,
+    noise_std: float = ECHO_NOISE_STD,
     ess_target: float = ECHO_ESS_TARGET,
     rejuvenation_steps: int = ECHO_REJUVENATION_STEPS,
     proposal_scale: float = ECHO_PROPOSAL_SCALE,
-) -> EchoRunResult:
-    """One end-to-end echolocation run at a given range (in circumradii)."""
+) -> EcholocationCaseResult:
+    """Run echolocation for one arbitrary exterior point-mass truth."""
     clock_array = build_head_lattice()
-    validate_echo_geometry(range_r, ECHO_M_TRUE, clock_array)
-    sim, _, filter_observations = make_echo_observations(
-        seed, range_r, n_observations=n_observations
+    position, mass, range_r = _validate_echolocation_truth(
+        truth_position, truth_mass, clock_array
+    )
+    sim, _, filter_observations = _make_echolocation_observations(
+        truth_position=position,
+        truth_mass=mass,
+        observation_seed=observation_seed,
+        n_observations=n_observations,
+        noise_std=noise_std,
     )
     pf = build_echolocation_filter(
-        seed,
+        inference_seed,
         n_particles=n_particles,
+        noise_std=noise_std,
         ess_target=ess_target,
         rejuvenation_steps=rejuvenation_steps,
         proposal_scale=proposal_scale,
@@ -425,30 +611,71 @@ def run_echolocation_3d(
 
     est = pf.estimate()
     mean, std = est["mean"], est["std"]
-    truth = np.append(echo_mass_position(range_r), ECHO_M_TRUE)
+    terminal_state = pf.state
+    marginal_95_lower = np.array(
+        [
+            _weighted_quantile(
+                terminal_state.particles[:, index], terminal_state.weights, 0.025
+            )
+            for index in range(terminal_state.particles.shape[1])
+        ]
+    )
+    marginal_95_upper = np.array(
+        [
+            _weighted_quantile(
+                terminal_state.particles[:, index], terminal_state.weights, 0.975
+            )
+            for index in range(terminal_state.particles.shape[1])
+        ]
+    )
+    truth = np.append(position, mass)
     error = np.abs(mean - truth)
     position_error = float(np.linalg.norm(mean[:3] - truth[:3]))
     mass_error = float(error[3])
+    estimated_radius = math.hypot(*(float(component) for component in mean[:3]))
+    if estimated_radius <= 0.0 or not math.isfinite(estimated_radius):
+        raise RuntimeError("posterior mean position must have a finite positive norm")
+    if mean[3] <= 0.0 or not math.isfinite(float(mean[3])):
+        raise RuntimeError("posterior mean mass must be finite and positive")
+    truth_direction = position / (range_r * ECHO_R_HEAD)
+    estimate_direction = mean[:3] / estimated_radius
+    cosine = float(np.clip(np.dot(truth_direction, estimate_direction), -1.0, 1.0))
+    angular_error_rad = math.acos(cosine)
+    log_range_error = abs(math.log(estimated_radius) - math.log(range_r * ECHO_R_HEAD))
+    log_mass_error = abs(math.log(float(mean[3])) - math.log(mass))
     predicted_rates = clock_rates(
         MassConfig(positions=mean[:3].reshape(1, 3), masses=mean[3:4]),
         clock_array,
     )
     predicted_centered = _center(predicted_rates)
     residual = float(
-        np.max(np.abs(predicted_centered - _center(sim.true_rates))) / ECHO_NOISE_STD
+        np.max(np.abs(predicted_centered - _center(sim.true_rates)))
+        / sim.noise.observation_std
     )
-    return EchoRunResult(
-        seed=seed,
+    return EcholocationCaseResult(
+        truth_position=position,
+        truth_mass=mass,
+        observation_seed=observation_seed,
+        inference_seed=inference_seed,
+        n_particles=int(n_particles),
+        n_observations=len(sim.observations),
+        noise_std=sim.noise.observation_std,
         range_r=range_r,
         passed=bool(
             position_error <= ECHO_PASS_POS_TOL and mass_error <= ECHO_PASS_MASS_TOL
         ),
         mean=mean,
         std=std,
+        marginal_95_lower=marginal_95_lower,
+        marginal_95_upper=marginal_95_upper,
+        marginal_95_covered=(truth >= marginal_95_lower) & (truth <= marginal_95_upper),
         position_error=position_error,
         mass_error=mass_error,
         pos_std=float(np.linalg.norm(std[:3])),
         mass_std=float(std[3]),
+        angular_error_rad=angular_error_rad,
+        log_range_error=log_range_error,
+        log_mass_error=log_mass_error,
         covered_3sigma=bool(np.all(error <= 3.0 * std)),
         residual_over_noise=residual,
         normalized_error=float(
@@ -463,4 +690,48 @@ def run_echolocation_3d(
         ess_target=ess_target,
         rejuvenation_steps=rejuvenation_steps,
         proposal_scale=proposal_scale,
+    )
+
+
+def run_echolocation_3d(
+    seed: int,
+    range_r: float,
+    *,
+    n_particles: int = ECHO_N_PARTICLES,
+    n_observations: int = ECHO_N_OBSERVATIONS,
+    ess_target: float = ECHO_ESS_TARGET,
+    rejuvenation_steps: int = ECHO_REJUVENATION_STEPS,
+    proposal_scale: float = ECHO_PROPOSAL_SCALE,
+) -> EchoRunResult:
+    """One end-to-end echolocation run at a given range (in circumradii)."""
+    clock_array = build_head_lattice()
+    validate_echo_geometry(range_r, ECHO_M_TRUE, clock_array)
+    result = run_echolocation_case(
+        truth_position=echo_mass_position(range_r),
+        truth_mass=ECHO_M_TRUE,
+        observation_seed=seed,
+        inference_seed=seed,
+        n_particles=n_particles,
+        n_observations=n_observations,
+        ess_target=ess_target,
+        rejuvenation_steps=rejuvenation_steps,
+        proposal_scale=proposal_scale,
+    )
+    return EchoRunResult(
+        seed=seed,
+        range_r=range_r,
+        passed=result.passed,
+        mean=result.mean.copy(),
+        std=result.std.copy(),
+        position_error=result.position_error,
+        mass_error=result.mass_error,
+        pos_std=result.pos_std,
+        mass_std=result.mass_std,
+        covered_3sigma=result.covered_3sigma,
+        residual_over_noise=result.residual_over_noise,
+        normalized_error=result.normalized_error,
+        forward_model_evaluations=result.forward_model_evaluations,
+        ess_target=result.ess_target,
+        rejuvenation_steps=result.rejuvenation_steps,
+        proposal_scale=result.proposal_scale,
     )

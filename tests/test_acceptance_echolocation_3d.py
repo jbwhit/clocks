@@ -171,3 +171,30 @@ def test_run_and_filter_accept_only_rigorous_smc_controls() -> None:
         assert params["ess_target"].default == EXPECTED_ESS_TARGET
         assert params["rejuvenation_steps"].default == EXPECTED_REJUVENATION_STEPS
         assert params["proposal_scale"].default == EXPECTED_PROPOSAL_SCALE
+
+
+def test_arbitrary_case_api_keeps_seed_streams_and_controls_explicit() -> None:
+    params = inspect.signature(scenarios.run_echolocation_case).parameters
+
+    assert list(params) == [
+        "truth_position",
+        "truth_mass",
+        "observation_seed",
+        "inference_seed",
+        "n_particles",
+        "n_observations",
+        "noise_std",
+        "ess_target",
+        "rejuvenation_steps",
+        "proposal_scale",
+    ]
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in params.values()
+    )
+    assert params["n_particles"].default == EXPECTED_N_PARTICLES
+    assert params["n_observations"].default == EXPECTED_N_OBSERVATIONS
+    assert params["noise_std"].default == EXPECTED_NOISE_STD
+    assert params["ess_target"].default == EXPECTED_ESS_TARGET
+    assert params["rejuvenation_steps"].default == EXPECTED_REJUVENATION_STEPS
+    assert params["proposal_scale"].default == EXPECTED_PROPOSAL_SCALE
