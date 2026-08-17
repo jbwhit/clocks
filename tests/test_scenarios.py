@@ -34,8 +34,9 @@ from clocks._scenarios import (
     run_multi_mass_2d,
     validate_echo_geometry,
 )
+from clocks.inference import ParticleFilter
 from clocks.physics import _point_mass_potential_batch, clock_rates
-from clocks.types import MassConfig, ParticleState
+from clocks.types import MassConfig, Observation, ParticleState
 
 
 def _load_scan(script_name: str) -> ModuleType:
@@ -1066,3 +1067,151 @@ class TestArbitraryEcholocationCase:
         np.testing.assert_array_equal(fixed["std"], expected["std"])
         for field in set(expected) - {"mean", "std"}:
             assert fixed[field] == expected[field]
+
+    def test_fixed_echo_wrapper_matches_frozen_multi_observation_run(self) -> None:
+        """Frozen replay over several observations, verified against pre-PR main.
+
+        The single-observation replay above cannot distinguish consuming every
+        observation from consuming only the first, so on its own it would let
+        the certified 80-observation default silently collapse to one update.
+        """
+        fixed = run_echolocation_3d(
+            seed=3,
+            range_r=3.0,
+            n_particles=60,
+            n_observations=8,
+            ess_target=0.9,
+            rejuvenation_steps=1,
+            proposal_scale=1.5,
+        )
+        expected = {
+            "seed": 3,
+            "range_r": 3.0,
+            "passed": False,
+            "mean": np.array(
+                [
+                    1.5220716586782868,
+                    2.8047042691472983,
+                    5.300753194916001,
+                    0.11351651043544787,
+                ]
+            ),
+            "std": np.array(
+                [
+                    0.2330620701460182,
+                    0.338417846207634,
+                    0.49297174041279135,
+                    0.02073619325108756,
+                ]
+            ),
+            "position_error": 1.025908581114942,
+            "mass_error": 0.03351651043544787,
+            "pos_std": 0.6417676402080257,
+            "mass_std": 0.02073619325108756,
+            "covered_3sigma": True,
+            "residual_over_noise": 0.4089018343443884,
+            "normalized_error": 0.9319106710005693,
+            "forward_model_evaluations": 6616,
+            "ess_target": 0.9,
+            "rejuvenation_steps": 1,
+            "proposal_scale": 1.5,
+        }
+        assert set(fixed) == set(expected)
+        np.testing.assert_array_equal(fixed["mean"], expected["mean"])
+        np.testing.assert_array_equal(fixed["std"], expected["std"])
+        for field in set(expected) - {"mean", "std"}:
+            assert fixed[field] == expected[field]
+
+    def test_nondefault_smc_controls_reach_the_filter_builder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Assert the forwarded arguments, not the echoed ones.
+
+        ``EcholocationCaseResult`` reports the controls it was *asked* for, so a
+        runner that quietly dropped them and built a default filter would still
+        produce a result that looks correct. Only the builder's own arguments
+        distinguish the two, and only at non-default values.
+        """
+        forwarded: list[dict[str, object]] = []
+        real_build_filter = scenarios.build_echolocation_filter
+
+        def spy_build_filter(seed: int, **kwargs: object) -> ParticleFilter:
+            forwarded.append(dict(kwargs))
+            return real_build_filter(seed, **kwargs)
+
+        monkeypatch.setattr(scenarios, "build_echolocation_filter", spy_build_filter)
+        result = scenarios.run_echolocation_case(
+            truth_position=self._truth_position(),
+            truth_mass=0.065,
+            observation_seed=101,
+            inference_seed=202,
+            n_particles=7,
+            n_observations=1,
+            noise_std=0.003,
+            ess_target=0.55,
+            rejuvenation_steps=3,
+            proposal_scale=2.38,
+        )
+
+        assert forwarded == [
+            {
+                "n_particles": 7,
+                "noise_std": 0.003,
+                "ess_target": 0.55,
+                "rejuvenation_steps": 3,
+                "proposal_scale": 2.38,
+            }
+        ]
+        assert (
+            result.ess_target,
+            result.rejuvenation_steps,
+            result.proposal_scale,
+        ) != (
+            scenarios.ECHO_ESS_TARGET,
+            scenarios.ECHO_REJUVENATION_STEPS,
+            scenarios.ECHO_PROPOSAL_SCALE,
+        )
+
+    def test_every_contrast_observation_reaches_the_filter_in_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pin the update identities, not just the numbers they happen to produce.
+
+        A frozen-value replay proves the outcome; this proves the filter was fed
+        exactly the simulated contrasts, all of them, once each, in time order.
+        """
+        clocks = build_head_lattice()
+        truth_position = echo_mass_position(2.5)
+        seen: list[Observation] = []
+        real_build_filter = scenarios.build_echolocation_filter
+
+        def spy_build_filter(seed: int, **kwargs: object) -> ParticleFilter:
+            particle_filter = real_build_filter(seed, **kwargs)
+            real_update = particle_filter.update
+
+            def recording_update(observation: Observation) -> object:
+                seen.append(observation)
+                return real_update(observation)
+
+            monkeypatch.setattr(particle_filter, "update", recording_update)
+            return particle_filter
+
+        monkeypatch.setattr(scenarios, "build_echolocation_filter", spy_build_filter)
+        run_echolocation_3d(seed=5, range_r=2.5, n_particles=8, n_observations=6)
+
+        sim, _, expected_contrasts = scenarios._simulate_echolocation_observations(
+            truth_position=truth_position,
+            truth_mass=scenarios.ECHO_M_TRUE,
+            observation_seed=5,
+            n_observations=6,
+            noise_std=scenarios.ECHO_NOISE_STD,
+        )
+        assert len(sim.observations) == 6
+        assert len(seen) == 6
+        assert [observation.time for observation in seen] == [
+            float(index) for index in range(6)
+        ]
+        for actual, expected in zip(seen, expected_contrasts, strict=True):
+            np.testing.assert_array_equal(actual.rates, expected.rates)
+            assert actual.rates.shape == (len(clocks.positions) - 1,)
+            assert actual.time == expected.time

@@ -157,7 +157,16 @@ and inference streams. The analysis bootstrap uses a separate child sequence.
 The committed manifest stores the realized truth and the integer
 parameter-generation, observation-noise, and inference seeds for every case.
 Reproduction therefore does not depend on regenerating values from a future
-NumPy implementation. The document also records the generator algorithm,
+NumPy implementation. Every stream the study depends on -- parameter draws,
+observation noise, and inference -- constructs the declared `PCG64` bit
+generator explicitly rather than through `numpy.random.default_rng`, whose
+choice of bit generator NumPy documents as an implementation detail.
+
+Semantic validation and release identity are separate gates. A hand-built
+population can satisfy every declared bound and rehash consistently, so the
+frozen digest is pinned in the package and checked on both the generation and
+load paths. Validation never regenerates a stream to perform that check; the
+recorded seeds stay authoritative. The document also records the generator algorithm,
 master seed, spawn policy, package controls, population bounds, and canonical
 content hash. Semantic manifests and result artifacts contain no wall-clock
 timestamp; their bytes depend only on declared study inputs and observed
@@ -213,7 +222,8 @@ The case record contains:
 - the condition number when numerically full rank, otherwise `null`;
 - numerical rank under the documented standard SVD machine tolerance;
 - the weakest right-singular vector's squared loadings, combined into angular,
-  log-range, and log-mass contributions; and
+  log-range, and log-mass contributions, when the smallest singular value is
+  isolated and `null` otherwise; and
 - local Cramer-Rao standard deviations when the matrix is numerically full
   rank and the values are representable.
 
@@ -221,6 +231,22 @@ Singular values must be invariant to the arbitrary rotation of `t1, t2` inside
 the tangent plane. Weak-vector angular contributions are combined across both
 angular coordinates for the same reason. Fisher values are local linear
 diagnostics, not claims of global uniqueness or guaranteed posterior width.
+
+A repeated smallest singular value leaves the weak direction determined only up
+to a choice of basis inside its subspace, so the solver's arbitrary pick is
+withheld rather than published. Every case in the declared population is
+numerically rank four with a large isolation gap, so this never fires for the
+release population; it exists so that a degenerate head cannot be reported as
+informative.
+
+Numerical rank uses the standard relative SVD tolerance, floored by an estimate
+of what the floating-point contrast projection can manufacture from the raw
+derivatives' common mode. Without that floor a head whose exact contrast
+Jacobian vanishes -- coincident clocks, for instance -- reports full rank and a
+benign-looking condition number computed entirely from roundoff. The derivative
+rows are mean-centered before the contrast matrix is applied; this is exact in
+real arithmetic and removes the common mode that a floating Helmert matrix
+cannot annihilate exactly.
 
 ## Manifest and result artifacts
 

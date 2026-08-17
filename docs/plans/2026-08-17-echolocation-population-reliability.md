@@ -739,7 +739,7 @@ from clocks._reliability import load_manifest
 manifest = load_manifest(
     Path("docs/reliability/echolocation_population_v1_manifest.json")
 )
-print(manifest["manifest_sha256"])
+print(manifest["semantic_sha256"])
 print(len(manifest["cases"]))
 PY
 ```
@@ -748,6 +748,12 @@ Expected: 384 cases, exact six-by-64 allocation, and the same hash printed by
 generation.
 
 ### Step 3: Pin the manifest hash in an ordinary test
+
+The digest is already pinned in production as
+`clocks._reliability.RELEASE_SEMANTIC_SHA256`, and `require_frozen_release`
+enforces it on both the generation and load paths, so a substitute population
+cannot be consumed under the release identity even by a caller that never runs
+the test suite. This step adds the tracked-artifact half of that gate.
 
 Add a literal expected SHA-256 and prove the tracked bytes decode, validate,
 and reproduce the semantic hash. Do not regenerate cases inside the assertion

@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 from collections.abc import Callable
 from pathlib import Path
 from types import MappingProxyType
@@ -13,10 +14,13 @@ import pytest
 from numpy.testing import assert_allclose
 
 import clocks._reliability as reliability
+import clocks._rng as rng_module
+import clocks._scenarios as scenarios
 from clocks._reliability import (
     encode_manifest,
     generate_release_manifest,
     load_manifest,
+    require_frozen_release,
     validate_manifest,
     write_manifest,
 )
@@ -429,9 +433,16 @@ def test_generation_is_canonical_and_byte_stable() -> None:
     assert json.loads(first_bytes)["semantic_sha256"] == first["semantic_sha256"]
 
 
-def test_canonical_manifest_is_independent_of_runtime_numpy_version(
+def test_canonical_manifest_never_embeds_the_runtime_numpy_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Only that the version *string* is absent from the hashed payload.
+
+    This deliberately does not claim independence from NumPy's RNG behaviour:
+    patching ``np.__version__`` cannot test that. The streams are pinned instead
+    by constructing the declared bit generator explicitly -- see
+    ``test_observation_and_inference_streams_use_the_declared_bit_generator``.
+    """
     original = encode_manifest(generate_release_manifest())
     assert "numpy_version" not in json.loads(original)["generator"]
     monkeypatch.setattr(np, "__version__", "runtime-version-must-not-be-hashed")
@@ -712,6 +723,84 @@ def test_validate_manifest_rejects_case_range_mass_stratum_and_bounds(
         lambda document: document["cases"][0].__setitem__("mass", 0.081),
         r"cases\[0\]\.mass",
     )
+
+
+def test_non_final_stratum_upper_edge_is_exclusive_at_the_exact_edge(
+    release_document: dict[str, object],
+) -> None:
+    """Pin the declared half-open boundary at the edge itself.
+
+    Rejecting 4.0 from stratum 0 only shows the range is checked at all; the
+    boundary policy is only pinned by the edge value, which must land in the
+    next stratum and nowhere else.
+    """
+    edge = float.fromhex(TEST_RANGE_EDGE_HEX[1])
+
+    def set_first_case_range(document: dict[str, object], value: float) -> None:
+        case = document["cases"][0]
+        case["range_r"] = value
+        case["position"] = [
+            component * value * TEST_R_HEAD for component in case["direction"]
+        ]
+
+    _assert_invalid(
+        release_document,
+        lambda document: set_first_case_range(document, edge),
+        r"cases\[0\]\.range_r.*stratum",
+    )
+    # One ulp below the edge is the last value stratum 0 admits.
+    inside = copy.deepcopy(release_document)
+    set_first_case_range(inside, math.nextafter(edge, -math.inf))
+    inside["semantic_sha256"] = _semantic_sha256(inside)
+    validate_manifest(inside)
+
+
+def test_validate_manifest_rejects_negative_zero_float_aliases(
+    release_document: dict[str, object],
+) -> None:
+    """Negative zero would give one population two canonical forms and hashes."""
+    _assert_invalid(
+        release_document,
+        lambda document: document["cases"][0]["direction"].__setitem__(0, -0.0),
+        r"cases\[0\]\.direction\[0\].*negative zero",
+    )
+    _assert_invalid(
+        release_document,
+        lambda document: document["head"].__setitem__("track_offset", -0.0),
+        r"head\.track_offset.*negative zero",
+    )
+
+
+def test_frozen_release_identity_rejects_a_different_valid_population(
+    release_document: dict[str, object], tmp_path: Path
+) -> None:
+    """Semantic validity is not identity.
+
+    A hand-edited population can stay inside every declared bound and rehash
+    consistently. Only the pinned digest distinguishes the preregistered
+    population from a plausible substitute wearing its name.
+    """
+    substitute = copy.deepcopy(release_document)
+    case = substitute["cases"][0]
+    case["mass"] = math.nextafter(case["mass"], math.inf)
+    substitute["semantic_sha256"] = _semantic_sha256(substitute)
+
+    validate_manifest(substitute)  # still semantically valid ...
+    with pytest.raises(ValueError, match="reserved for the frozen population"):
+        require_frozen_release(substitute)  # ... but not the frozen population
+
+    path = tmp_path / "manifest.json"
+    path.write_text(_canonical_test_json(substitute), encoding="utf-8")
+    with pytest.raises(ValueError, match="reserved for the frozen population"):
+        load_manifest(path)
+
+
+def test_generated_release_matches_the_pinned_frozen_digest() -> None:
+    manifest = generate_release_manifest()
+
+    assert reliability.RELEASE_SEMANTIC_SHA256 == TEST_APPROVED_SEMANTIC_SHA256
+    assert manifest["semantic_sha256"] == TEST_APPROVED_SEMANTIC_SHA256
+    require_frozen_release(manifest)
 
 
 def test_validate_manifest_accepts_explicit_final_range_and_mass_endpoints(
@@ -1170,3 +1259,74 @@ def test_write_manifest_cleans_temporary_file_if_atomic_replace_fails(
 
     assert path.read_bytes() == sentinel
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_write_manifest_fsyncs_the_file_then_replaces_then_fsyncs_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Durability needs both fsyncs, in that order.
+
+    Flushing the temporary file makes its *contents* durable; the rename that
+    publishes it lives in the parent directory and survives power loss only if
+    that directory is fsynced too. Ordering matters: syncing the directory
+    before the replace would make a rename that had not happened yet durable.
+    """
+    path = tmp_path / "manifest.json"
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def recording_fsync(descriptor: int) -> None:
+        events.append("fsync-directory" if os.path.isdir(descriptor) else "fsync-file")
+        real_fsync(descriptor)
+
+    def recording_replace(source: object, destination: object) -> None:
+        events.append("replace")
+        real_replace(source, destination)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(reliability.os, "fsync", recording_fsync)
+    monkeypatch.setattr(reliability.os, "replace", recording_replace)
+    write_manifest(path, generate_release_manifest())
+
+    assert events == ["fsync-file", "replace", "fsync-directory"]
+    assert load_manifest(path)["semantic_sha256"] == TEST_APPROVED_SEMANTIC_SHA256
+
+
+def test_observation_and_inference_streams_use_the_declared_bit_generator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The manifest declares PCG64, so nothing may fall back to default_rng.
+
+    ``numpy.random.default_rng`` documents its bit generator as an
+    implementation detail, so archived seeds would stop reproducing archived
+    observations if NumPy ever changed it -- silently, and only for runs made
+    after the change.
+    """
+    constructed: list[object] = []
+    real_pcg64 = np.random.PCG64
+
+    def recording_pcg64(seed: object = None) -> np.random.BitGenerator:
+        constructed.append(seed)
+        return real_pcg64(seed)
+
+    def reject_default_rng(*args: object, **kwargs: object) -> None:
+        raise AssertionError("study streams must construct PCG64 explicitly")
+
+    monkeypatch.setattr(rng_module.np.random, "PCG64", recording_pcg64)
+    monkeypatch.setattr(np.random, "default_rng", reject_default_rng)
+
+    result = scenarios.run_echolocation_case(
+        truth_position=np.array([4.5, -3.75, 3.5]),
+        truth_mass=0.065,
+        observation_seed=101,
+        inference_seed=202,
+        n_particles=4,
+        n_observations=1,
+    )
+
+    assert rng_module.BIT_GENERATOR_NAME == "PCG64"
+    assert reliability._GENERATOR_METADATA["bit_generator"] == "PCG64"
+    # Exactly the two declared streams, seeded with exactly the two given seeds.
+    assert constructed == [101, 202]
+    assert result.observation_seed == 101
+    assert result.inference_seed == 202

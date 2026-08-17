@@ -60,6 +60,12 @@ def _independent_dimensionless_jacobian(
 def _independent_stable_contrast_jacobian(
     position: NDArray[np.float64], mass: float, clocks: ClockArray
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Scalar-loop oracle: contrasts of the mean-removed clock-rate derivatives.
+
+    Contrast rows sum to zero, so removing the across-clock mean changes nothing
+    in real arithmetic. The mean is taken with ``math.fsum`` so this oracle does
+    not simply repeat production's summation order.
+    """
     position_rows = []
     mass_rows = []
     for clock in clocks.positions:
@@ -71,8 +77,21 @@ def _independent_stable_contrast_jacobian(
         position_scale = -((mass / distance) / rate) / distance
         position_rows.append(position_scale * (difference / distance))
         mass_rows.append(-(1.0 / distance) / rate)
-    contrasts = contrast_matrix(len(clocks.positions))
-    return contrasts @ np.array(position_rows), contrasts @ np.array(mass_rows)
+    count = len(clocks.positions)
+    position_array = np.array(position_rows)
+    mass_array = np.array(mass_rows)
+    position_mean = np.array(
+        [
+            math.fsum(float(value) for value in position_array[:, axis]) / count
+            for axis in range(position_array.shape[1])
+        ]
+    )
+    mass_mean = math.fsum(float(value) for value in mass_array) / count
+    contrasts = contrast_matrix(count)
+    return (
+        contrasts @ (position_array - position_mean),
+        contrasts @ (mass_array - mass_mean),
+    )
 
 
 def _independent_stable_gram(matrix: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -192,6 +211,45 @@ def test_contrast_jacobian_rejects_invalid_positions_without_warnings(
         contrast_jacobian(position, 0.08, build_head_lattice())
 
 
+def test_contrast_jacobian_honors_a_nonzero_track_offset() -> None:
+    """The offset must reach the derivatives, not just the distances.
+
+    Every other geometry test uses the 3-D head, whose ``track_offset`` is zero,
+    so dropping the offset from the Jacobian's distance computation would be
+    invisible to them while silently changing 1-D and 2-D sensitivities.
+    """
+    clocks = ClockArray(
+        np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.5, -0.4],
+                [-0.7, 1.1, 0.3],
+                [0.4, -1.2, 0.9],
+            ]
+        ),
+        track_offset=2.5,
+    )
+    position = np.array([3.0, 4.0, 7.0])
+    mass = 0.05
+
+    def contrasts(trial_position: NDArray[np.float64]) -> NDArray[np.float64]:
+        rates = clock_rates(
+            MassConfig(trial_position.reshape(1, 3), np.array([mass])), clocks
+        )
+        return contrast_matrix(len(clocks.positions)) @ rates
+
+    position_jacobian, _ = contrast_jacobian(position, mass, clocks)
+    numerical = _central_difference(contrasts, position, 2e-5)
+    zero_offset_jacobian, _ = contrast_jacobian(
+        position, mass, ClockArray(clocks.positions)
+    )
+
+    assert_allclose(position_jacobian, numerical, rtol=2e-6, atol=2e-12)
+    # The offset genuinely changes the answer, so the agreement above is not
+    # satisfiable by ignoring it.
+    assert not np.allclose(position_jacobian, zero_offset_jacobian, rtol=1e-3)
+
+
 def test_contrast_jacobian_rejects_wrong_clock_dimension() -> None:
     clocks = ClockArray(np.array([[0.0, 0.0], [1.0, 1.0]]))
 
@@ -213,9 +271,17 @@ def test_contrast_jacobian_does_not_clamp_singular_or_strong_field_inputs() -> N
     [(1e103, 0.08), (1e-109, 1e-112)],
     ids=("large-distance", "small-distance"),
 )
-def test_contrast_jacobian_is_stable_at_extreme_valid_distances(
+def test_contrast_jacobian_is_stable_across_wide_distance_scales(
     scale: float, mass: float
 ) -> None:
+    """Agreement with a scalar-loop oracle across 200 decades of coordinates.
+
+    These are wide scales, not the float64 limits: ``compute_distances`` squares
+    coordinates, so it overflows above ``sqrt(DBL_MAX)`` (~1.34e154) and
+    underflows a nonzero distance to zero below ~2.2e-162. Both are far outside
+    any declared scenario and are a property of the shared forward model, not of
+    this Jacobian.
+    """
     position = scale * np.array([1.5, -1.2, 0.9])
     clocks = ClockArray(
         scale
@@ -237,8 +303,22 @@ def test_contrast_jacobian_is_stable_at_extreme_valid_distances(
     assert np.any(expected_position != 0.0)
     assert np.all(np.isfinite(expected_mass))
     actual_position, actual_mass = contrast_jacobian(position, mass, clocks)
-    assert_allclose(actual_position, expected_position, rtol=2e-14, atol=0.0)
-    assert_allclose(actual_mass, expected_mass, rtol=2e-14, atol=0.0)
+    # Individual contrast entries can cancel to a small fraction of the matrix
+    # scale, and neither code path resolves those to full relative precision.
+    # Accuracy is asserted against the magnitude that is actually present, so
+    # this cannot pass merely because both paths round identically.
+    assert_allclose(
+        actual_position,
+        expected_position,
+        rtol=2e-14,
+        atol=1e-15 * float(np.max(np.abs(expected_position))),
+    )
+    assert_allclose(
+        actual_mass,
+        expected_mass,
+        rtol=2e-14,
+        atol=1e-15 * float(np.max(np.abs(expected_mass))),
+    )
 
 
 def test_dimensionless_jacobian_has_exact_parameter_order_and_shape() -> None:
@@ -248,7 +328,7 @@ def test_dimensionless_jacobian_has_exact_parameter_order_and_shape() -> None:
     basis = tangent_basis(position)
     position_jacobian, mass_jacobian = contrast_jacobian(position, mass, clocks)
 
-    jacobian = _dimensionless_jacobian(position, mass, clocks, basis=basis)
+    jacobian, _ = _dimensionless_jacobian(position, mass, clocks, basis=basis)
     radius = np.linalg.norm(position)
     expected = np.column_stack(
         (
@@ -272,8 +352,8 @@ def test_singular_values_are_invariant_under_tangent_plane_rotation() -> None:
         [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
     )
 
-    original = _dimensionless_jacobian(position, 0.08, clocks, basis=basis)
-    rotated = _dimensionless_jacobian(position, 0.08, clocks, basis=basis @ rotation)
+    original, _ = _dimensionless_jacobian(position, 0.08, clocks, basis=basis)
+    rotated, _ = _dimensionless_jacobian(position, 0.08, clocks, basis=basis @ rotation)
 
     assert_allclose(
         np.linalg.svd(original, compute_uv=False),
@@ -333,7 +413,9 @@ def test_scaled_jacobian_and_singular_values_match_independent_oracles() -> None
     )
     dimensionless = _independent_dimensionless_jacobian(position, mass, clocks)
     expected_scaled = np.sqrt(n_observations) / noise_std * dimensionless
-    expected_singular_values = np.linalg.svd(result.scaled_jacobian, compute_uv=False)
+    # Take the singular values from the independently built matrix, not from the
+    # result's own array: the latter would make this assertion svd(X) == svd(X).
+    expected_singular_values = np.linalg.svd(expected_scaled, compute_uv=False)
 
     assert_allclose(result.scaled_jacobian, expected_scaled, rtol=2e-15, atol=2e-15)
     assert_allclose(
@@ -344,22 +426,87 @@ def test_scaled_jacobian_and_singular_values_match_independent_oracles() -> None
     )
 
 
-def test_rank_uses_the_documented_machine_precision_tolerance() -> None:
-    result = local_identifiability(
-        np.array([3.0, 4.0, 7.0]),
-        0.08,
-        build_head_lattice(),
-        n_observations=80,
-        noise_std=0.001,
+def _independent_projection_noise_floor(
+    position: NDArray[np.float64],
+    mass: float,
+    clocks: ClockArray,
+    *,
+    n_observations: int,
+    noise_std: float,
+) -> float:
+    """Whitened size of a contrast value that is pure floating-point residue."""
+    common_mode = 0.0
+    for clock in clocks.positions:
+        difference = clock - position
+        distance = math.hypot(
+            *(float(component) for component in difference), clocks.track_offset
+        )
+        rate = math.sqrt(1.0 - 2.0 * mass / distance)
+        position_scale = -((mass / distance) / rate) / distance
+        common_mode = max(
+            common_mode,
+            max(
+                abs(float(value)) for value in position_scale * (difference / distance)
+            ),
+            abs(-(1.0 / distance) / rate),
+        )
+    radius = math.hypot(*(float(component) for component in position))
+    return (
+        (math.sqrt(n_observations) / noise_std)
+        * float(np.finfo(np.float64).eps)
+        * len(clocks.positions)
+        * common_mode
+        * max(radius, mass)
     )
-    expected = (
+
+
+def test_rank_tolerance_is_the_svd_tolerance_floored_by_projection_residue() -> None:
+    position = np.array([3.0, 4.0, 7.0])
+    clocks = build_head_lattice()
+    result = local_identifiability(
+        position, 0.08, clocks, n_observations=80, noise_std=0.001
+    )
+    relative = float(
         np.finfo(np.float64).eps
         * max(result.scaled_jacobian.shape)
         * result.singular_values[0]
     )
+    floor = _independent_projection_noise_floor(
+        position, 0.08, clocks, n_observations=80, noise_std=0.001
+    )
 
-    assert result.rank_tolerance == expected
-    assert result.rank == int(np.count_nonzero(result.singular_values > expected))
+    assert result.rank_tolerance == pytest.approx(max(relative, floor), rel=2e-15)
+    assert result.rank == int(
+        np.count_nonzero(result.singular_values > result.rank_tolerance)
+    )
+    # Both branches are far below the physical signal, so the head is full rank
+    # either way: the floor exists for degenerate heads, not for this one.
+    assert result.rank == 4
+    assert result.rank_tolerance < 1e-6 * float(result.singular_values[-1])
+
+
+def test_degenerate_head_reports_no_rank_instead_of_projection_residue() -> None:
+    """Coincident clocks have an exactly zero contrast Jacobian.
+
+    Every contrast of identical clock rates vanishes, so there is no information
+    at all. Reporting rank 4 with a benign condition number would be reporting
+    the structure of floating-point residue.
+    """
+    coincident = ClockArray(np.tile(np.array([[0.1, 0.2, -0.3]]), (5, 1)))
+    result = local_identifiability(
+        np.array([3.0, 4.0, 7.0]),
+        0.08,
+        coincident,
+        n_observations=80,
+        noise_std=0.001,
+    )
+
+    assert result.rank == 0
+    assert result.condition_number is None
+    assert result.crlb_std is None
+    assert result.weakest_direction is None
+    assert result.weakest_mode_loadings is None
+    assert float(np.max(np.abs(result.scaled_jacobian))) < result.rank_tolerance
 
 
 def test_singular_values_are_descending_finite_and_nonnegative() -> None:
@@ -550,6 +697,45 @@ def test_underdetermined_array_reports_implicit_zero_and_matching_null() -> None
     assert result.rank == 3
     assert result.condition_number is None
     assert result.crlb_std is None
+
+
+def test_repeated_smallest_singular_value_withholds_the_weak_direction() -> None:
+    """A multi-dimensional null space has no single weakest direction.
+
+    Two clocks give one contrast row, so three of the four singular values are
+    zero and LAPACK's last right-singular vector is an arbitrary basis choice
+    inside that subspace. Publishing its loadings would report solver detail as
+    geometry.
+    """
+    two_clocks = ClockArray(build_head_lattice().positions[:2])
+    result = local_identifiability(
+        np.array([3.0, 4.0, 7.0]),
+        0.08,
+        two_clocks,
+        n_observations=80,
+        noise_std=0.001,
+    )
+
+    assert result.scaled_jacobian.shape == (1, 4)
+    assert result.rank == 1
+    assert result.singular_values[-2] == result.singular_values[-1]
+    assert result.weakest_direction is None
+    assert result.weakest_mode_loadings is None
+
+
+def test_isolated_smallest_singular_value_still_publishes_the_weak_direction() -> None:
+    """The real head is nowhere near degenerate, so the guard must not fire."""
+    result = local_identifiability(
+        np.array([3.0, 4.0, 7.0]),
+        0.08,
+        build_head_lattice(),
+        n_observations=80,
+        noise_std=0.001,
+    )
+    assert result.weakest_direction is not None
+    assert result.weakest_mode_loadings is not None
+    gap = float(result.singular_values[-2]) - float(result.singular_values[-1])
+    assert gap > 1e6 * result.rank_tolerance
 
 
 def test_weakest_mode_loadings_are_grouped_squared_components() -> None:

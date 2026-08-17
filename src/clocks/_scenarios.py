@@ -16,6 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.linalg import helmert
 
+from clocks._rng import study_generator
 from clocks._support import make_point_mass_prior_sampler, point_mass_support_mask
 from clocks._validation import finite_float, finite_float_array, real_float_array
 from clocks.api import build_particle_filter, simulate
@@ -570,7 +571,7 @@ def build_echolocation_filter(
         prior_sampler=prior_sampler,
         forward_model=forward,
         noise_std=noise_std,
-        rng=np.random.default_rng(seed),
+        rng=study_generator(seed),
         forward_model_batch=forward_batch,
         log_prior_density=log_prior,
         ess_target=ess_target,

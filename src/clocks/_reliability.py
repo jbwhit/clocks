@@ -16,6 +16,7 @@ from typing import ClassVar
 import numpy as np
 from numpy.typing import NDArray
 
+from clocks._rng import BIT_GENERATOR_NAME
 from clocks._scenarios import (
     ECHO_ESS_TARGET,
     ECHO_N_OBSERVATIONS,
@@ -62,10 +63,20 @@ RELIABILITY_RANGE_STRATUM_EDGES = (
 
 _RELIABILITY_CASE_COUNT = RELIABILITY_N_STRATA * RELIABILITY_CASES_PER_STRATUM
 _RELIABILITY_STUDY = "echolocation_population"
-_RELEASE_IDENTITY = "echolocation_population_v1_release"
 _RELEASE_STATUS = "release"
+# Derived, never spelled twice: a study-version bump must not be able to reuse a
+# previous version's release identity or case IDs.
+_RELEASE_IDENTITY = (
+    f"{_RELIABILITY_STUDY}_v{RELIABILITY_STUDY_VERSION}_{_RELEASE_STATUS}"
+)
+_CASE_ID_PREFIX = _RELEASE_IDENTITY.replace("_", "-")
+# The frozen schema-v1 release population. Regenerating a different population
+# under this identity is a protocol violation, not a refresh.
+RELEASE_SEMANTIC_SHA256 = (
+    "98a08d394ca249edb307a7ac78f30d6708180f716105f09b4768f9ff2630fcd4"
+)
 _GENERATOR_METADATA = {
-    "bit_generator": "PCG64",
+    "bit_generator": BIT_GENERATOR_NAME,
     "generator": "numpy.random.Generator",
     "parameter_draw_recipe": (
         "normal(3), retry exact zero norm; "
@@ -269,6 +280,10 @@ def _strict_number(value: object, path: str) -> float:
     result = value
     if not math.isfinite(result):
         raise ValueError(f"{path} must be a canonical finite float")
+    # -0.0 and 0.0 are the same quantity but hash to different bytes, so one
+    # semantic population would have two valid canonical forms.
+    if result == 0.0 and math.copysign(1.0, result) < 0.0:
+        raise ValueError(f"{path} must be canonical positive zero, not negative zero")
     return result
 
 
@@ -323,10 +338,7 @@ def _expect_vector(
 
 
 def _case_id(stratum_index: int, stratum_case_index: int) -> str:
-    return (
-        "echolocation-population-v1-release-"
-        f"s{stratum_index:02d}-c{stratum_case_index:03d}"
-    )
+    return f"{_CASE_ID_PREFIX}-s{stratum_index:02d}-c{stratum_case_index:03d}"
 
 
 def generate_release_manifest() -> Mapping[str, object]:
@@ -461,6 +473,7 @@ def generate_release_manifest() -> Mapping[str, object]:
     }
     manifest["semantic_sha256"] = _semantic_sha256(manifest)
     validate_manifest(manifest)
+    require_frozen_release(manifest)
     return _deep_freeze(manifest)  # type: ignore[return-value]
 
 
@@ -492,10 +505,11 @@ def validate_manifest(manifest: object) -> None:
         _expect_string(generator[field], expected, f"generator.{field}")
 
     expected_head = build_head_lattice()
+    expected_clock_count = len(expected_head.positions)
     head = _object(document["head"], "head", _HEAD_FIELDS)
-    _expect_integer(head["clock_count"], 27, "head.clock_count")
+    _expect_integer(head["clock_count"], expected_clock_count, "head.clock_count")
     _expect_string(head["geometry"], "3x3x3_cubic_lattice", "head.geometry")
-    positions = _sequence(head["positions"], "head.positions", 27)
+    positions = _sequence(head["positions"], "head.positions", expected_clock_count)
     expected_positions = expected_head.positions.tolist()
     for index, (position, expected) in enumerate(zip(positions, expected_positions)):
         _expect_vector(
@@ -504,7 +518,9 @@ def validate_manifest(manifest: object) -> None:
             f"head.positions[{index}]",
         )
     _expect_number(head["r_head"], ECHO_R_HEAD, "head.r_head")
-    _expect_number(head["track_offset"], 0.0, "head.track_offset")
+    _expect_number(
+        head["track_offset"], expected_head.track_offset, "head.track_offset"
+    )
 
     population = _object(document["population"], "population", _POPULATION_FIELDS)
     _expect_integer(
@@ -707,6 +723,24 @@ def validate_manifest(manifest: object) -> None:
         raise ValueError("semantic_sha256 does not match the canonical payload")
 
 
+def require_frozen_release(manifest: object) -> None:
+    """Assert a manifest is *the* frozen population, not merely a valid one.
+
+    A self-consistent ``semantic_sha256`` proves internal integrity, not
+    identity: any in-bounds population would hash consistently and validate.
+    This is the separate identity gate, kept apart from semantic validation so
+    that boundary and mutation cases can still be checked on their own terms.
+    Recorded seeds stay authoritative -- nothing here regenerates a stream.
+    """
+    document = _object(manifest, "manifest", _TOP_LEVEL_FIELDS)
+    semantic_hash = _strict_string(document["semantic_sha256"], "semantic_sha256")
+    if semantic_hash != RELEASE_SEMANTIC_SHA256:
+        raise ValueError(
+            f"identity {_RELEASE_IDENTITY!r} is reserved for the frozen population "
+            f"with semantic_sha256 {RELEASE_SEMANTIC_SHA256}, got {semantic_hash}"
+        )
+
+
 def encode_manifest(manifest: object) -> str:
     """Return deterministic UTF-8-compatible canonical JSON with one newline."""
     validate_manifest(manifest)
@@ -722,6 +756,7 @@ def load_manifest(path: Path) -> Mapping[str, object]:
         raise ValueError("manifest must be encoded as canonical UTF-8") from error
     value = _decode_manifest_json(encoded)
     validate_manifest(value)
+    require_frozen_release(value)
     canonical = encode_manifest(value).encode("utf-8")
     if raw != canonical:
         raise ValueError(
@@ -729,6 +764,15 @@ def load_manifest(path: Path) -> Mapping[str, object]:
             "canonical numeric forms, and exactly one trailing newline"
         )
     return _deep_freeze(value)  # type: ignore[return-value]
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make a directory's own entries durable, so a rename survives power loss."""
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def write_manifest(path: Path, manifest: object) -> None:
@@ -750,6 +794,10 @@ def write_manifest(path: Path, manifest: object) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary_path, destination)
+        temporary_path = None
+        # fsync of the file only makes its contents durable; the rename itself
+        # lives in the parent directory and needs its own fsync (POSIX).
+        _fsync_directory(destination.parent)
     except BaseException:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -758,7 +806,14 @@ def write_manifest(path: Path, manifest: object) -> None:
 
 @dataclass(frozen=True)
 class IdentifiabilityResult:
-    """Immutable local sensitivity diagnostics in dimensionless coordinates."""
+    """Immutable local sensitivity diagnostics in dimensionless coordinates.
+
+    ``condition_number`` and ``crlb_std`` are ``None`` unless the whitened
+    Jacobian is numerically full rank. ``weakest_direction`` and
+    ``weakest_mode_loadings`` are ``None`` unless the smallest singular value is
+    isolated, because a repeated smallest value leaves the weak direction
+    determined only up to an arbitrary choice of basis within its subspace.
+    """
 
     jacobian: NDArray[np.float64]
     scaled_jacobian: NDArray[np.float64]
@@ -768,8 +823,8 @@ class IdentifiabilityResult:
     rank_tolerance: float
     condition_number: float | None
     crlb_std: NDArray[np.float64] | None
-    weakest_direction: NDArray[np.float64]
-    weakest_mode_loadings: Mapping[str, float]
+    weakest_direction: NDArray[np.float64] | None
+    weakest_mode_loadings: Mapping[str, float] | None
 
     parameter_names: ClassVar[tuple[str, str, str, str]] = PARAMETER_NAMES
 
@@ -798,21 +853,28 @@ class IdentifiabilityResult:
                 "crlb_std",
                 finite_float_array("crlb_std", self.crlb_std, ndim=1),
             )
-        object.__setattr__(
-            self,
-            "weakest_direction",
-            finite_float_array("weakest_direction", self.weakest_direction, ndim=1),
-        )
-        object.__setattr__(
-            self,
-            "weakest_mode_loadings",
-            MappingProxyType(
-                {
-                    str(name): finite_float(f"loading {name}", value)
-                    for name, value in self.weakest_mode_loadings.items()
-                }
-            ),
-        )
+        if (self.weakest_direction is None) != (self.weakest_mode_loadings is None):
+            raise ValueError(
+                "weakest_direction and weakest_mode_loadings must both be present "
+                "or both be absent"
+            )
+        if self.weakest_direction is not None:
+            object.__setattr__(
+                self,
+                "weakest_direction",
+                finite_float_array("weakest_direction", self.weakest_direction, ndim=1),
+            )
+        if self.weakest_mode_loadings is not None:
+            object.__setattr__(
+                self,
+                "weakest_mode_loadings",
+                MappingProxyType(
+                    {
+                        str(name): finite_float(f"loading {name}", value)
+                        for name, value in self.weakest_mode_loadings.items()
+                    }
+                ),
+            )
 
 
 def _position_vector(position: object) -> NDArray[np.float64]:
@@ -852,12 +914,12 @@ def tangent_basis(position: NDArray[np.floating]) -> NDArray[np.float64]:
     return np.column_stack((first, second))
 
 
-def contrast_jacobian(
+def _contrast_derivatives(
     position: NDArray[np.floating],
     mass: float,
     clock_array: ClockArray,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Return exact position and mass derivatives of orthonormal contrasts."""
+) -> tuple[NDArray[np.float64], NDArray[np.float64], float]:
+    """Contrast derivatives plus the common-mode magnitude they came from."""
     vector = _position_vector(position)
     mass_value = _positive_mass(mass)
     if clock_array.positions.shape[1] != 3:
@@ -889,13 +951,57 @@ def contrast_jacobian(
 
     contrasts = contrast_matrix(len(clock_array.positions))
     with np.errstate(invalid="ignore", over="ignore"):
-        contrast_position = contrasts @ position_derivatives
-        contrast_mass = contrasts @ mass_derivatives
+        # Contrast rows sum to zero, so removing the across-clock mean first is
+        # exact in real arithmetic. In float64 it is strictly better: the raw
+        # derivatives carry a large common mode that a floating Helmert matrix
+        # cannot annihilate exactly, and that residue would otherwise be
+        # indistinguishable from the differential signal it swamps.
+        centered_position = position_derivatives - position_derivatives.mean(axis=0)
+        centered_mass = mass_derivatives - mass_derivatives.mean()
+        contrast_position = contrasts @ centered_position
+        contrast_mass = contrasts @ centered_mass
     if not np.all(np.isfinite(contrast_position)) or not np.all(
         np.isfinite(contrast_mass)
     ):
         raise PhysicsDomainError("contrast derivatives must be finite")
-    return contrast_position, contrast_mass
+    common_mode_scale = max(
+        float(np.max(np.abs(position_derivatives))),
+        float(np.max(np.abs(mass_derivatives))),
+    )
+    return contrast_position, contrast_mass, common_mode_scale
+
+
+def contrast_jacobian(
+    position: NDArray[np.floating],
+    mass: float,
+    clock_array: ClockArray,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return exact position and mass derivatives of orthonormal contrasts."""
+    position_jacobian, mass_jacobian, _ = _contrast_derivatives(
+        position, mass, clock_array
+    )
+    return position_jacobian, mass_jacobian
+
+
+def _projection_noise_floor(
+    common_mode_scale: float, n_clocks: int, coordinate_scale: float
+) -> float:
+    """Estimate the contrast magnitude that is pure floating-point residue.
+
+    Orthonormal contrast rows sum to zero only in real arithmetic. Projecting
+    ``n_clocks`` derivative rows whose common mode has size
+    ``common_mode_scale`` therefore leaves a residue of order
+    ``eps * n_clocks * common_mode_scale``, carried into the dimensionless
+    coordinates by ``coordinate_scale``. This is an estimate, not a proven
+    bound; its only job is to stop a numerically empty Jacobian -- a head whose
+    exact contrast derivatives vanish -- from being reported as informative.
+    """
+    return (
+        float(np.finfo(np.float64).eps)
+        * n_clocks
+        * common_mode_scale
+        * coordinate_scale
+    )
 
 
 def _validated_tangent_basis(
@@ -922,12 +1028,12 @@ def _dimensionless_jacobian(
     clock_array: ClockArray,
     *,
     basis: object | None = None,
-) -> NDArray[np.float64]:
+) -> tuple[NDArray[np.float64], float]:
     """Return contrast derivatives in angular/log-range/log-mass coordinates."""
     vector = _position_vector(position)
     mass_value = _positive_mass(mass)
     vectors = _validated_tangent_basis(vector, basis)
-    position_jacobian, mass_jacobian = contrast_jacobian(
+    position_jacobian, mass_jacobian, common_mode_scale = _contrast_derivatives(
         vector, mass_value, clock_array
     )
     radius = math.hypot(*(float(component) for component in vector))
@@ -942,7 +1048,12 @@ def _dimensionless_jacobian(
         )
     if not np.all(np.isfinite(jacobian)):
         raise PhysicsDomainError("dimensionless contrast derivatives must be finite")
-    return jacobian
+    noise_floor = _projection_noise_floor(
+        common_mode_scale,
+        len(clock_array.positions),
+        max(radius, mass_value),
+    )
+    return jacobian, noise_floor
 
 
 def _positive_noise(noise_std: object) -> float:
@@ -982,8 +1093,11 @@ def _stable_fisher_information(
         )
     if not np.all(np.isfinite(fisher_information)):
         raise PhysicsDomainError("Fisher information must be finite")
-    if not np.array_equal(fisher_information, fisher_information.T):
-        raise PhysicsDomainError("Fisher information must be symmetric")
+    # A Gram matrix is symmetric by construction, but BLAS does not promise to
+    # compute both triangles with the same summation order. Averaging costs
+    # nothing and is honest; raising on a 1-ulp asymmetry would turn a harmless
+    # numerical accident into a failed evidence run.
+    fisher_information = 0.5 * (fisher_information + fisher_information.T)
     information_scale = float(np.max(np.abs(fisher_information)))
     normalized_information = fisher_information / information_scale
     minimum_eigenvalue = float(np.linalg.eigvalsh(normalized_information)[0])
@@ -1009,7 +1123,7 @@ def local_identifiability(
     """Compute exact local identifiability for one exterior point mass."""
     count = _positive_count(n_observations)
     noise = _positive_noise(noise_std)
-    jacobian = _dimensionless_jacobian(position, mass, clock_array)
+    jacobian, noise_floor = _dimensionless_jacobian(position, mass, clock_array)
     try:
         scale = math.sqrt(count) / noise
     except OverflowError as error:
@@ -1035,7 +1149,14 @@ def local_identifiability(
     if not np.all(np.isfinite(singular_values)) or np.any(singular_values < 0.0):
         raise PhysicsDomainError("singular values must be finite and nonnegative")
     largest = float(singular_values[0])
-    rank_tolerance = np.finfo(np.float64).eps * max(scaled_jacobian.shape) * largest
+    # Standard relative SVD tolerance, floored by what the contrast projection
+    # can manufacture from roundoff alone. Without the floor a head whose exact
+    # contrast Jacobian vanishes reports full rank and a benign-looking
+    # condition number computed entirely from residue.
+    rank_tolerance = max(
+        float(np.finfo(np.float64).eps * max(scaled_jacobian.shape) * largest),
+        scale * noise_floor,
+    )
     rank = int(np.count_nonzero(singular_values > rank_tolerance))
 
     condition_number: float | None = None
@@ -1058,14 +1179,22 @@ def local_identifiability(
 
     fisher_information = _stable_fisher_information(scaled_jacobian)
 
-    weakest_direction = right_vectors[-1]
-    squared = np.square(weakest_direction)
-    squared /= np.sum(squared)
-    weakest_mode_loadings = {
-        "angular": float(np.sum(squared[:2])),
-        "log_range": float(squared[2]),
-        "log_mass": float(squared[3]),
-    }
+    # The weakest right-singular vector is only defined up to sign when the
+    # smallest singular value is isolated. If it is repeated -- in particular
+    # for a multi-dimensional null space -- LAPACK returns one arbitrary basis
+    # vector of that subspace, and its loadings would be an artefact of the
+    # solver rather than a property of the geometry.
+    weakest_direction: NDArray[np.float64] | None = None
+    weakest_mode_loadings: Mapping[str, float] | None = None
+    isolation_gap = float(singular_values[-2]) - float(singular_values[-1])
+    if isolation_gap > rank_tolerance:
+        weakest_direction = right_vectors[-1]
+        squared = np.square(weakest_direction)
+        weakest_mode_loadings = {
+            "angular": float(np.sum(squared[:2])),
+            "log_range": float(squared[2]),
+            "log_mass": float(squared[3]),
+        }
     return IdentifiabilityResult(
         jacobian=jacobian,
         scaled_jacobian=scaled_jacobian,

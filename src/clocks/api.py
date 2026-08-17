@@ -7,6 +7,7 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
+from clocks._rng import study_generator
 from clocks._support import make_point_mass_prior_sampler, point_mass_support_mask
 from clocks.config import InferenceConfig, SimulationConfig
 from clocks.inference import ModelComparison, ParticleFilter
@@ -23,7 +24,7 @@ from clocks.types import MassConfig, Observation, ParticleState, UpdateDiagnosti
 
 def simulate(config: SimulationConfig) -> SimulationResult:
     """Generate synthetic observations from a ground-truth configuration."""
-    rng = np.random.default_rng(config.seed)
+    rng = study_generator(config.seed)
     true_rates = clock_rates(config.ground_truth, config.clock_array)
     observations = [
         Observation(
@@ -162,7 +163,7 @@ def build_particle_filter(config: InferenceConfig) -> ParticleFilter:
     if isinstance(config.n_masses, tuple):
         raise TypeError("expected int for n_masses in fixed-K mode")
     return _build_fixed_filter(
-        config, cast(int, config.n_masses), np.random.default_rng(config.seed)
+        config, cast(int, config.n_masses), study_generator(config.seed)
     )
 
 
@@ -173,7 +174,7 @@ def build_model_comparison(config: InferenceConfig) -> ModelComparison:
     candidate_models = tuple(sorted(set(config.n_masses)))
     child_sequences = np.random.SeedSequence(config.seed).spawn(len(candidate_models))
     filters = {
-        k: _build_fixed_filter(config, k, np.random.default_rng(child_sequence))
+        k: _build_fixed_filter(config, k, study_generator(child_sequence))
         for k, child_sequence in zip(candidate_models, child_sequences, strict=True)
     }
     return ModelComparison(filters)
