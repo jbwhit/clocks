@@ -8,7 +8,7 @@ import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from numbers import Integral, Real
+from numbers import Integral
 from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar
@@ -55,7 +55,7 @@ _RELEASE_IDENTITY = "echolocation_population_v1_release"
 _RELEASE_STATUS = "release"
 _GENERATOR_METADATA = {
     "bit_generator": "PCG64",
-    "generator": "numpy.random.default_rng",
+    "generator": "numpy.random.Generator",
     "parameter_draw_recipe": (
         "normal(3), retry exact zero norm; "
         "exp(uniform(log(stratum_lower), log(stratum_upper))); "
@@ -135,6 +135,10 @@ _CASE_FIELDS = {
 _SEMANTIC_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
+class _JSONObjectPairs(list[tuple[str, object]]):
+    """Distinguish decoded JSON objects from arrays until duplicates are checked."""
+
+
 def _range_stratum_edges() -> tuple[float, ...]:
     edges = np.geomspace(
         RELIABILITY_RANGE_R_BOUNDS[0],
@@ -192,6 +196,31 @@ def _deep_freeze(value: object) -> object:
     return value
 
 
+def _materialize_json(value: object, path: str) -> object:
+    if isinstance(value, _JSONObjectPairs):
+        result: dict[str, object] = {}
+        for key, item in value:
+            field_path = f"{path}.{key}"
+            if key in result:
+                raise ValueError(f"{field_path} is a duplicate JSON field")
+            result[key] = _materialize_json(item, field_path)
+        return result
+    if isinstance(value, list):
+        return [
+            _materialize_json(item, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _decode_manifest_json(encoded: str) -> object:
+    try:
+        paired = json.loads(encoded, object_pairs_hook=_JSONObjectPairs)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"manifest contains invalid JSON: {error.msg}") from error
+    return _materialize_json(paired, "manifest")
+
+
 def _object(
     value: object, path: str, expected_fields: set[str]
 ) -> Mapping[str, object]:
@@ -221,22 +250,26 @@ def _sequence(
 
 
 def _strict_integer(value: object, path: str, *, nonnegative: bool = False) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
+    if type(value) is not int:
         qualifier = "nonnegative " if nonnegative else ""
-        raise ValueError(f"{path} must be a {qualifier}non-bool integer")
-    result = int(value)
+        raise ValueError(f"{path} must be a canonical {qualifier}integer")
+    result = value
     if nonnegative and result < 0:
-        raise ValueError(f"{path} must be a nonnegative non-bool integer")
+        raise ValueError(f"{path} must be a canonical nonnegative integer")
     return result
 
 
 def _strict_number(value: object, path: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
-        raise ValueError(f"{path} must be a finite real number")
-    result = float(value)
+    if type(value) is not float:
+        raise ValueError(f"{path} must be a canonical finite float")
+    result = value
     if not math.isfinite(result):
-        raise ValueError(f"{path} must be a finite real number")
+        raise ValueError(f"{path} must be a canonical finite float")
     return result
+
+
+def _same_float(left: float, right: float) -> bool:
+    return left.hex() == right.hex()
 
 
 def _strict_string(value: object, path: str) -> str:
@@ -254,7 +287,7 @@ def _expect_integer(value: object, expected: int, path: str) -> int:
 
 def _expect_number(value: object, expected: float, path: str) -> float:
     result = _strict_number(value, path)
-    if result != expected:
+    if not _same_float(result, expected):
         raise ValueError(f"{path} must equal {expected}")
     return result
 
@@ -277,7 +310,10 @@ def _expect_vector(
     value: object, expected: tuple[float, ...], path: str
 ) -> tuple[float, ...]:
     result = _strict_vector(value, path, len(expected))
-    if result != expected:
+    if not all(
+        _same_float(actual, expected_value)
+        for actual, expected_value in zip(result, expected)
+    ):
         raise ValueError(f"{path} does not match the preregistered values")
     return result
 
@@ -311,7 +347,7 @@ def generate_release_manifest() -> Mapping[str, object]:
             raise RuntimeError("spawned reliability stream seeds must be unique")
         stream_seeds.update(new_seeds)
 
-        rng = np.random.default_rng(parameter_seed)
+        rng = np.random.Generator(np.random.PCG64(parameter_seed))
         direction_draw = rng.normal(size=3)
         direction_norm = math.hypot(*(float(component) for component in direction_draw))
         while direction_norm == 0.0:
@@ -637,7 +673,10 @@ def validate_manifest(manifest: object) -> None:
         expected_position = tuple(
             component * range_r * ECHO_R_HEAD for component in direction
         )
-        if position != expected_position:
+        if not all(
+            _same_float(actual, expected)
+            for actual, expected in zip(position, expected_position)
+        ):
             raise ValueError(
                 f"{path}.position must equal direction * range_r * head.r_head"
             )
@@ -671,12 +710,20 @@ def encode_manifest(manifest: object) -> str:
 
 
 def load_manifest(path: Path) -> Mapping[str, object]:
-    """Load, hash-check, and deeply freeze a release manifest."""
+    """Load exact canonical UTF-8, rejecting duplicate keys before validation."""
+    raw = Path(path).read_bytes()
     try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise ValueError(f"manifest contains invalid JSON: {error.msg}") from error
+        encoded = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("manifest must be encoded as canonical UTF-8") from error
+    value = _decode_manifest_json(encoded)
     validate_manifest(value)
+    canonical = encode_manifest(value).encode("utf-8")
+    if raw != canonical:
+        raise ValueError(
+            "manifest JSON must use canonical UTF-8 bytes: sorted compact keys, "
+            "canonical numeric forms, and exactly one trailing newline"
+        )
     return _deep_freeze(value)  # type: ignore[return-value]
 
 

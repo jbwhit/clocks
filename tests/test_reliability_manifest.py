@@ -52,6 +52,19 @@ def _semantic_sha256(document: dict[str, object]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _canonical_test_json(document: dict[str, object]) -> str:
+    return (
+        json.dumps(
+            document,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
 def _independent_seed(sequence: np.random.SeedSequence) -> int:
     words = sequence.generate_state(4, dtype=np.uint32)
     return sum(int(word) << (32 * index) for index, word in enumerate(words))
@@ -243,7 +256,7 @@ def test_release_parameters_replay_the_declared_log_uniform_draw_recipe(
     edges[-1] = TEST_RANGE_R_BOUNDS[1]
 
     for case in release_document["cases"]:
-        rng = np.random.default_rng(case["parameter_seed"])
+        rng = np.random.Generator(np.random.PCG64(case["parameter_seed"]))
         direction_draw = rng.normal(size=3)
         direction_norm = math.hypot(*(float(component) for component in direction_draw))
         while direction_norm == 0.0:
@@ -272,12 +285,32 @@ def test_release_parameters_replay_the_declared_log_uniform_draw_recipe(
         assert_allclose(case["position"], position, rtol=0.0, atol=0.0)
 
 
+def test_generation_uses_explicit_pcg64_without_default_rng(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actual_pcg64 = np.random.PCG64
+    pcg64_seeds: list[int] = []
+
+    def recording_pcg64(seed: int) -> np.random.BitGenerator:
+        pcg64_seeds.append(seed)
+        return actual_pcg64(seed)
+
+    def reject_default_rng(*args: object, **kwargs: object) -> None:
+        raise AssertionError("generation must construct the declared PCG64 explicitly")
+
+    monkeypatch.setattr(reliability.np.random, "PCG64", recording_pcg64)
+    monkeypatch.setattr(reliability.np.random, "default_rng", reject_default_rng)
+    manifest = generate_release_manifest()
+
+    assert pcg64_seeds == [case["parameter_seed"] for case in manifest["cases"]]
+
+
 def test_release_records_exact_generator_head_controls_and_analysis(
     release_document: dict[str, object],
 ) -> None:
     assert release_document["generator"] == {
         "bit_generator": "PCG64",
-        "generator": "numpy.random.default_rng",
+        "generator": "numpy.random.Generator",
         "parameter_draw_recipe": (
             "normal(3), retry exact zero norm; "
             "exp(uniform(log(stratum_lower), log(stratum_upper))); "
@@ -364,14 +397,25 @@ def test_canonical_manifest_is_independent_of_runtime_numpy_version(
     validate_manifest(json.loads(original))
 
 
-def test_validation_treats_recorded_stream_seeds_as_authoritative(
-    release_document: dict[str, object], monkeypatch: pytest.MonkeyPatch
+def test_load_and_validation_treat_recorded_truths_and_seeds_as_authoritative(
+    tmp_path: Path,
+    release_document: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def reject_rng_regeneration(*args: object, **kwargs: object) -> None:
         raise AssertionError("validation must not regenerate frozen streams")
 
+    path = tmp_path / "manifest.json"
+    path.write_text(_canonical_test_json(release_document), encoding="utf-8")
     monkeypatch.setattr(reliability.np.random, "SeedSequence", reject_rng_regeneration)
+    monkeypatch.setattr(reliability.np.random, "Generator", reject_rng_regeneration)
+    monkeypatch.setattr(reliability.np.random, "PCG64", reject_rng_regeneration)
+    monkeypatch.setattr(reliability.np.random, "default_rng", reject_rng_regeneration)
+
     validate_manifest(release_document)
+    loaded = load_manifest(path)
+
+    assert loaded["semantic_sha256"] == release_document["semantic_sha256"]
 
 
 def test_semantic_hash_excludes_only_itself_and_covers_payload(
@@ -794,6 +838,44 @@ def test_validate_and_encode_reject_nonfinite_or_complex_before_json_encoding(
 
 
 @pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda document: document["head"].__setitem__("track_offset", -0.0),
+            r"head\.track_offset",
+        ),
+        (
+            lambda document: document["acceptance"].__setitem__(
+                "position_error_max", 1
+            ),
+            r"acceptance\.position_error_max",
+        ),
+        (
+            lambda document: document["head"]["positions"][0].__setitem__(0, -1),
+            r"head\.positions\[0\]",
+        ),
+        (
+            lambda document: document["controls"].__setitem__("n_observations", 80.0),
+            r"controls\.n_observations",
+        ),
+    ],
+)
+def test_load_rejects_noncanonical_numeric_aliases_with_recomputed_hash(
+    tmp_path: Path,
+    release_document: dict[str, object],
+    mutation: Callable[[dict[str, object]], None],
+    message: str,
+) -> None:
+    changed = _changed(release_document, mutation)
+    changed["semantic_sha256"] = _semantic_sha256(changed)
+    path = tmp_path / "manifest.json"
+    path.write_text(_canonical_test_json(changed), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize(
     ("path", "message"),
     [
         ((), "manifest"),
@@ -916,6 +998,77 @@ def test_load_manifest_verifies_hash_before_exposing_data(
     path.write_text(json.dumps(changed), encoding="utf-8")
 
     with pytest.raises(ValueError, match="semantic_sha256"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize(
+    ("raw_mutation", "message"),
+    [
+        (
+            lambda encoded: encoded.replace("{", '{"schema_version":2,', 1),
+            r"manifest\.schema_version.*duplicate",
+        ),
+        (
+            lambda encoded: encoded.replace(
+                '"generator":{',
+                '"generator":{"bit_generator":"MT19937",',
+                1,
+            ),
+            r"manifest\.generator\.bit_generator.*duplicate",
+        ),
+        (
+            lambda encoded: encoded.replace('"cases":[{', '"cases":[{"mass":0.01,', 1),
+            r"manifest\.cases\[0\]\.mass.*duplicate",
+        ),
+        (
+            lambda encoded: encoded.replace(
+                "{", f'{{"semantic_sha256":"{"0" * 64}",', 1
+            ),
+            r"manifest\.semantic_sha256.*duplicate",
+        ),
+    ],
+)
+def test_load_manifest_rejects_duplicate_json_fields_before_validation(
+    tmp_path: Path,
+    release_document: dict[str, object],
+    raw_mutation: Callable[[str], str],
+    message: str,
+) -> None:
+    canonical = _canonical_test_json(release_document)
+    duplicated = raw_mutation(canonical)
+    assert json.loads(duplicated) == release_document
+    path = tmp_path / "manifest.json"
+    path.write_text(duplicated, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize(
+    "raw_mutation",
+    [
+        lambda encoded: encoded.removesuffix("\n"),
+        lambda encoded: encoded + "\n",
+        lambda encoded: " " + encoded,
+        lambda encoded: (
+            json.dumps(json.loads(encoded), indent=2, sort_keys=True) + "\n"
+        ),
+        lambda encoded: encoded.replace('"noise_std":0.001', '"noise_std":1e-3'),
+    ],
+)
+def test_load_manifest_rejects_noncanonical_json_bytes(
+    tmp_path: Path,
+    release_document: dict[str, object],
+    raw_mutation: Callable[[str], str],
+) -> None:
+    canonical = _canonical_test_json(release_document)
+    noncanonical = raw_mutation(canonical)
+    assert noncanonical != canonical
+    assert json.loads(noncanonical) == release_document
+    path = tmp_path / "manifest.json"
+    path.write_text(noncanonical, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="canonical UTF-8"):
         load_manifest(path)
 
 
