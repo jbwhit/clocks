@@ -140,12 +140,15 @@ def contrast_jacobian(
     rates = time_dilation_factor(potential)
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        differences = clock_array.positions - vector
+        directions = differences / distances[:, np.newaxis]
+        mass_over_rate_distance = (mass_value / distances) / rates
         position_derivatives = (
-            -mass_value
-            * (clock_array.positions - vector)
-            / (rates[:, np.newaxis] * distances[:, np.newaxis] ** 3)
+            -mass_over_rate_distance[:, np.newaxis]
+            * directions
+            / distances[:, np.newaxis]
         )
-        mass_derivatives = -1.0 / (rates * distances)
+        mass_derivatives = -(1.0 / distances) / rates
     if not np.all(np.isfinite(position_derivatives)) or not np.all(
         np.isfinite(mass_derivatives)
     ):
@@ -256,6 +259,11 @@ def local_identifiability(
     _, singular_values, right_vectors = np.linalg.svd(
         scaled_jacobian, full_matrices=full_matrices
     )
+    if singular_values.size < len(PARAMETER_NAMES):
+        singular_values = np.append(
+            singular_values,
+            np.zeros(len(PARAMETER_NAMES) - singular_values.size),
+        )
     if not np.all(np.isfinite(singular_values)) or np.any(singular_values < 0.0):
         raise PhysicsDomainError("singular values must be finite and nonnegative")
     largest = float(singular_values[0])
@@ -266,14 +274,19 @@ def local_identifiability(
     crlb_std: NDArray[np.float64] | None = None
     if rank == len(PARAMETER_NAMES):
         condition_number = largest / float(singular_values[-1])
-        inverse_squared = 1.0 / np.square(singular_values)
-        covariance = (right_vectors.T * inverse_squared) @ right_vectors
-        covariance_diagonal = np.diag(covariance)
-        if not np.all(np.isfinite(covariance_diagonal)) or np.any(
-            covariance_diagonal < 0.0
-        ):
-            raise PhysicsDomainError("CRLB variances must be finite and nonnegative")
-        crlb_std = np.sqrt(covariance_diagonal)
+        crlb_std = np.array(
+            [
+                math.hypot(
+                    *(
+                        float(right_vectors[row, column]) / float(singular_values[row])
+                        for row in range(len(PARAMETER_NAMES))
+                    )
+                )
+                for column in range(len(PARAMETER_NAMES))
+            ]
+        )
+        if not np.all(np.isfinite(crlb_std)):
+            raise PhysicsDomainError("CRLB standard deviations must be finite")
 
     with np.errstate(invalid="ignore", over="ignore"):
         fisher_information = scaled_jacobian.T @ scaled_jacobian

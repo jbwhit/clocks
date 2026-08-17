@@ -1,11 +1,12 @@
 """Exact mathematical checks for the echolocation reliability diagnostics."""
 
+import math
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 
 import numpy as np
 import pytest
-from numpy.testing import assert_allclose
+from numpy.testing import assert_allclose, assert_array_equal
 from numpy.typing import NDArray
 
 from clocks._reliability import (
@@ -53,6 +54,24 @@ def _independent_dimensionless_jacobian(
             mass_jacobian * mass,
         )
     )
+
+
+def _independent_stable_contrast_jacobian(
+    position: NDArray[np.float64], mass: float, clocks: ClockArray
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    position_rows = []
+    mass_rows = []
+    for clock in clocks.positions:
+        difference = clock - position
+        distance = math.hypot(
+            *(float(component) for component in difference), clocks.track_offset
+        )
+        rate = math.sqrt(1.0 - 2.0 * mass / distance)
+        position_scale = -((mass / distance) / rate) / distance
+        position_rows.append(position_scale * (difference / distance))
+        mass_rows.append(-(1.0 / distance) / rate)
+    contrasts = contrast_matrix(len(clocks.positions))
+    return contrasts @ np.array(position_rows), contrasts @ np.array(mass_rows)
 
 
 @pytest.mark.parametrize(
@@ -171,6 +190,39 @@ def test_contrast_jacobian_does_not_clamp_singular_or_strong_field_inputs() -> N
         contrast_jacobian(np.array([1.0, 1.0, 1.0]), 0.08, clocks)
     with pytest.raises(PhysicsDomainError, match="weak-field"):
         contrast_jacobian(np.array([1.01, 1.0, 1.0]), 0.08, clocks)
+
+
+@pytest.mark.parametrize(
+    "scale, mass",
+    [(1e103, 0.08), (1e-109, 1e-112)],
+    ids=("large-distance", "small-distance"),
+)
+def test_contrast_jacobian_is_stable_at_extreme_valid_distances(
+    scale: float, mass: float
+) -> None:
+    position = scale * np.array([1.5, -1.2, 0.9])
+    clocks = ClockArray(
+        scale
+        * np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.3, -0.2, 0.1],
+                [-0.4, 0.1, 0.2],
+                [0.2, 0.4, -0.3],
+                [-0.1, -0.3, 0.4],
+            ]
+        )
+    )
+    expected_position, expected_mass = _independent_stable_contrast_jacobian(
+        position, mass, clocks
+    )
+
+    assert np.all(np.isfinite(expected_position))
+    assert np.any(expected_position != 0.0)
+    assert np.all(np.isfinite(expected_mass))
+    actual_position, actual_mass = contrast_jacobian(position, mass, clocks)
+    assert_allclose(actual_position, expected_position, rtol=2e-14, atol=0.0)
+    assert_allclose(actual_mass, expected_mass, rtol=2e-14, atol=0.0)
 
 
 def test_dimensionless_jacobian_has_exact_parameter_order_and_shape() -> None:
@@ -350,6 +402,79 @@ def test_condition_number_and_crlb_are_only_available_at_full_rank() -> None:
     assert deficient.rank < 4
     assert deficient.condition_number is None
     assert deficient.crlb_std is None
+
+
+def test_crlb_std_is_stable_for_tiny_valid_singular_values() -> None:
+    position = np.array([3.0, 4.0, 7.0])
+    mass = 0.08
+    clocks = build_head_lattice()
+    n_observations = 80
+    noise_std = 1e160
+    expected_scaled = (
+        np.sqrt(n_observations)
+        / noise_std
+        * _independent_dimensionless_jacobian(position, mass, clocks)
+    )
+    _, expected_singular_values, expected_right_vectors = np.linalg.svd(
+        expected_scaled, full_matrices=False
+    )
+    expected_std = np.array(
+        [
+            math.hypot(
+                *(
+                    float(expected_right_vectors[row, column])
+                    / float(expected_singular_values[row])
+                    for row in range(4)
+                )
+            )
+            for column in range(4)
+        ]
+    )
+
+    assert np.all(np.isfinite(expected_std))
+    assert np.all(expected_std > 1e160)
+    result = local_identifiability(
+        position,
+        mass,
+        clocks,
+        n_observations=n_observations,
+        noise_std=noise_std,
+    )
+    assert result.crlb_std is not None
+    assert_allclose(result.crlb_std, expected_std, rtol=2e-14, atol=0.0)
+
+
+def test_underdetermined_array_reports_implicit_zero_and_matching_null() -> None:
+    position = np.array([3.0, 4.0, 7.0])
+    clocks = ClockArray(build_head_lattice().positions[:4])
+    result = local_identifiability(
+        position,
+        0.08,
+        clocks,
+        n_observations=80,
+        noise_std=0.001,
+    )
+    _, explicit_singular_values, expected_right_vectors = np.linalg.svd(
+        result.scaled_jacobian, full_matrices=True
+    )
+    expected_singular_values = np.append(explicit_singular_values, 0.0)
+    expected_null = expected_right_vectors[-1]
+    direction_error = min(
+        np.linalg.norm(result.weakest_direction - expected_null),
+        np.linalg.norm(result.weakest_direction + expected_null),
+    )
+    null_residual = math.hypot(
+        *(float(value) for value in result.scaled_jacobian @ result.weakest_direction)
+    )
+
+    assert result.singular_values.shape == (4,)
+    assert_array_equal(result.singular_values, expected_singular_values)
+    assert result.singular_values[-1] == 0.0
+    assert direction_error <= 2e-15
+    assert null_residual <= 2.0 * result.rank_tolerance
+    assert result.rank == 3
+    assert result.condition_number is None
+    assert result.crlb_std is None
 
 
 def test_weakest_mode_loadings_are_grouped_squared_components() -> None:
