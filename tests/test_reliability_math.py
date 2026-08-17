@@ -690,8 +690,12 @@ def test_mirror_upper_triangle_copies_without_arithmetic() -> None:
     # No arithmetic means signed zeros and subnormals survive the copy.
     signed = np.array([[-0.0, 5e-324], [1.0, 2.0]])
     preserved = _mirror_upper_triangle(signed)
+
+    assert_array_equal(preserved, np.array([[-0.0, 5e-324], [5e-324, 2.0]]))
+    assert_array_equal(preserved, preserved.T)
+    # assert_array_equal reads -0.0 == +0.0 as equal, so the sign bit -- the
+    # thing an addition would destroy -- needs its own check.
     assert math.copysign(1.0, preserved[0, 0]) < 0.0
-    assert preserved[1, 0] == 5e-324
 
 
 def test_exact_zero_matrix_has_exact_zero_fisher_information() -> None:
