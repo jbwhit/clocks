@@ -45,12 +45,12 @@ TEST_RANGE_EDGE_HEX = (
     "0x1.965fea53d6e3ap+2",
     "0x1.0000000000000p+3",
 )
-TEST_APPROVED_MANIFEST_BYTES = 189_389
+TEST_APPROVED_MANIFEST_BYTES = 189_457
 TEST_APPROVED_MANIFEST_SHA256 = (
-    "aff700379a0442fdda4b538b2dac03b3aa5693fb3d47b1b935ade9240e52d991"
+    "3ea0247f8dc1fa4e09b59e9d472d0c4ab005f4a4c4ed9ee07bb96bc189ae11e2"
 )
 TEST_APPROVED_SEMANTIC_SHA256 = (
-    "af48a8b1cdff701324a8700e42a603779cede81e633b8caad050d1148252265c"
+    "ecce2eaa81668317ff29cd0e24743f09510ca469290ebd5682b3ceabdcb04c68"
 )
 
 
@@ -92,16 +92,12 @@ def _canonical_test_json(document: dict[str, object]) -> str:
 _TEST_PRECISION = 60
 
 
-def _test_exp(value: float) -> float:
+def _test_log_uniform(lower: float, upper: float, unit: float) -> float:
     with localcontext() as context:
         context.prec = _TEST_PRECISION
-        return float(Decimal(value).exp())
-
-
-def _test_log(value: float) -> float:
-    with localcontext() as context:
-        context.prec = _TEST_PRECISION
-        return float(Decimal(value).ln())
+        low = Decimal(lower).ln()
+        high = Decimal(upper).ln()
+        return float((low + (high - low) * Decimal(unit)).exp())
 
 
 def _test_norm(components: object) -> float:
@@ -342,16 +338,11 @@ def test_release_parameters_replay_the_declared_log_uniform_draw_recipe(
             direction_norm = _test_norm(direction_draw)
         direction = direction_draw / direction_norm
         stratum = case["stratum_index"]
-        range_r = _test_exp(
-            float(rng.uniform(_test_log(edges[stratum]), _test_log(edges[stratum + 1])))
+        range_r = _test_log_uniform(
+            edges[stratum], edges[stratum + 1], float(rng.random())
         )
-        mass = _test_exp(
-            float(
-                rng.uniform(
-                    _test_log(TEST_MASS_BOUNDS[0]),
-                    _test_log(TEST_MASS_BOUNDS[1]),
-                )
-            )
+        mass = _test_log_uniform(
+            TEST_MASS_BOUNDS[0], TEST_MASS_BOUNDS[1], float(rng.random())
         )
         position = direction * range_r * TEST_R_HEAD
 
@@ -389,10 +380,11 @@ def test_release_records_exact_generator_head_controls_and_analysis(
         "generator": "numpy.random.Generator",
         "parameter_draw_recipe": (
             "normal(3) / norm, retry exact zero norm; "
-            "exp(uniform(log(stratum_lower), log(stratum_upper))); "
-            "exp(uniform(log(0.02), log(0.08))); "
-            "exp, log and norm evaluated at 40 decimal digits and rounded once, "
-            "so the population does not depend on the host C library"
+            "log_uniform(stratum_lower, stratum_upper, random()); "
+            "log_uniform(0.02, 0.08, random()); "
+            "only the raw uniform comes from NumPy -- norm and the log-uniform "
+            "map are evaluated at 40 decimal digits and rounded once, so the "
+            "population does not depend on host float arithmetic or the C library"
         ),
         "seed_sequence": "numpy.random.SeedSequence",
         "spawn_policy": (

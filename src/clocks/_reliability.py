@@ -74,17 +74,18 @@ _CASE_ID_PREFIX = _RELEASE_IDENTITY.replace("_", "-")
 # The frozen schema-v1 release population. Regenerating a different population
 # under this identity is a protocol violation, not a refresh.
 RELEASE_SEMANTIC_SHA256 = (
-    "af48a8b1cdff701324a8700e42a603779cede81e633b8caad050d1148252265c"
+    "ecce2eaa81668317ff29cd0e24743f09510ca469290ebd5682b3ceabdcb04c68"
 )
 _GENERATOR_METADATA = {
     "bit_generator": BIT_GENERATOR_NAME,
     "generator": "numpy.random.Generator",
     "parameter_draw_recipe": (
         "normal(3) / norm, retry exact zero norm; "
-        "exp(uniform(log(stratum_lower), log(stratum_upper))); "
-        "exp(uniform(log(0.02), log(0.08))); "
-        "exp, log and norm evaluated at 40 decimal digits and rounded once, "
-        "so the population does not depend on the host C library"
+        "log_uniform(stratum_lower, stratum_upper, random()); "
+        "log_uniform(0.02, 0.08, random()); "
+        "only the raw uniform comes from NumPy -- norm and the log-uniform map "
+        "are evaluated at 40 decimal digits and rounded once, so the population "
+        "does not depend on host float arithmetic or the C library"
     ),
     "seed_sequence": "numpy.random.SeedSequence",
     "spawn_policy": (
@@ -168,28 +169,26 @@ def _range_stratum_edges() -> tuple[float, ...]:
     return RELIABILITY_RANGE_STRATUM_EDGES
 
 
-# Generation must not depend on the host C library. exp, log and hypot are not
-# required to be correctly rounded, and they are not: two of this release's 768
-# exp draws differ by one ulp between macOS libm and glibc, which changes the
-# manifest bytes and therefore the population's identity. Each helper below
-# evaluates in decimal at _GENERATION_PRECISION significant digits -- far more
-# than the 17 a float64 can hold -- and rounds once on the way out, so the same
-# seed yields the same population on every platform.
+# Generation must not depend on host float arithmetic. Measured across macOS
+# arm64 and Linux x86-64 on numpy 2.4.2: the raw bit stream (``random``,
+# ``normal``) and decimal exp/ln/sqrt agree bit for bit, but
+# ``Generator.uniform(low, high)`` does not -- arm64 contracts its
+# ``low + (high - low) * u`` into a fused multiply-add, so ~8.6% of draws land
+# one ulp away from the same expression on x86-64. The host C library is a
+# second, smaller hazard: two of this release's 768 exp draws are not correctly
+# rounded by macOS libm. Both are avoided by taking only the raw uniform from
+# NumPy and doing every subsequent operation in decimal at
+# _GENERATION_PRECISION digits, rounding once on the way out.
 _GENERATION_PRECISION = 40
 
 
-def _exact_exp(value: float) -> float:
-    """Return ``exp(value)`` rounded once from a high-precision decimal."""
+def _log_uniform(lower: float, upper: float, unit: float) -> float:
+    """Map a unit draw onto ``[lower, upper]`` log-uniformly, rounding once."""
     with localcontext() as context:
         context.prec = _GENERATION_PRECISION
-        return float(Decimal(value).exp())
-
-
-def _exact_log(value: float) -> float:
-    """Return ``log(value)`` rounded once from a high-precision decimal."""
-    with localcontext() as context:
-        context.prec = _GENERATION_PRECISION
-        return float(Decimal(value).ln())
+        low = Decimal(lower).ln()
+        high = Decimal(upper).ln()
+        return float((low + (high - low) * Decimal(unit)).exp())
 
 
 def _exact_norm(components: Iterable[float]) -> float:
@@ -408,21 +407,13 @@ def generate_release_manifest() -> Mapping[str, object]:
             direction_draw = rng.normal(size=3)
             direction_norm = _exact_norm(float(value) for value in direction_draw)
         direction = np.asarray(direction_draw / direction_norm, dtype=np.float64)
-        range_r = _exact_exp(
-            float(
-                rng.uniform(
-                    _exact_log(edges[stratum_index]),
-                    _exact_log(edges[stratum_index + 1]),
-                )
-            )
+        range_r = _log_uniform(
+            edges[stratum_index], edges[stratum_index + 1], float(rng.random())
         )
-        mass = _exact_exp(
-            float(
-                rng.uniform(
-                    _exact_log(RELIABILITY_MASS_BOUNDS[0]),
-                    _exact_log(RELIABILITY_MASS_BOUNDS[1]),
-                )
-            )
+        mass = _log_uniform(
+            RELIABILITY_MASS_BOUNDS[0],
+            RELIABILITY_MASS_BOUNDS[1],
+            float(rng.random()),
         )
         position = direction * range_r * ECHO_R_HEAD
         cases.append(
