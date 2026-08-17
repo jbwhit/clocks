@@ -623,6 +623,38 @@ def test_crlb_std_is_stable_for_tiny_valid_singular_values() -> None:
     assert minimum_eigenvalue >= -psd_tolerance
 
 
+def test_symmetrization_is_exact_at_both_ends_of_the_float64_range() -> None:
+    """Making the Gram symmetric must not itself perturb the Gram.
+
+    Both arithmetic routes to symmetry fail somewhere this function has to
+    work. ``(F + F.T) / 2`` overflows to infinity for entries just under the
+    float64 maximum -- the eigensolver then reports 'Eigenvalues did not
+    converge' rather than anything a caller could act on. ``0.5*F + 0.5*F.T``
+    survives that but rounds away real bits of a subnormal, and subnormal Gram
+    matrices are precisely what the surrounding rescaling exists to preserve.
+    Mirroring one triangle is exact at both ends.
+    """
+    near_maximum = _stable_fisher_information(np.full((1, 4), 1e154))
+
+    assert np.all(np.isfinite(near_maximum))
+    assert_array_equal(near_maximum, np.full((4, 4), 1e308))
+    assert_array_equal(near_maximum, near_maximum.T)
+
+    scaled_jacobian = np.random.default_rng(3).normal(size=(26, 4)) * 1e-161
+    subnormal = _stable_fisher_information(scaled_jacobian)
+    scale = float(np.max(np.abs(scaled_jacobian)))
+    normalized = scaled_jacobian / scale
+    raw = (normalized.T @ normalized * scale) * scale
+
+    assert np.min(np.abs(subnormal[subnormal != 0.0])) < np.finfo(np.float64).tiny
+    assert_array_equal(subnormal, subnormal.T)
+    # Every published entry is exactly one of the two computed triangles, so no
+    # bits were invented or lost on the way to symmetry.
+    assert np.all((subnormal == raw) | (subnormal == raw.T))
+    # And that is a real distinction here: averaging would have moved entries.
+    assert np.any(subnormal != 0.5 * raw + 0.5 * raw.T)
+
+
 def test_exact_zero_matrix_has_exact_zero_fisher_information() -> None:
     assert_array_equal(_stable_fisher_information(np.zeros((3, 4))), np.zeros((4, 4)))
 

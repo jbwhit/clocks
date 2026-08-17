@@ -1201,11 +1201,17 @@ class TestArbitraryEcholocationCase:
                 "proposal_scale": 2.38,
             }
         ]
-        assert (
-            result.ess_target,
-            result.rejuvenation_steps,
-            result.proposal_scale,
-        ) != (
+        # The echoed controls must be the requested values exactly, not merely
+        # something other than the defaults: a runner that reported a third set
+        # of numbers would satisfy an inequality check.
+        assert result.n_particles == 7
+        assert result.noise_std == 0.003
+        assert result.ess_target == 0.55
+        assert result.rejuvenation_steps == 3
+        assert result.proposal_scale == 2.38
+        # ... and those values must genuinely differ from the defaults, or every
+        # assertion here would also hold for a runner that ignored them.
+        assert (0.55, 3, 2.38) != (
             scenarios.ECHO_ESS_TARGET,
             scenarios.ECHO_REJUVENATION_STEPS,
             scenarios.ECHO_PROPOSAL_SCALE,
