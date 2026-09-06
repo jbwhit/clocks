@@ -930,3 +930,38 @@ def test_failed_model_comparison_update_rolls_back_every_filter(
     assert comparison.evidence() == before_evidence
     for key, particle_filter in filters.items():
         _assert_filter_matches_snapshot(particle_filter, **snapshots[key])
+
+
+@pytest.mark.parametrize("offset", [-1e6, -1e16, 1e6, 1e16])
+def test_log_weight_normalization_preserves_ratios_under_large_offsets(
+    offset: float,
+) -> None:
+    from clocks.inference import _normalize_log_weights
+
+    weights, evidence = _normalize_log_weights(np.array([offset, offset - 2, -np.inf]))
+    expected = np.array([1 / (1 + np.exp(-2)), 1 / (1 + np.exp(2)), 0.0])
+    np.testing.assert_allclose(weights, expected, rtol=1e-15, atol=0.0)
+    assert weights.sum() == pytest.approx(1.0, abs=1e-15)
+    assert evidence == pytest.approx(offset + np.log1p(np.exp(-2)), abs=1e-9)
+
+
+def test_constant_unlikely_observation_keeps_equal_weights_and_finite_evidence() -> (
+    None
+):
+    pf = ParticleFilter(
+        3,
+        lambda rng, n: np.zeros((n, 1)),
+        lambda params: np.array([0.99]),
+        1e-5,
+        log_prior_density=lambda particles: np.zeros(len(particles)),
+        forward_model_batch=lambda particles: np.full((len(particles), 1), 0.99),
+    )
+    state = pf.update(Observation(np.array([1.0]), 0.0))
+
+    np.testing.assert_allclose(state.weights, np.full(3, 1 / 3), rtol=1e-15)
+    expected_log_evidence = -0.5 * ((1 - 0.99) / 1e-5) ** 2 - np.log(
+        1e-5 * np.sqrt(2 * np.pi)
+    )
+    assert pf.log_evidence == pytest.approx(expected_log_evidence, rel=0, abs=1e-9)
+    assert state.observations_seen == 1
+    assert pf.last_diagnostics.tempering_stages == 1
