@@ -49,7 +49,7 @@ its declared regime rather than merely keeping the square root real.
 
 ## Scaling to reality
 
-At Earth's surface, $2\Phi/c^2 \approx 1.4 \times 10^{-9}$ — the dip the
+At Earth's surface, $2\Phi/c^2 \approx -1.4 \times 10^{-9}$ — the dip the
 demos paint at a few percent is, for real planetary fields, parts per
 billion. Under the enforced policy, the largest possible rate decrease is
 $1-\sqrt{0.9}\approx5.13\%$; the shipped ground truths are shallower.

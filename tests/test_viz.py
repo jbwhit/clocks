@@ -718,6 +718,34 @@ class TestEcholocationDashboard:
 
 
 class TestAnimateEcholocation:
+    def test_diffuse_posterior_renders_when_mean_is_outside_physical_support(
+        self, tmp_path: Path
+    ) -> None:
+        from clocks._scenarios import (
+            build_echolocation_filter,
+            build_head_lattice,
+            echo_mass_config,
+        )
+        from clocks.physics import PhysicsDomainError
+
+        head = build_head_lattice()
+        pf = build_echolocation_filter(seed=0, n_particles=200, noise_std=0.1)
+        output = tmp_path / "diffuse.gif"
+        animate_echolocation(
+            clock_array=head,
+            mass_config=echo_mass_config(2.0),
+            observations=[Observation(np.zeros(27), 0.0)],
+            filter_observations=[Observation(np.zeros(26), 0.0)],
+            pf=pf,
+            output_path=output,
+        )
+
+        assert output.exists()
+        assert pf.state.observations_seen == 1
+        mean = pf.estimate()["mean"]
+        with pytest.raises(PhysicsDomainError):
+            clock_rates(MassConfig(mean[:3].reshape(1, 3), mean[3:]), head)
+
     @staticmethod
     def _paired_streams() -> tuple[list[Observation], list[Observation]]:
         from clocks._scenarios import make_echo_observations

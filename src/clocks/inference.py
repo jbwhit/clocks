@@ -284,7 +284,11 @@ def _normalize_log_weights(
             "All particles have zero weight; the prior or forward model is "
             "inconsistent with the observation"
         )
-    return np.exp(values - log_normalizer), log_normalizer
+    # Subtracting the full normalizer loses its small log-sum correction when
+    # all log weights share a large offset. Normalize in the shifted scale;
+    # the unshifted normalizer is still needed for the evidence increment.
+    shifted = np.exp(values - np.max(values))
+    return shifted / shifted.sum(), log_normalizer
 
 
 def _next_beta(
