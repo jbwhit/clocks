@@ -109,8 +109,8 @@ def plot_centered_rates(
 ) -> None:
     """Centered (differential) rates by clock index: prediction vs observed.
 
-    ``predicted_centered`` is the forward model at the filter's current
-    estimate, centered — so the panel shows the fit improving over frames.
+    ``predicted_centered`` is the weighted posterior mean of the particles'
+    predicted clock rates, with the across-clock mean removed.
     """
     idx = np.arange(len(observed))
     ax.bar(
