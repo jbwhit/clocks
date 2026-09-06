@@ -1,6 +1,7 @@
 """Tests for the observation noise model."""
 
 import numpy as np
+import pytest
 
 from clocks.noise import (
     add_clock_noise,
@@ -80,3 +81,29 @@ class TestLogLikelihoodBatch:
         predicted_batch = np.ones((50, 2)) * 0.9
         result = log_likelihood_gaussian_batch(observed, predicted_batch, 0.01)
         assert result.shape == (50,)
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("noise_std", [0.0, -0.01, np.nan, np.inf])
+def test_likelihood_rejects_invalid_noise(batch: bool, noise_std: float) -> None:
+    observed = np.array([0.9, 0.95, 0.99])
+    function = log_likelihood_gaussian_batch if batch else log_likelihood_gaussian
+    predicted = observed[None, :] if batch else observed
+    with pytest.raises(ValueError, match="noise_std"):
+        function(observed, predicted, noise_std)
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_likelihood_rejects_broadcast_channel_mismatch(batch: bool) -> None:
+    function = log_likelihood_gaussian_batch if batch else log_likelihood_gaussian
+    predicted = np.array([[0.9]]) if batch else np.array([0.9])
+    with pytest.raises(ValueError, match="shape|channel"):
+        function(np.array([0.9, 0.95, 0.99]), predicted, 0.01)
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_likelihood_rejects_column_vector_observation(batch: bool) -> None:
+    function = log_likelihood_gaussian_batch if batch else log_likelihood_gaussian
+    predicted = np.array([[0.9, 0.95]]) if batch else np.array([0.9, 0.95])
+    with pytest.raises(ValueError, match="1-D"):
+        function(np.array([[0.9], [0.95]]), predicted, 0.01)
