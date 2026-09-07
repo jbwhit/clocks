@@ -291,6 +291,22 @@ def _normalize_log_weights(
     return shifted / shifted.sum(), log_normalizer
 
 
+def _centering_shift(log_likelihood: NDArray[np.float64]) -> float:
+    """Offset to remove from a scaled log likelihood before adding log weights.
+
+    Near a magnitude of 1e16 the spacing between doubles exceeds 1, so
+    ``np.log(weights) + scaled_log_likelihood`` rounds the order-one weight
+    information away and every particle collapses to the same value. Removing
+    the maximum first keeps the addition in a scale where the weights survive.
+
+    A non-finite maximum (all ``-inf``, or any ``+inf``/NaN) is replaced by
+    zero so the caller still produces the degenerate log weights that
+    :func:`_normalize_log_weights` rejects loudly.
+    """
+    shift = float(np.max(log_likelihood))
+    return shift if math.isfinite(shift) else 0.0
+
+
 def _next_beta(
     weights: NDArray[np.floating],
     observation_log_likelihood: NDArray[np.floating],
@@ -309,7 +325,9 @@ def _next_beta(
         base = np.log(weights_array)
 
     def ess_at(candidate: float) -> float:
-        normalized, _ = _normalize_log_weights(base + (candidate - beta) * likelihood)
+        scaled = (candidate - beta) * likelihood
+        centered = scaled - _centering_shift(scaled)
+        normalized, _ = _normalize_log_weights(base + centered)
         return _effective_sample_size(normalized)
 
     if ess_at(1.0) >= target_ess:
@@ -682,10 +700,15 @@ class ParticleFilter:
             )
             delta = next_beta - beta
             with np.errstate(divide="ignore", invalid="ignore"):
-                candidate_log_weights = np.log(weights) + delta * observation_ll
+                scaled_ll = delta * observation_ll
+                shift = _centering_shift(scaled_ll)
+                candidate_log_weights = np.log(weights) + (scaled_ll - shift)
             weights, log_increment = _normalize_log_weights(candidate_log_weights)
-            self.log_evidence += log_increment
-            evidence_increments.append(log_increment)
+            # The shift left the weights untouched, so it belongs to the
+            # evidence: log_increment is the normalizer of the centered weights.
+            increment = log_increment + shift
+            self.log_evidence += increment
+            evidence_increments.append(increment)
             beta = next_beta
             stages += 1
 

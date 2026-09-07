@@ -6,6 +6,7 @@ import warnings
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 from scipy.special import logsumexp
 from scipy.stats import multivariate_normal, norm
 
@@ -965,3 +966,187 @@ def test_constant_unlikely_observation_keeps_equal_weights_and_finite_evidence()
     assert pf.log_evidence == pytest.approx(expected_log_evidence, rel=0, abs=1e-9)
     assert state.observations_seen == 1
     assert pf.last_diagnostics.tempering_stages == 1
+
+
+def _echolocation_style_filter() -> ParticleFilter:
+    """Two particles that differ only in a channel far below the noise floor."""
+
+    def forward_batch(particles: np.ndarray) -> np.ndarray:
+        predictions = np.empty((len(particles), 2))
+        predictions[:, 0] = 1.0 + 1e-9 * particles[:, 0]
+        predictions[:, 1] = 1.0
+        return predictions
+
+    return ParticleFilter(
+        2,
+        lambda rng, n: np.array([[-1.0], [1.0]]),
+        lambda params: forward_batch(np.atleast_2d(params))[0],
+        1e-9,
+        log_prior_density=lambda particles: np.zeros(len(particles)),
+        forward_model_batch=forward_batch,
+        ess_target=0.8,
+        rng=np.random.default_rng(0),
+    )
+
+
+def test_huge_constant_log_likelihood_preserves_nonuniform_weights() -> None:
+    """A constant but enormous log likelihood must not erase prior weights.
+
+    The second observation misses one channel by 1.5e8 noise widths, so its log
+    likelihood is ``-1.125e16`` for *both* particles.  A likelihood that is
+    constant across particles leaves the posterior unchanged, yet
+    ``log(weights) + delta * likelihood`` quantizes the order-one
+    ``log(weights)`` away at that magnitude (the float spacing near 1e16 is
+    2.0) and collapses the particles toward equal weight.
+
+    ``test_constant_unlikely_observation_keeps_equal_weights_and_finite_evidence``
+    cannot catch this: it starts from uniform weights, whose collapse is
+    indistinguishable from the correct answer.
+    """
+    pf = _echolocation_style_filter()
+
+    first = pf.update(Observation(np.array([1.0 + 0.2e-9, 1.0]), 0.0))
+    np.testing.assert_allclose(first.weights, [0.40131236, 0.59868764], rtol=1e-7)
+    evidence_after_first = pf.log_evidence
+
+    unlikely = Observation(np.array([1.0 + 0.2e-9, 1.0 + 0.15]), 1.0)
+    # Premise of the test: both particles are exactly this (un)likely, at a
+    # magnitude where one float step is 2.0.
+    shared = pf._observation_log_likelihood(pf.state.particles, unlikely)
+    assert shared[0] == shared[1] < -1e16
+
+    second = pf.update(unlikely)
+
+    np.testing.assert_allclose(second.weights, first.weights, rtol=1e-12, atol=0.0)
+    assert pf.last_diagnostics.tempering_stages == 1
+    # A likelihood constant across particles contributes exactly its own value
+    # to the log evidence and nothing to the weights.
+    assert pf.last_log_evidence_increments == pytest.approx(
+        (float(shared[0]),), rel=1e-15
+    )
+    assert pf.log_evidence == pytest.approx(
+        evidence_after_first + float(shared[0]), rel=1e-15
+    )
+
+
+def _flat_filter(n_particles: int) -> ParticleFilter:
+    """A filter whose likelihood is always overridden by ``_pin_log_likelihood``."""
+    return ParticleFilter(
+        n_particles,
+        lambda rng, n: np.arange(n, dtype=float).reshape(n, 1),
+        lambda params: np.zeros(1),
+        1.0,
+        log_prior_density=lambda particles: np.zeros(len(particles)),
+        forward_model_batch=lambda particles: np.zeros((len(particles), 1)),
+        ess_target=0.4,
+        rng=np.random.default_rng(0),
+    )
+
+
+def _pin_log_likelihood(
+    monkeypatch: pytest.MonkeyPatch,
+    particle_filter: ParticleFilter,
+    values: NDArray[np.float64],
+) -> None:
+    monkeypatch.setattr(
+        particle_filter,
+        "_observation_log_likelihood",
+        lambda particles, observation: values,
+    )
+
+
+def _filter_with_nonuniform_weights(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[ParticleFilter, NDArray[np.float64]]:
+    """Run one ordinary update so the weights are distinct and unresampled."""
+    pf = _flat_filter(3)
+    _pin_log_likelihood(monkeypatch, pf, np.array([0.0, -0.5, -1.0]))
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+    assert len(set(state.weights.tolist())) == 3
+    return pf, state.weights.copy()
+
+
+@pytest.mark.parametrize("offset", [0.0, -1e6, -1e10, -1e16, 1e16])
+def test_constant_offset_log_likelihood_leaves_the_posterior_unchanged(
+    monkeypatch: pytest.MonkeyPatch, offset: float
+) -> None:
+    """An observation equally (un)likely for every particle is uninformative.
+
+    The weights must come through bit-for-bit whatever the shared magnitude,
+    and the offset must land in the evidence instead of in the weights.
+    """
+    pf, before = _filter_with_nonuniform_weights(monkeypatch)
+    evidence_before = pf.log_evidence
+    _pin_log_likelihood(monkeypatch, pf, np.full(3, offset))
+
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+
+    np.testing.assert_allclose(state.weights, before, rtol=1e-15, atol=0.0)
+    assert pf.last_diagnostics.tempering_stages == 1
+    assert pf.last_log_evidence_increments == pytest.approx((offset,), abs=1e-12)
+    assert pf.log_evidence == pytest.approx(evidence_before + offset, abs=1e-9)
+
+
+@pytest.mark.parametrize("offset", [0.0, -1e16, 1e16])
+def test_impossible_particles_get_exactly_zero_weight_under_large_offsets(
+    monkeypatch: pytest.MonkeyPatch, offset: float
+) -> None:
+    """A ``-inf`` mixed with huge finite values still zeroes only that particle."""
+    pf, before = _filter_with_nonuniform_weights(monkeypatch)
+    _pin_log_likelihood(monkeypatch, pf, np.array([offset, offset, -np.inf]))
+
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+
+    assert state.weights[2] == 0.0
+    expected = before[:2] / before[:2].sum()
+    np.testing.assert_allclose(state.weights[:2], expected, rtol=1e-15, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param(np.full(3, -np.inf), id="all-minus-inf"),
+        pytest.param(np.array([0.0, np.inf, -1.0]), id="plus-inf"),
+        pytest.param(np.array([0.0, np.nan, -1.0]), id="nan"),
+        pytest.param(np.array([-1e16, np.inf, -1e16]), id="plus-inf-large-offset"),
+        pytest.param(np.array([-1e16, np.nan, -1e16]), id="nan-large-offset"),
+    ],
+)
+def test_update_rejects_degenerate_log_likelihoods(
+    monkeypatch: pytest.MonkeyPatch, values: NDArray[np.float64]
+) -> None:
+    """Centering must not silence the existing loud failure."""
+    pf = _flat_filter(3)
+    _pin_log_likelihood(monkeypatch, pf, values)
+
+    with pytest.raises(RuntimeError, match="All particles have zero weight"):
+        pf.update(Observation(np.array([0.0]), 0.0))
+
+    assert pf.state.observations_seen == 0
+    assert pf.log_evidence == 0.0
+
+
+@pytest.mark.parametrize("offset", [0.0, -1e6, -1e10, -1e16, 1e16])
+def test_next_beta_reaches_one_whatever_the_shared_likelihood_magnitude(
+    offset: float,
+) -> None:
+    """The ESS probe must see the real spread, not a shared offset's rounding.
+
+    ``base + (candidate - beta) * likelihood`` loses the order-one ``base`` at
+    large magnitudes, so the probe reports an ESS that belongs to a different
+    posterior and the schedule refuses a single-stage update it should accept.
+    """
+    weights = np.array([0.7, 0.2, 0.1])
+    spread = np.array([0.0, -4.0, -8.0])
+    posterior = weights * np.exp(spread)
+    posterior /= posterior.sum()
+    exact_ess = 1.0 / np.sum(posterior**2)
+
+    beta = _next_beta(
+        weights,
+        offset + spread,
+        0.0,
+        target_ess=exact_ess * (1.0 - 1e-12),
+    )
+
+    assert beta == 1.0
