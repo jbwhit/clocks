@@ -304,21 +304,37 @@ def _density_potential_batch(
     integration_limit: float,
     n_quad: int,
 ) -> NDArray[np.float64]:
+    """Integrate each Gaussian profile against the clock kernel.
+
+    The kernel ``1 / sqrt((x - c)^2 + h^2)`` is only ``h = track_offset`` wide, so
+    a uniform grid spanning the density's own support steps straight over its peak
+    once ``track_offset / sigma`` falls below roughly ``2 * integration_limit /
+    n_quad``. Substituting ``x = c + h * sinh(u)`` makes
+    ``sqrt((x - c)^2 + h^2) = h * cosh(u)`` and ``dx = h * cosh(u) du``, so the
+    kernel cancels analytically and the integrand becomes a plain smooth Gaussian
+    in ``u`` that the same uniform grid resolves at every offset. The substitution
+    is always available because ``_validate_density_context`` requires a positive
+    ``track_offset`` for this model.
+    """
     mu = params_batch[:, 0]
     sigma = params_batch[:, 1]
     amplitude = params_batch[:, 2]
-    lo = mu - integration_limit * sigma
-    hi = mu + integration_limit * sigma
-    t = np.linspace(0.0, 1.0, n_quad)
-    x_grid = lo[:, np.newaxis] + (hi - lo)[:, np.newaxis] * t
-    z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
-    density = amplitude[:, np.newaxis] * np.exp(-0.5 * z**2)
+    half_width = integration_limit * sigma
+    lo = mu - half_width
+    hi = mu + half_width
+    track_offset = clock_array.track_offset
+    fractions = np.linspace(0.0, 1.0, n_quad)
 
     potential = np.empty((params_batch.shape[0], len(clock_array.positions)))
-    for index, clock_position in enumerate(clock_array.positions[:, 0]):
-        distance = np.sqrt((x_grid - clock_position) ** 2 + clock_array.track_offset**2)
-        with np.errstate(over="ignore", invalid="ignore"):
-            potential[:, index] = np.trapezoid(-density / distance, x_grid, axis=1)
+    with np.errstate(over="ignore", invalid="ignore"):
+        for index, clock_position in enumerate(clock_array.positions[:, 0]):
+            u_lo = np.arcsinh((lo - clock_position) / track_offset)
+            u_hi = np.arcsinh((hi - clock_position) / track_offset)
+            u_grid = u_lo[:, np.newaxis] + (u_hi - u_lo)[:, np.newaxis] * fractions
+            x_grid = clock_position + track_offset * np.sinh(u_grid)
+            z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
+            density = amplitude[:, np.newaxis] * np.exp(-0.5 * z**2)
+            potential[:, index] = np.trapezoid(-density, u_grid, axis=1)
     return potential
 
 

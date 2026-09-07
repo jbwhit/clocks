@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import pytest
 
+from clocks._support import density_support_mask
 from clocks.physics import (
     WEAK_FIELD_LIMIT,
     PhysicsDomainError,
@@ -617,6 +618,94 @@ class TestGaussianDensity:
                 atol=1e-4,
                 err_msg=f"Mismatch for particle {i}",
             )
+
+    @pytest.mark.parametrize("track_offset", [1.0, 0.5, 0.1, 0.05, 0.02, 0.01, 0.005])
+    def test_density_batch_matches_scalar_across_offset_ratios(
+        self, track_offset: float
+    ) -> None:
+        """Batch quadrature must resolve the kernel for any track_offset/sigma.
+
+        The kernel ``1 / sqrt((x - c)^2 + h^2)`` has width ``h = track_offset``.
+        A fixed grid over +/-10 sigma steps over that peak once
+        ``track_offset / sigma`` falls below roughly 0.1, so the assertion is on
+        the relative error of the *delay* ``1 - rate``, which is the physically
+        meaningful quantity; the rates themselves all sit near 1.
+        """
+        ca = ClockArray(positions=np.array([[0.0]]), track_offset=track_offset)
+        params = np.array([0.0, 1.0, 0.001])
+
+        batch_rate = clock_rates_density_gaussian_batch(params[np.newaxis], ca)[0, 0]
+        scalar_rate = clock_rates_density_gaussian(params, ca)[0]
+
+        scalar_delay = 1.0 - scalar_rate
+        assert scalar_delay > 0.0
+        relative_delay_error = abs(batch_rate - scalar_rate) / scalar_delay
+        assert relative_delay_error < 1e-6, (
+            f"track_offset={track_offset}: batch delay differs from adaptive "
+            f"scalar quadrature by {relative_delay_error:.3%}"
+        )
+
+    def test_density_batch_rejects_candidate_outside_weak_field(self) -> None:
+        """A state the scalar model rejects must not survive the batch path.
+
+        With ``track_offset=0.01`` the fixed grid underestimates ``|Phi|`` enough
+        to accept a candidate that genuinely violates ``|2 Phi| <= 0.1``, and the
+        support mask shares the same routine, so both must reject it.
+        """
+        ca = ClockArray(positions=np.array([[0.0]]), track_offset=0.01)
+        params = np.array([0.0, 1.0, 0.005])
+
+        with pytest.raises(PhysicsDomainError):
+            clock_rates_density_gaussian(params, ca)
+        with pytest.raises(PhysicsDomainError):
+            clock_rates_density_gaussian_batch(params[np.newaxis], ca)
+
+        mask = density_support_mask(
+            params[np.newaxis],
+            clock_array=ca,
+            mu_range=(-8.0, 8.0),
+            sigma_range=(0.1, 5.0),
+            amplitude_range=(0.001, 0.03),
+        )
+        assert not bool(mask[0])
+
+    def test_density_batch_matches_scalar_at_shipped_offset(self) -> None:
+        """The shipped demo geometry must not move when quadrature changes.
+
+        Sweeps in-support draws from the demo's own prior ranges at
+        ``track_offset=1.0`` and pins batch/scalar agreement far below the
+        demo's ``NOISE_STD = 0.005``.
+        """
+        ca = self._make_clock_array()
+        rng = np.random.default_rng(20240514)
+        draws = np.column_stack(
+            (
+                rng.uniform(-8.0, 8.0, 400),
+                rng.uniform(0.1, 5.0, 400),
+                rng.uniform(0.001, 0.030, 400),
+            )
+        )
+        supported = draws[
+            density_support_mask(
+                draws,
+                clock_array=ca,
+                mu_range=(-8.0, 8.0),
+                sigma_range=(0.1, 5.0),
+                amplitude_range=(0.001, 0.030),
+            )
+        ]
+        assert len(supported) > 50
+
+        batch_rates = clock_rates_density_gaussian_batch(supported, ca)
+        scalar_rates = np.array(
+            [clock_rates_density_gaussian(params, ca) for params in supported]
+        )
+
+        max_difference = float(np.max(np.abs(batch_rates - scalar_rates)))
+        assert max_difference < 1e-6, (
+            f"shipped configuration moved by {max_difference:.3e}, which is not "
+            "negligible against NOISE_STD=0.005"
+        )
 
     def test_density_batch_shape(self) -> None:
         """Batch output should have correct shape."""
