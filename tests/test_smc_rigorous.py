@@ -1199,9 +1199,10 @@ def test_next_beta_probes_ess_without_multiplying_one_ulp_differences_away() -> 
 def test_next_beta_from_a_partial_temperature_keeps_one_ulp_differences() -> None:
     """A resumed schedule multiplies by ``candidate - beta``, never by ``candidate``.
 
-    The existing regressions only cover ``beta=0 -> 1``, where the multiplier
-    is exactly 1.0 and no rounding can occur.  Starting part-way through the
-    schedule is the case where the multiplier is genuinely fractional.
+    Resuming part-way through the schedule is where the multiplier is
+    genuinely fractional and rounding can erase a one-ULP difference; the
+    ``beta=0 -> 1`` regressions exercise a multiplier of exactly 1.0, where it
+    cannot.
     """
     log_likelihood = _one_ulp_apart_log_likelihood(100)
     weights = np.concatenate(([np.exp(-64.0)], np.ones(100)))
@@ -1290,7 +1291,9 @@ def test_zero_weight_particle_does_not_erase_the_survivors_weights() -> None:
     *surviving* particles' centered likelihoods enormous, so adding their
     order-one log weights loses every bit of the prior information: two
     particles that the first observation separated 0.599/0.401 come back out
-    of the second one at exactly 0.5/0.5, silently.
+    of the second one at exactly 0.5/0.5.  Silently, at the time this was
+    found; the loud all-zero-weight failure that a later fix added now catches
+    the mutant, so the mutation raises rather than returning even weights.
     """
     pf = _weightless_prediction_filter()
     first = pf.update(Observation([1e9, 0.8], 0.0))

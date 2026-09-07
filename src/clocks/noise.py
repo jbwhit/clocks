@@ -26,10 +26,11 @@ def log_likelihood_gaussian(
     """Log-likelihood of observed rates given predicted rates and Gaussian noise.
 
     Inputs must be finite matching nonempty 1-D channel vectors, with a
-    finite, strictly positive noise standard deviation. They are evaluated in
-    float64, as everything else in this library is, so an extended-precision
-    argument is narrowed rather than carried -- and a value outside the float64
-    range is rejected rather than silently accepted.
+    finite, strictly positive noise standard deviation. They are validated and
+    evaluated in float64, so an extended-precision argument is narrowed rather
+    than carried, and a value outside the float64 range is rejected rather than
+    silently accepted. (:func:`add_clock_noise` does no validation and does
+    preserve a wider dtype; these two functions differ deliberately.)
     Returns: scalar log-likelihood (sum over clocks).
     """
     observed = finite_float_array("observed", observed, ndim=1)

@@ -333,8 +333,12 @@ def _tempered_log_weights(
     order-one difference instead of quantizing an enormous one.
 
     The offset restores the identity ``logsumexp(log w + delta * (ll - m)) +
-    delta * m == logsumexp(log w + delta * ll)``, which holds for any finite
-    ``m`` -- including one read from a subset of the particles.
+    delta * m == logsumexp(log w + delta * ll)``, which holds in exact
+    arithmetic for any finite ``m`` -- including one read from a subset of the
+    particles. In floating point the two sides differ in the last bit, and at
+    the underflow boundary that can be the difference between a weight of
+    ``5e-324`` and one of zero, in either direction. A particle rounded to zero
+    there is gone for good, since resampling drops it.
 
     Both tempering call sites go through here; a copy of this arithmetic that
     drifts out of step is precisely the defect this function exists to prevent.
@@ -765,9 +769,12 @@ class ParticleFilter:
                 base_log_weights, observation_ll, delta
             )
             weights, log_increment = _normalize_log_weights(candidate_log_weights)
-            # Centering left the weights untouched, so its scaled offset
-            # belongs to the evidence: log_increment is the normalizer of the
-            # centered weights.
+            # In exact arithmetic centering leaves the weights untouched, so
+            # its scaled offset belongs to the evidence: log_increment is the
+            # normalizer of the centered weights. In floating point it moves
+            # them by the last bit, and near the underflow boundary a weight
+            # can round to zero here that would not have without it -- and
+            # vice versa. Neither ordering is correctly rounded everywhere.
             increment = log_increment + evidence_offset
             self.log_evidence += increment
             evidence_increments.append(increment)
