@@ -640,8 +640,15 @@ class TestGaussianDensity:
 
         scalar_delay = 1.0 - scalar_rate
         assert scalar_delay > 0.0
+        # 1e-5, not the 1e-6 an earlier revision met. That revision reached 1e-7
+        # in exactly this geometry -- a clock on the profile centre with a sharp
+        # kernel, which the sinh substitution is built for -- and was 321 times
+        # the reference magnitude at track_offset 1e-8, 14% out with a far
+        # clock, and 0.57% out at 1e15 coordinates. This one is within 1e-5
+        # everywhere instead of 1e-7 here and unbounded elsewhere. For scale,
+        # `main` misses this case by 29%.
         relative_delay_error = abs(batch_rate - scalar_rate) / scalar_delay
-        assert relative_delay_error < 1e-6, (
+        assert relative_delay_error < 1e-5, (
             f"track_offset={track_offset}: batch delay differs from adaptive "
             f"scalar quadrature by {relative_delay_error:.3%}"
         )
@@ -997,6 +1004,11 @@ class TestBatchEquivalence3D:
         ``|2 Phi|`` exceeds the weak-field limit, so the state must be rejected.
         A fixed grid is entitled to fail here; it is not entitled to return a
         confident wrong number.
+
+        The two routes to that are both exercised: the coarse-``n_quad`` cases
+        are refused outright because the settings cannot resolve the profile,
+        while the default-settings case is now evaluated accurately and rejected
+        on its own merits. Either is correct; certifying it would not be.
         """
         ca = ClockArray(positions=np.array([[clock]]), track_offset=offset)
         values = np.asarray(params, dtype=float)[np.newaxis]
@@ -1017,21 +1029,30 @@ class TestBatchEquivalence3D:
                 values, ca, integration_limit=limit, n_quad=n_quad
             )
 
-    def test_density_batch_does_not_trust_a_lucky_node(self) -> None:
-        """Agreement at one resolution is not convergence.
+    def test_density_batch_no_longer_depends_on_where_a_node_falls(self) -> None:
+        """The same state at two resolutions must give the same verdict.
 
-        At ``track_offset=1e-50`` the plain grid's accuracy is decided by where
-        its nodes happen to fall relative to the clock.  With ``n_quad=200`` the
-        nearest node lands 4.45e-4 away and the answer is right to 6.5e-12; at
-        ``n_quad=400`` the nearest node is 0.023 away and the same grid returns
-        -0.0023 against a true -0.0500, off by a factor of 22.  Neither
-        resolution may be reported as a result.
+        This is the case that showed a spacing rule can certify nothing: with
+        the peak sampled numerically, ``n_quad=200`` was right to 6.5e-12 purely
+        because a node landed 4.45e-4 from the clock, while ``n_quad=400`` put
+        the nearest node 0.023 away and returned -0.0023 against a true -0.0500
+        -- off by a factor of 22 for the same physics.
+
+        With the peak integrated in closed form, node placement stops mattering:
+        both resolutions now agree with the reference to about 3e-5 and both
+        reject, the true ``|2 Phi|`` being 0.10002.
         """
         ca = ClockArray(positions=np.array([[0.7542139006700481]]), track_offset=1e-50)
         values = np.array([[0.0, 1.0, 0.000286]])
 
         for n_quad in (200, 400):
-            with pytest.raises(PhysicsDomainError):
+            potential, converged = _density_potential_batch(values, ca, 10.0, n_quad)
+            assert bool(converged[0, 0]), f"n_quad={n_quad}"
+            assert potential[0, 0] == pytest.approx(-0.050010100607, rel=1e-4)
+            assert abs(2.0 * potential[0, 0]) > WEAK_FIELD_LIMIT
+            # and the forward model refuses it on weak-field grounds, not
+            # because the quadrature could not be trusted
+            with pytest.raises(PhysicsDomainError, match="weak-field"):
                 clock_rates_density_gaussian_batch(
                     values, ca, integration_limit=10.0, n_quad=n_quad
                 )
@@ -1039,19 +1060,18 @@ class TestBatchEquivalence3D:
     def test_density_batch_requires_a_second_opinion_where_a_spike_can_hide(
         self,
     ) -> None:
-        """Refinement alone can certify a wrong answer, so it is not enough.
+        """A peak far narrower than the step size must still be integrated.
 
-        Refining a grid detects a feature that one resolution samples and the
-        other does not.  It is blind to a feature that *neither* samples: with
-        ``track_offset`` far below the step size, both resolutions can miss the
-        kernel's peak in the same way and agree to better than the convergence
-        tolerance while sharing an error four orders larger than it.
+        This geometry was found by searching 60,000 randomized cases for one
+        where a grid agrees with its own refinement to 1e-8 while being wrong by
+        8.9e-05 -- both resolutions missing the kernel's peak identically.  Every
+        revision that sampled the peak numerically either got it wrong or had to
+        refuse it.
 
-        This point was found by searching 60,000 randomized geometries; 128 of
-        them self-converged on the plain grid while materially wrong.  Here the
-        plain grid agrees with its own refinement to within 1e-8 and is still
-        wrong by 8.9e-05 against a reference with the log singularity subtracted
-        in closed form.  The substituted grid disagrees, so neither is reported.
+        Subtracting the peak and integrating it in closed form removes the
+        question: ``track_offset`` is 2.4e-33 here, and the answer is right to
+        1.6e-08 against a reference with the singularity subtracted analytically
+        and cross-checked against a dense sinh grid.
         """
         params = np.array(
             [[2.2268092007579856, 0.36267764966515176, 0.016122017435951475]]
@@ -1063,5 +1083,145 @@ class TestBatchEquivalence3D:
 
         potential, converged = _density_potential_batch(params, ca, 10.0, 400)
 
+        assert bool(converged[0, 0])
+        assert potential[0, 0] == pytest.approx(-0.00765576925719, rel=1e-6)
+
+    @pytest.mark.parametrize(
+        ("label", "params", "clock", "offset", "limit", "n_quad", "expected"),
+        [
+            # Round 4: refinement errors cancelled, certifying a wrong answer at
+            # stock settings. The true |2 Phi| is 0.10000002, so a relative error
+            # above ~1e-7 flips the decision.
+            (
+                "cancellation",
+                [0.0, 1.0, 0.008183956592619043],
+                0.02516924481471722,
+                0.10060301507537686,
+                10.0,
+                200,
+                -0.05000001,
+            ),
+            # Round 4: at 1e16 the float spacing swallowed the nominal spacing,
+            # so the 200- and 399-point grids held the same 11 distinct
+            # coordinates and "refine and compare" compared a grid with itself.
+            # Integrating displacements from mu rather than absolute x keeps the
+            # profile resolved.
+            (
+                "coordinate stagnation",
+                [1e16, 1.0, 0.04014288083333363],
+                1.0000000000000002e16,
+                1.0,
+                10.0,
+                200,
+                -0.05005,
+            ),
+        ],
+    )
+    def test_density_batch_decides_the_cases_refinement_used_to_certify_wrongly(
+        self,
+        label: str,
+        params: list[float],
+        clock: float,
+        offset: float,
+        limit: float,
+        n_quad: int,
+        expected: float,
+    ) -> None:
+        """Both of these were certified, and both were wrong.
+
+        Each sits close enough to the weak-field limit that the error decides
+        the verdict, and each defeated a different part of the previous scheme.
+        Reference values are from adaptive quadrature with the singularity
+        subtracted in closed form, cross-checked against a dense sinh grid.
+        """
+        potential, converged = _density_potential_batch(
+            np.array([params]),
+            ClockArray(positions=np.array([[clock]]), track_offset=offset),
+            limit,
+            n_quad,
+        )
+
+        assert bool(converged[0, 0]), f"{label}: should be certifiable"
+        # 1e-8: the finer grid alone reaches only about 1.5e-7 here, so this
+        # also pins the extrapolation that combines the two resolutions.
+        assert potential[0, 0] == pytest.approx(expected, rel=1e-8)
+        assert abs(2.0 * potential[0, 0]) > WEAK_FIELD_LIMIT, f"{label}: must reject"
+
+    def test_density_batch_refuses_a_grid_too_coarse_for_the_profile(self) -> None:
+        """Refinement cannot see a grid that misses the Gaussian entirely.
+
+        With ``integration_limit=50`` and ``n_quad=5`` the spacing is 25 sigma,
+        so both resolutions integrate essentially nothing and agree on it. That
+        is the one blindness refinement shares across resolutions, so it is
+        checked directly from ``integration_limit`` and ``n_quad`` instead --
+        sigma cancels, making it a property of the settings alone.
+
+        The true ``|2 Phi|`` here is 0.125, so returning the grid's answer would
+        accept a state well outside the weak field.
+        """
+        ca = ClockArray(positions=np.array([[0.0]]), track_offset=1e-50)
+        params = np.array([[40.0, 1.0, 1.0]])
+
+        for n_quad in (5, 15):
+            potential, converged = _density_potential_batch(params, ca, 50.0, n_quad)
+            assert not bool(converged[0, 0]), f"n_quad={n_quad} should be refused"
+            assert np.isnan(potential[0, 0])
+
+        with pytest.raises(PhysicsDomainError):
+            clock_rates_density_gaussian_batch(
+                params, ca, integration_limit=50.0, n_quad=5
+            )
+
+        # Refinement alone rejects the case above, so it does not show what the
+        # gate is for. This one it would certify: the grid steps so far past the
+        # profile that both resolutions integrate nothing and agree on zero --
+        # and zero is comfortably inside the weak field, so it would be
+        # accepted. Searching 39,054 gate-blocked geometries found 1,546 like
+        # it, every one returning -0.0.
+        wide = ClockArray(
+            positions=np.array([[-42.09820702043014]]),
+            track_offset=1.2867393453997262e-42,
+        )
+        missed = np.array(
+            [[10.685230986848268, 0.9506111715051497, 0.48272280699127507]]
+        )
+        potential, converged = _density_potential_batch(missed, wide, 2000.0, 3)
         assert not bool(converged[0, 0])
         assert np.isnan(potential[0, 0])
+
+    def test_density_peak_survives_an_offset_that_overflows_the_ratio(self) -> None:
+        """``displacement / track_offset`` overflows long before the maths fails.
+
+        At ``track_offset = 1e-310`` a displacement of 10 already divides to
+        ``inf``, and the difference of two infinities is NaN -- so the closed
+        form has to reach ``asinh`` without forming the ratio. The answer is
+        exact here because the clock sits outside the integrated span, leaving
+        no singularity in range at all.
+        """
+        ca = ClockArray(positions=np.array([[20.0]]), track_offset=1e-310)
+        params = np.array([[0.0, 1.0, 0.001]])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            potential, converged = _density_potential_batch(params, ca, 10.0, 200)
+
+        assert bool(converged[0, 0])
+        assert potential[0, 0] == pytest.approx(-0.00012564712213, rel=1e-10)
+
+    def test_density_zero_amplitude_is_exactly_zero(self) -> None:
+        """An empty profile has no potential, and must not become NaN.
+
+        The split places a node exactly on the clock, where the subtracted
+        integrand is ``0 / distance``. Squaring ``track_offset`` to form that
+        distance underflows to zero below about 1e-154, making it ``0 / 0``; the
+        amplitude then multiplies NaN and the candidate is refused instead of
+        being the exactly-known answer.
+        """
+        ca = ClockArray(positions=np.array([[0.3]]), track_offset=1e-310)
+        params = np.array([[0.0, 1.0, 0.0]])
+
+        potential, converged = _density_potential_batch(params, ca, 10.0, 200)
+
+        assert bool(converged[0, 0])
+        assert potential[0, 0] == 0.0
+        assert not np.isnan(potential[0, 0])
