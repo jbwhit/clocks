@@ -1415,8 +1415,9 @@ def test_normalization_keeps_a_weight_that_is_barely_representable() -> None:
     """
     weights, _ = _normalize_log_weights(np.array([0.0, 0.0, -744.3]))
 
-    assert weights[2] == pytest.approx(5e-324, rel=1e-12)
-    assert weights[2] > 0.0
+    # The exact value, not merely "positive": at this scale the only doubles
+    # nearby are 0 and 5e-324, so an approximate assertion would pin nothing.
+    assert weights[2] == 5e-324
     np.testing.assert_allclose(weights[:2], [0.5, 0.5], rtol=1e-15)
 
 
@@ -1432,3 +1433,58 @@ def test_normalization_still_rescales_a_shared_large_offset() -> None:
 
     assert weights.sum() == pytest.approx(1.0, rel=1e-12)
     np.testing.assert_allclose(weights[:2], [0.5, 0.5], rtol=1e-15)
+
+
+@pytest.mark.parametrize(
+    ("log_weights", "expected_last"),
+    [
+        # Sixteen identical heads make `total` exactly 16, so log(total) carries
+        # the whole correction and the two-step exponent rounds the wrong way.
+        ([-math.log(17)] * 16 + [-745.1938437237576], 5e-324),
+        # The mirror image: here the two-step form invents a weight that the
+        # exact arithmetic rounds away, so "recover whenever we can" is wrong too.
+        ([50.00000000000005] * 2 + [-694.4400719213812], 0.0),
+    ],
+    ids=["must-recover", "must-not-invent"],
+)
+def test_subnormal_recovery_matches_exact_arithmetic_at_the_boundary(
+    log_weights: list[float], expected_last: float
+) -> None:
+    """Recovery has to round the way the exact arithmetic does, both directions.
+
+    Recomputing a flushed weight is only right if it lands where 150-digit
+    Decimal lands.  Both of these sit one rounding step from the smallest
+    positive double, and they fail in opposite directions: the first is a weight
+    that exists and must be kept, the second a weight that does not exist and
+    must not be conjured.  A recovery tuned to pass either one alone gets the
+    other wrong.
+    """
+    weights, _ = _normalize_log_weights(np.array(log_weights))
+
+    assert weights[-1] == expected_last
+    assert weights.sum() == pytest.approx(1.0, rel=1e-12)
+
+
+def test_large_peak_recovery_does_not_invent_a_weight() -> None:
+    """When the normalizer's correction is lost, only the two-step form is right.
+
+    ``log_normalizer`` is ``peak + log(total)``, and above about 3.6e16 the ULP
+    exceeds ``log(total)``, so forming it rounds the correction away and
+    ``log_normalizer == peak``.  Subtracting it then omits the division
+    entirely, conjuring ``1e-323`` where the exact weight rounds to zero -- the
+    opposite error to the one the recovery exists to fix, and the regime the
+    shifted scale was introduced for in the first place.
+
+    Searching this window found the two forms disagreeing in every one of 2,977
+    cases where recovery fires, always this way round.
+    """
+    peak = 6.015853047297475e16
+    tail = 6.015853047297401e16
+    values = np.array([peak] * 10 + [tail])
+
+    assert float(logsumexp(values)) == peak, "precondition: the correction is lost"
+
+    weights, _ = _normalize_log_weights(values)
+
+    assert weights[-1] == 0.0
+    assert weights.sum() == pytest.approx(1.0, rel=1e-12)

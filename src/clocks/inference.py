@@ -294,11 +294,24 @@ def _normalize_log_weights(
     # Exponentiating and then dividing rounds twice, and the second rounding can
     # flush a subnormal weight to zero. That is not a rounding detail: a
     # particle at zero weight is dropped by resampling and no later observation
-    # can revive it. Folding the normalizer into the exponent recovers those in
-    # a single rounding, and only those, so every other weight is untouched.
+    # can revive it. Recompute just those, and only those, so every other weight
+    # is untouched.
+    #
+    # Which exponent is closer to the true one depends on whether the normalizer
+    # survived being formed. Normally ``log_normalizer`` is accurate and one
+    # subtraction beats three. But it is ``peak + log(total)``, and when the peak
+    # is large that addition rounds the correction away entirely -- the very
+    # thing the shifted scale exists to avoid -- and then only the two-step form
+    # carries it. Neither is exact: both were measured against 150-digit Decimal,
+    # and each is the strictly better one in the regime the other loses.
     lost = (weights == 0.0) & (shifted > 0.0)
     if np.any(lost):
-        weights = np.where(lost, np.exp(values - peak - np.log(total)), weights)
+        recovered = (
+            np.exp(values - log_normalizer)
+            if log_normalizer != peak
+            else np.exp(values - peak - np.log(total))
+        )
+        weights = np.where(lost, recovered, weights)
     return weights, log_normalizer
 
 
