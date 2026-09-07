@@ -6,7 +6,6 @@ import copy
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from decimal import Decimal, localcontext
 from numbers import Integral
 from typing import TypedDict
 
@@ -23,9 +22,6 @@ _WEIGHT_SUM_EPS_MULTIPLIER = 4.0
 _UNIT_INTERVAL_MAX = np.nextafter(1.0, 0.0)
 _LOG_SQRT_2PI = 0.5 * math.log(2.0 * math.pi)
 _STATS_ROUNDOFF_MULTIPLIER = 64.0
-# Decimal digits for re-normalizing an underflowed weight. 60 agreed with 400 on
-# every one of 3,842 sampled recoveries.
-_EXACT_RECOVERY_DIGITS = 60
 
 
 def _finite_float(name: str, value: object) -> float:
@@ -278,26 +274,6 @@ def _effective_sample_size(weights: NDArray[np.floating]) -> float:
     return float(1.0 / np.sum(np.asarray(weights, dtype=np.float64) ** 2))
 
 
-def _exactly_normalized(
-    values: NDArray[np.float64], peak: float, total: float
-) -> NDArray[np.float64]:
-    """Correctly rounded ``exp(v - peak) / total`` for weights that underflowed.
-
-    Doubles cannot resolve these: the gap between rounding to zero and rounding
-    to the smallest positive double is narrower than the error of any exponent
-    assembled from them. ``Decimal`` carries the exponent at a precision where
-    the question is decided, and ``float()`` of the result rounds once.
-    """
-    with localcontext() as context:
-        context.prec = _EXACT_RECOVERY_DIGITS
-        origin = Decimal(peak)
-        denominator = Decimal(total)
-        return np.array(
-            [float((Decimal(float(v)) - origin).exp() / denominator) for v in values],
-            dtype=np.float64,
-        )
-
-
 def _normalize_log_weights(
     log_weights: NDArray[np.floating],
 ) -> tuple[NDArray[np.float64], float]:
@@ -308,38 +284,7 @@ def _normalize_log_weights(
             "All particles have zero weight; the prior or forward model is "
             "inconsistent with the observation"
         )
-    # Subtracting the full normalizer loses its small log-sum correction when
-    # all log weights share a large offset. Normalize in the shifted scale;
-    # the unshifted normalizer is still needed for the evidence increment.
-    peak = np.max(values)
-    shifted = np.exp(values - peak)
-    total = shifted.sum()
-    weights = shifted / total
-    # Exponentiating and then dividing rounds twice, and the second rounding can
-    # flush a subnormal weight to zero. That is not a rounding detail: a
-    # particle at zero weight is dropped by resampling and no later observation
-    # can revive it. Recompute just those, and only those, so every other weight
-    # is untouched.
-    #
-    # Exponentiating and then dividing rounds twice, and the second rounding can
-    # flush a subnormal weight to zero. That is not a rounding detail: a
-    # particle at zero weight is dropped by resampling and no later observation
-    # can revive it.
-    #
-    # Every double-precision repair tried here was wrong somewhere. Subtracting
-    # ``log_normalizer`` and building the exponent in two steps are each
-    # correctly rounded where the other is not, and choosing between them by
-    # whether the normalizer survived being formed is worse than either, because
-    # the correction can be partially lost in both directions. So the flushed
-    # entries -- only those, and only when there are any -- are redone in exact
-    # arithmetic, where there is nothing to choose. 60 digits agreed with 400 on
-    # every one of 3,842 sampled recoveries, and the loop cannot run long: an
-    # entry qualifies only by being subnormal after division.
-    lost = (weights == 0.0) & (shifted > 0.0)
-    if np.any(lost):
-        weights = weights.copy()
-        weights[lost] = _exactly_normalized(values[lost], peak, total)
-    return weights, log_normalizer
+    return np.exp(values - log_normalizer), log_normalizer
 
 
 def _centering_shift(
