@@ -344,16 +344,19 @@ def _tempered_log_weights(
     drifts out of step is precisely the defect this function exists to prevent.
     """
     shift = _centering_shift(observation_log_likelihood, base_log_weights)
-    # A non-finite likelihood makes NaN, which reaches the loud all-zero-weight
-    # failure in _normalize_log_weights without a bare numpy warning first.
+    # An invalid likelihood on a live particle makes NaN, which reaches the loud
+    # all-zero-weight failure in _normalize_log_weights without a bare numpy
+    # warning escaping first. A genuine -inf is not an error: it is zero
+    # likelihood, and it correctly yields zero weight.
     with np.errstate(over="ignore", invalid="ignore"):
         spread = observation_log_likelihood - shift
         centered = delta * spread
         # The subtraction can leave the float range while the scaled result
-        # sits well inside it: 1e308 against -1e308 overflows to -inf, yet at
-        # delta 1e-308 the true centered value is only -2. Distributing the
-        # multiplication is exact for those entries -- and only those, because
-        # distributing everywhere is the non-injective arithmetic above.
+        # sits well inside it: centering -1e308 on a shift of 1e308 overflows
+        # to -inf, yet at delta 1e-308 the true centered value is only -2.
+        # Distributing the multiplication recovers those entries to ordinary
+        # rounding -- and is applied to those alone, because distributing
+        # everywhere is the non-injective arithmetic above.
         rescued = delta * observation_log_likelihood - delta * shift
         centered = np.where(np.isinf(spread) & np.isfinite(rescued), rescued, centered)
         log_weights = base_log_weights + centered
@@ -361,8 +364,10 @@ def _tempered_log_weights(
         # the arithmetic made of its centered likelihood. Without this, a dead
         # particle whose likelihood dwarfs the shift contributes -inf + inf,
         # and that NaN poisons the normalizer instead of the zero it owes.
-        alive = base_log_weights > -np.inf
-        return np.where(alive, log_weights, -np.inf), delta * shift
+        # Only an actual -inf is overridden: a NaN base weight is invalid input
+        # and must reach validation rather than be quietly read as zero.
+        dead = base_log_weights == -np.inf
+        return np.where(dead, -np.inf, log_weights), delta * shift
 
 
 def _next_beta(

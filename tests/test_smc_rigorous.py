@@ -1337,8 +1337,10 @@ def test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle() 
 
     Round 2 read the shift from every particle, so the weightless ``1e308``
     drove the supported particle's centered likelihood to ``-inf`` and the
-    step failed loudly.  Centering on the supported particle instead, the
-    spread never enters the arithmetic and the full step is admissible.
+    step failed loudly.  Centering on the supported particle instead, the dead
+    particle can no longer affect the result -- its own centered value still
+    overflows, to ``+inf`` here, and the weightless override discards it -- so
+    the full step is admissible.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -1375,5 +1377,25 @@ def test_all_zero_weights_still_fail_loudly() -> None:
 
     base = np.array([-np.inf, -np.inf])
     log_weights, _ = _tempered_log_weights(base, np.array([1.0, 2.0]), 0.5)
+    with pytest.raises(RuntimeError, match="All particles have zero weight"):
+        _normalize_log_weights(log_weights)
+
+
+def test_nan_base_weight_reaches_validation_instead_of_being_read_as_zero() -> None:
+    """The weightless override must not swallow an invalid weight.
+
+    A dead particle is overridden to ``-inf`` so that ``-inf + inf`` cannot
+    poison the normalizer.  Written as ``base > -inf`` that test is also false
+    for NaN, which would silently reclassify a corrupt weight as a legitimate
+    zero and return a plausible answer.  ``ParticleState`` rejects NaN weights,
+    so this is a guard on the helper rather than a reachable public path.
+    """
+    from clocks.inference import _tempered_log_weights
+
+    log_weights, _ = _tempered_log_weights(
+        np.array([np.nan, 0.0]), np.array([1.0, 2.0]), 0.5
+    )
+
+    assert np.isnan(log_weights[0])
     with pytest.raises(RuntimeError, match="All particles have zero weight"):
         _normalize_log_weights(log_weights)
