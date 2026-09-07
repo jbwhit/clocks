@@ -1391,3 +1391,122 @@ def test_nan_base_weight_reaches_validation_instead_of_being_read_as_zero() -> N
     assert np.isnan(log_weights[0])
     with pytest.raises(RuntimeError, match="All particles have zero weight"):
         _normalize_log_weights(log_weights)
+
+
+@pytest.mark.parametrize("offset", [-1e6, -1e16, 1e6, 1e16])
+def test_log_weight_normalization_preserves_ratios_under_large_offsets(
+    offset: float,
+) -> None:
+    from clocks.inference import _normalize_log_weights
+
+    weights, evidence = _normalize_log_weights(np.array([offset, offset - 2, -np.inf]))
+    expected = np.array([1 / (1 + np.exp(-2)), 1 / (1 + np.exp(2)), 0.0])
+    np.testing.assert_allclose(weights, expected, rtol=1e-15, atol=0.0)
+    assert weights.sum() == pytest.approx(1.0, abs=1e-15)
+    assert evidence == pytest.approx(offset + np.log1p(np.exp(-2)), abs=1e-9)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the shifted scale flushes this subnormal; that is the defect "
+    "this branch exists to fix",
+)
+def test_normalization_keeps_a_weight_that_is_barely_representable() -> None:
+    """Normalizing in the shifted scale must not round a subnormal away.
+
+    Exponentiating and then dividing rounds twice, and the second rounding can
+    flush a weight that IS representable to zero.  A particle at zero weight is
+    unrecoverable -- resampling drops it and no later observation can revive it
+    -- so losing the smallest positive double here is a permanent loss, not a
+    rounding detail.  ``exp(-744.3)/2`` is ``5e-324``, the smallest positive
+    double, confirmed against a 100-digit Decimal.
+    """
+    weights, _ = _normalize_log_weights(np.array([0.0, 0.0, -744.3]))
+
+    # The exact value, not merely "positive": at this scale the only doubles
+    # nearby are 0 and 5e-324, so an approximate assertion would pin nothing.
+    assert weights[2] == 5e-324
+    np.testing.assert_allclose(weights[:2], [0.5, 0.5], rtol=1e-15)
+
+
+def test_normalization_still_rescales_a_shared_large_offset() -> None:
+    """The shifted scale is why the subnormal fix cannot just revert.
+
+    Subtracting the full normalizer loses its log-sum correction when every log
+    weight shares a large offset: at 1e18 the ULP is 128, so ``logsumexp``'s
+    ``+log(2)`` disappears and the weights come back unnormalized.  Both
+    properties have to hold at once.
+    """
+    weights, _ = _normalize_log_weights(np.array([1e18, 1e18, 1e18 - 744.3]))
+
+    assert weights.sum() == pytest.approx(1.0, rel=1e-12)
+    np.testing.assert_allclose(weights[:2], [0.5, 0.5], rtol=1e-15)
+
+
+_ROUNDS_TWICE = pytest.mark.xfail(
+    strict=True,
+    reason="the shifted scale rounds twice; correctly rounding these is the "
+    "open work on this branch",
+)
+
+
+@pytest.mark.parametrize(
+    ("log_weights", "expected_last"),
+    [
+        pytest.param(
+            [-math.log(17)] * 16 + [-745.1938437237576], 5e-324, marks=_ROUNDS_TWICE
+        ),
+        # These two the shifted scale already gets right, so they are ordinary
+        # tests: they pin that a fix must not break what currently works.
+        pytest.param([50.00000000000005] * 2 + [-694.4400719213812], 0.0),
+        pytest.param(
+            [-math.log(129)] * 128 + [-745.1410012423833], 5e-324, marks=_ROUNDS_TWICE
+        ),
+        pytest.param([3.6e12] * 2 + [3599999999255.56], 5e-324, marks=_ROUNDS_TWICE),
+        pytest.param([3.6e16] * 257 + [3.599999999999926e16], 0.0),
+    ],
+    ids=["16-heads", "must-not-invent", "128-heads", "peak-3.6e12", "peak-3.6e16"],
+)
+def test_subnormal_recovery_matches_exact_arithmetic_at_the_boundary(
+    log_weights: list[float], expected_last: float
+) -> None:
+    """Recovery must round where the exact arithmetic rounds, both directions.
+
+    Each of these sits within a rounding step of the gap between zero and the
+    smallest positive double, and they disagree about which double-precision
+    exponent is right: the first two are cases the two-step form gets wrong, the
+    last three are cases subtracting the normalizer gets wrong.  No single
+    double-precision expression passes all five, which is why the flushed
+    entries are redone in exact arithmetic instead.
+
+    Expected values are from 200-digit Decimal.
+    """
+    weights, _ = _normalize_log_weights(np.array(log_weights))
+
+    assert weights[-1] == expected_last
+    assert weights.sum() == pytest.approx(1.0, rel=1e-12)
+
+
+def test_large_peak_recovery_does_not_invent_a_weight() -> None:
+    """When the normalizer's correction is lost, only the two-step form is right.
+
+    ``log_normalizer`` is ``peak + log(total)``, and above about 3.6e16 the ULP
+    exceeds ``log(total)``, so forming it rounds the correction away and
+    ``log_normalizer == peak``.  Subtracting it then omits the division
+    entirely, conjuring ``1e-323`` where the exact weight rounds to zero -- the
+    opposite error to the one the recovery exists to fix, and the regime the
+    shifted scale was introduced for in the first place.
+
+    Searching this window found the two forms disagreeing in every one of 2,977
+    cases where recovery fires, always this way round.
+    """
+    peak = 6.015853047297475e16
+    tail = 6.015853047297401e16
+    values = np.array([peak] * 10 + [tail])
+
+    assert float(logsumexp(values)) == peak, "precondition: the correction is lost"
+
+    weights, _ = _normalize_log_weights(values)
+
+    assert weights[-1] == 0.0
+    assert weights.sum() == pytest.approx(1.0, rel=1e-12)
