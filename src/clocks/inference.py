@@ -287,8 +287,19 @@ def _normalize_log_weights(
     # Subtracting the full normalizer loses its small log-sum correction when
     # all log weights share a large offset. Normalize in the shifted scale;
     # the unshifted normalizer is still needed for the evidence increment.
-    shifted = np.exp(values - np.max(values))
-    return shifted / shifted.sum(), log_normalizer
+    peak = np.max(values)
+    shifted = np.exp(values - peak)
+    total = shifted.sum()
+    weights = shifted / total
+    # Exponentiating and then dividing rounds twice, and the second rounding can
+    # flush a subnormal weight to zero. That is not a rounding detail: a
+    # particle at zero weight is dropped by resampling and no later observation
+    # can revive it. Folding the normalizer into the exponent recovers those in
+    # a single rounding, and only those, so every other weight is untouched.
+    lost = (weights == 0.0) & (shifted > 0.0)
+    if np.any(lost):
+        weights = np.where(lost, np.exp(values - peak - np.log(total)), weights)
+    return weights, log_normalizer
 
 
 def _centering_shift(

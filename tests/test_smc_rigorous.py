@@ -1401,3 +1401,34 @@ def test_nan_base_weight_reaches_validation_instead_of_being_read_as_zero() -> N
     assert np.isnan(log_weights[0])
     with pytest.raises(RuntimeError, match="All particles have zero weight"):
         _normalize_log_weights(log_weights)
+
+
+def test_normalization_keeps_a_weight_that_is_barely_representable() -> None:
+    """Normalizing in the shifted scale must not round a subnormal away.
+
+    Exponentiating and then dividing rounds twice, and the second rounding can
+    flush a weight that IS representable to zero.  A particle at zero weight is
+    unrecoverable -- resampling drops it and no later observation can revive it
+    -- so losing the smallest positive double here is a permanent loss, not a
+    rounding detail.  ``exp(-744.3)/2`` is ``5e-324``, the smallest positive
+    double, confirmed against a 100-digit Decimal.
+    """
+    weights, _ = _normalize_log_weights(np.array([0.0, 0.0, -744.3]))
+
+    assert weights[2] == pytest.approx(5e-324, rel=1e-12)
+    assert weights[2] > 0.0
+    np.testing.assert_allclose(weights[:2], [0.5, 0.5], rtol=1e-15)
+
+
+def test_normalization_still_rescales_a_shared_large_offset() -> None:
+    """The shifted scale is why the subnormal fix cannot just revert.
+
+    Subtracting the full normalizer loses its log-sum correction when every log
+    weight shares a large offset: at 1e18 the ULP is 128, so ``logsumexp``'s
+    ``+log(3)`` disappears and the weights come back unnormalized.  Both
+    properties have to hold at once.
+    """
+    weights, _ = _normalize_log_weights(np.array([1e18, 1e18, 1e18 - 744.3]))
+
+    assert weights.sum() == pytest.approx(1.0, rel=1e-12)
+    np.testing.assert_allclose(weights[:2], [0.5, 0.5], rtol=1e-15)
