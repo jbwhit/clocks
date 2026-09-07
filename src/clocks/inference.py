@@ -297,21 +297,22 @@ def _normalize_log_weights(
     # can revive it. Recompute just those, and only those, so every other weight
     # is untouched.
     #
-    # Which exponent is closer to the true one depends on whether the normalizer
-    # survived being formed. Normally ``log_normalizer`` is accurate and one
-    # subtraction beats three. But it is ``peak + log(total)``, and when the peak
-    # is large that addition rounds the correction away entirely -- the very
-    # thing the shifted scale exists to avoid -- and then only the two-step form
-    # carries it. Neither is exact: both were measured against 150-digit Decimal,
-    # and each is the strictly better one in the regime the other loses.
+    # The exponent is built in two steps rather than by subtracting
+    # ``log_normalizer``. That normalizer is ``peak + log(total)``, and forming
+    # it rounds the correction away once the peak is large -- the very loss the
+    # shifted scale exists to avoid. Measured against 200-digit Decimal over
+    # 9,387 recoveries, the two forms differed 366 times and this one was
+    # correctly rounded in all 366; subtracting the normalizer, in none.
+    #
+    # Not correctly rounded in general, though. Deliberately constructed inputs
+    # sit close enough to the boundary between zero and the smallest subnormal
+    # that no double-precision exponent decides them, and this form errs in both
+    # directions there -- see the xfailing boundary tests and issue #17. What it
+    # does guarantee is that a weight is no longer flushed to zero merely by
+    # rounding twice, which is what regressed against main.
     lost = (weights == 0.0) & (shifted > 0.0)
     if np.any(lost):
-        recovered = (
-            np.exp(values - log_normalizer)
-            if log_normalizer != peak
-            else np.exp(values - peak - np.log(total))
-        )
-        weights = np.where(lost, recovered, weights)
+        weights = np.where(lost, np.exp(values - peak - np.log(total)), weights)
     return weights, log_normalizer
 
 
