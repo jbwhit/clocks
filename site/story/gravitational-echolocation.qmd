@@ -88,8 +88,11 @@ reliability measurement.
 
 ![The echolocation demo. Left: the head lattice, the true exterior mass (star), and the particle cloud, camera orbiting. Right, top to bottom: parameter convergence, mass marginal, differential rates by clock.](../assets/demo_echolocation_3d.gif)
 
-This committed GIF is the current packaged default output from the corrected
-contrast-space SMC implementation.
+This committed GIF is the packaged default output from the corrected
+contrast-space SMC release, not a re-render of the current code. Its
+differential-rates panel draws the forward model evaluated at the posterior
+mean; the code now plots the posterior mean of the particles' own
+predictions, so that panel will change when the assets are next regenerated.
 
 ## How far does the sense reach?
 
