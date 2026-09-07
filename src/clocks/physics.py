@@ -423,9 +423,26 @@ def _quadrature_converged(
     Refinement is only an honest estimate because the singularity is gone. When
     the kernel's peak was integrated numerically, two resolutions could miss it
     identically and agree on the same wrong answer; with the peak in closed form
-    there is no such feature left to miss. Measured against a tight reference,
-    the estimate lands within a factor of 1.5 of the true error wherever the
-    grid resolves the profile at all.
+    there is no such feature left to miss.
+
+    It is an estimate and not a bound, and the difference is measured rather
+    than assumed. Over 19,883 certified samples spanning 40 decades of
+    ``track_offset`` it understated the true error in 144 of them -- 0.72% -- by
+    a median factor of 1.6 and at worst 204. What held anyway is what the caller
+    is promised: the true error of a certified result never exceeded 4.75e-4
+    against a tight reference, inside ``_QUADRATURE_RTOL``, with a median of
+    4.4e-16 and a 99th percentile of 2.3e-4.
+
+    A third-model review predicted the mechanism and a search aimed at it
+    confirmed the mechanism while bounding the consequence. The first-order term
+    from the stepped-over transition is negative, while the Gaussian's curvature
+    contributes positively once the clock sits in the convex tails, so at
+    particular resolutions the two nearly cancel *between* the pair and the gap
+    collapses. Sweeping 312,000 such geometries found 17 certified with the
+    estimate understating more than tenfold, worst 185 -- and the worst true
+    error among them was 6.2e-06, still 160 times inside the tolerance. That
+    margin is why the tolerance is 1e-3 rather than something that looks
+    tighter.
     """
     with np.errstate(over="ignore", invalid="ignore"):
         difference = np.abs(fine - coarse)
@@ -500,6 +517,16 @@ def _density_potential_batch(
             coarse_smooth, fine_smooth = _smooth_integral_pair(
                 params_batch, clock_offset, track_offset, integration_limit, intervals
             )
+            # Halving the step quarters a second-order error, so this cancels
+            # it. Both values come from the same ordinates, so the accuracy is
+            # free -- but the error is only second order where the integrand is
+            # smooth enough. The transition of width ``track_offset`` around the
+            # clock, which the grid steps over when it is narrow, contributes a
+            # FIRST-order term that this does not cancel. Measured, extrapolating
+            # is worse than the finer grid alone in 0.68% of certified samples,
+            # by a median factor of 1.6 and at worst 329; it is kept because the
+            # median case is three to four orders better and the tolerance was
+            # measured to hold regardless.
             extrapolated = (4.0 * fine_smooth - coarse_smooth) / 3.0
             amplitude = params_batch[:, 2]
             coarse = -amplitude * (coarse_smooth + peak)
