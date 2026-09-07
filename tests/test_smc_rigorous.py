@@ -15,7 +15,9 @@ from clocks.inference import (
     GaussianObservationStats,
     ModelComparison,
     ParticleFilter,
+    _effective_sample_size,
     _next_beta,
+    _normalize_log_weights,
 )
 from clocks.types import Observation
 
@@ -969,7 +971,7 @@ def test_constant_unlikely_observation_keeps_equal_weights_and_finite_evidence()
 
 
 def _echolocation_style_filter() -> ParticleFilter:
-    """Two particles that differ only in a channel far below the noise floor."""
+    """Two particles whose predictions differ by two noise widths, in one channel."""
 
     def forward_batch(particles: np.ndarray) -> np.ndarray:
         predictions = np.empty((len(particles), 2))
@@ -1072,8 +1074,11 @@ def test_constant_offset_log_likelihood_leaves_the_posterior_unchanged(
 ) -> None:
     """An observation equally (un)likely for every particle is uninformative.
 
-    The weights must come through bit-for-bit whatever the shared magnitude,
-    and the offset must land in the evidence instead of in the weights.
+    The weights must come through to a relative 1e-15 whatever the shared
+    magnitude, and the offset must land in the evidence instead of in the
+    weights. Normalizing sends them through ``log`` and back through ``exp``,
+    which is why the claim is a tolerance and not bit-for-bit equality; what
+    matters is that the magnitude of the offset does not widen it.
     """
     pf, before = _filter_with_nonuniform_weights(monkeypatch)
     evidence_before = pf.log_evidence
@@ -1150,3 +1155,137 @@ def test_next_beta_reaches_one_whatever_the_shared_likelihood_magnitude(
     )
 
     assert beta == 1.0
+
+
+def _one_ulp_apart_log_likelihood(n_low: int) -> np.ndarray:
+    """One high log likelihood and ``n_low`` values exactly one float step below.
+
+    At a magnitude of 1e18 one float step is 128.0, so the two values describe
+    likelihoods a factor of ``e**128`` apart -- the widest gap the array can
+    express without a second float appearing between them.  ``delta *
+    log_likelihood`` for a fractional ``delta`` can round both to the same
+    float and erase that gap entirely.
+    """
+    high = -1e18
+    low = float(np.nextafter(high, -np.inf))
+    assert high - low == 128.0
+    assert float(np.nextafter(low, np.inf)) == high
+    return np.concatenate(([high], np.full(n_low, low)))
+
+
+def _ess_without_multiplying_first(
+    weights: np.ndarray, log_likelihood: np.ndarray, delta: float
+) -> float:
+    """ESS of a tempering step, computed so the multiplication cannot lose bits."""
+    centered = delta * (log_likelihood - log_likelihood.max())
+    with np.errstate(divide="ignore"):
+        normalized, _ = _normalize_log_weights(np.log(weights) + centered)
+    return _effective_sample_size(normalized)
+
+
+def test_next_beta_probes_ess_without_multiplying_one_ulp_differences_away() -> None:
+    """The ESS probe must scale *centered* log likelihoods, not center scaled ones.
+
+    ``(candidate - beta) * likelihood`` maps two log likelihoods one ULP apart
+    at 1e18 onto the *same* float for many fractional multipliers, so the probe
+    sees a uniform likelihood and reports the prior's ESS.  It then certifies a
+    beta whose real ESS is ~1: the update resamples away the one particle the
+    observation favours by ``e**128``.
+    """
+    log_likelihood = _one_ulp_apart_log_likelihood(100)
+    weights = np.concatenate(([np.exp(-64.0)], np.ones(100)))
+    weights /= weights.sum()
+    target_ess = 80.8
+
+    # Premise: multipliers that collapse the two values onto one float lie in
+    # the range the bisection searches -- this is the one it used to certify.
+    lossy = 0.5766165428796963
+    assert lossy * log_likelihood[0] == lossy * log_likelihood[1]
+
+    beta = _next_beta(weights, log_likelihood, 0.0, target_ess=target_ess)
+
+    assert _ess_without_multiplying_first(
+        weights, log_likelihood, beta
+    ) == pytest.approx(target_ess, rel=1e-9)
+
+
+def test_next_beta_from_a_partial_temperature_keeps_one_ulp_differences() -> None:
+    """A resumed schedule multiplies by ``candidate - beta``, never by ``candidate``.
+
+    The existing regressions only cover ``beta=0 -> 1``, where the multiplier
+    is exactly 1.0 and no rounding can occur.  Starting part-way through the
+    schedule is the case where the multiplier is genuinely fractional.
+    """
+    log_likelihood = _one_ulp_apart_log_likelihood(100)
+    weights = np.concatenate(([np.exp(-64.0)], np.ones(100)))
+    weights /= weights.sum()
+    target_ess = 80.8
+    beta_so_far = 0.25
+    # Premise: the step this probe used to certify from here collapses the two
+    # log likelihoods onto one float.
+    lossy = 0.5767396867449922
+    assert lossy * log_likelihood[0] == lossy * log_likelihood[1]
+
+    beta = _next_beta(weights, log_likelihood, beta_so_far, target_ess=target_ess)
+
+    delta = beta - beta_so_far
+    assert 0.0 < delta < 1.0
+    assert _ess_without_multiplying_first(
+        weights, log_likelihood, delta
+    ) == pytest.approx(target_ess, rel=1e-9)
+    # The importance weights of a step depend on its width alone, so a schedule
+    # resumed at 0.25 must take the same step as one starting from 0.
+    assert delta == pytest.approx(
+        _next_beta(weights, log_likelihood, 0.0, target_ess=target_ess), rel=1e-12
+    )
+
+
+def test_update_stage_keeps_the_particle_favoured_by_one_ulp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tempering loop must center before it scales, exactly as the probe does.
+
+    With a fractional ``delta`` the loop's ``delta * observation_ll`` rounds the
+    one-ULP gap away, both particles keep their prior weights, and the
+    resampler carries the particle the observation rejects by ``e**128`` into
+    the next stage.
+    """
+    log_likelihood = _one_ulp_apart_log_likelihood(1)
+    pf = _flat_filter(2)
+    _pin_log_likelihood(monkeypatch, pf, log_likelihood)
+    monkeypatch.setattr(
+        pf,
+        "_metropolis_move",
+        lambda particles, **kwargs: (particles, inference_module.UpdateDiagnostics()),
+    )
+    # A fractional first stage; the multiplication maps both values onto one float.
+    schedule = iter([0.5766165428796963, 1.0])
+    monkeypatch.setattr(
+        inference_module, "_next_beta", lambda *args, **kwargs: next(schedule)
+    )
+
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+
+    # _flat_filter lays the particles out as [[0.0], [1.0]], so the favoured
+    # one is 0.0; resampling stage 1 must carry only it into stage 2.
+    assert pf.last_diagnostics.tempering_stages == 2
+    assert state.particles[0, 0] == state.particles[1, 0] == 0.0
+
+
+def test_next_beta_refuses_a_likelihood_spread_that_cannot_be_centered() -> None:
+    """An uncenterable spread fails loudly and silently -- an error, not a warning.
+
+    ``1e308 - -1e308`` overflows, so the supported particle's centered log
+    likelihood underflows to ``-inf`` and every weight is zero.  That is the
+    library's existing loud failure; what must not happen is a bare numpy
+    overflow warning escaping to the caller on the way to it.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(RuntimeError, match="All particles have zero weight"):
+            _next_beta(
+                np.array([0.0, 1.0]),
+                np.array([1e308, -1e308]),
+                0.0,
+                target_ess=0.5,
+            )

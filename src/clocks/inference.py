@@ -292,7 +292,7 @@ def _normalize_log_weights(
 
 
 def _centering_shift(log_likelihood: NDArray[np.float64]) -> float:
-    """Offset to remove from a scaled log likelihood before adding log weights.
+    """Offset to remove from a log likelihood before it is scaled and added.
 
     Near a magnitude of 1e16 the spacing between doubles exceeds 1, so
     ``np.log(weights) + scaled_log_likelihood`` rounds the order-one weight
@@ -305,6 +305,36 @@ def _centering_shift(log_likelihood: NDArray[np.float64]) -> float:
     """
     shift = float(np.max(log_likelihood))
     return shift if math.isfinite(shift) else 0.0
+
+
+def _tempered_log_weights(
+    base_log_weights: NDArray[np.float64],
+    observation_log_likelihood: NDArray[np.float64],
+    delta: float,
+) -> tuple[NDArray[np.float64], float]:
+    """Log weights for one tempering step, and the offset owed to the evidence.
+
+    Centering happens *before* the multiplication. ``delta * log_likelihood``
+    is not injective: two log likelihoods one ULP apart at 1e18 differ by 128
+    -- a likelihood ratio of ``e**128`` -- yet a fractional ``delta`` can round
+    both products onto the same float and erase the difference outright.
+    Subtracting the shift from the raw log likelihood first scales an
+    order-one difference instead of quantizing an enormous one.
+
+    The offset is exact for any finite shift, so the caller's evidence is
+    unchanged: ``logsumexp(log w + delta * (ll - m)) + delta * m ==
+    logsumexp(log w + delta * ll)``.
+
+    Both tempering call sites go through here; a copy of this arithmetic that
+    drifts out of step is precisely the defect this function exists to prevent.
+    """
+    shift = _centering_shift(observation_log_likelihood)
+    # An uncenterable spread (|ll| near the float ceiling) overflows to -inf,
+    # and a non-finite likelihood makes NaN; both reach the loud all-zero-weight
+    # failure in _normalize_log_weights without a bare numpy warning first.
+    with np.errstate(over="ignore", invalid="ignore"):
+        centered = delta * (observation_log_likelihood - shift)
+        return base_log_weights + centered, delta * shift
 
 
 def _next_beta(
@@ -325,9 +355,10 @@ def _next_beta(
         base = np.log(weights_array)
 
     def ess_at(candidate: float) -> float:
-        scaled = (candidate - beta) * likelihood
-        centered = scaled - _centering_shift(scaled)
-        normalized, _ = _normalize_log_weights(base + centered)
+        candidate_log_weights, _ = _tempered_log_weights(
+            base, likelihood, candidate - beta
+        )
+        normalized, _ = _normalize_log_weights(candidate_log_weights)
         return _effective_sample_size(normalized)
 
     if ess_at(1.0) >= target_ess:
@@ -699,14 +730,16 @@ class ParticleFilter:
                 target_ess=target_ess,
             )
             delta = next_beta - beta
-            with np.errstate(divide="ignore", invalid="ignore"):
-                scaled_ll = delta * observation_ll
-                shift = _centering_shift(scaled_ll)
-                candidate_log_weights = np.log(weights) + (scaled_ll - shift)
+            with np.errstate(divide="ignore"):
+                base_log_weights = np.log(weights)
+            candidate_log_weights, evidence_offset = _tempered_log_weights(
+                base_log_weights, observation_ll, delta
+            )
             weights, log_increment = _normalize_log_weights(candidate_log_weights)
-            # The shift left the weights untouched, so it belongs to the
-            # evidence: log_increment is the normalizer of the centered weights.
-            increment = log_increment + shift
+            # Centering left the weights untouched, so its scaled offset
+            # belongs to the evidence: log_increment is the normalizer of the
+            # centered weights.
+            increment = log_increment + evidence_offset
             self.log_evidence += increment
             evidence_increments.append(increment)
             beta = next_beta
