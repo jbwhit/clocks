@@ -284,7 +284,17 @@ def _normalize_log_weights(
             "All particles have zero weight; the prior or forward model is "
             "inconsistent with the observation"
         )
-    return np.exp(values - log_normalizer), log_normalizer
+    # Subtracting the full normalizer loses its small log-sum correction when
+    # all log weights share a large offset -- at 1e18 the ULP is 128, so
+    # logsumexp's +log(2) disappears and the weights come back unnormalized.
+    # Normalize in the shifted scale; the unshifted normalizer is still needed
+    # for the evidence increment.
+    #
+    # KNOWN, and why this is on its own branch: dividing after exponentiating
+    # rounds twice, and at the subnormal boundary that is less accurate than the
+    # line above. See the PR for the counterexamples and five review rounds.
+    shifted = np.exp(values - np.max(values))
+    return shifted / shifted.sum(), log_normalizer
 
 
 def _centering_shift(
