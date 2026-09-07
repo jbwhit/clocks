@@ -14,13 +14,9 @@ from clocks.types import ClockArray, MassConfig
 
 WEAK_FIELD_LIMIT = 0.1
 _MAX_ABS_POTENTIAL = WEAK_FIELD_LIMIT / 2.0
-# Points the plain x grid must place across the kernel width before it is
-# trusted; measured to reach machine precision from about 5 upwards.
-_KERNEL_RESOLUTION_FACTOR = 8.0
-# The substituted grid's accuracy argument assumes the profile has decayed at the
-# integration endpoints; below this many sigma the truncated tails dominate and
-# the plain grid is kept instead.
-_MIN_CONTAINED_LIMIT = 6.0
+# Relative agreement required between a grid and its refinement, and between
+# the two independent grids, before a potential is reported at all.
+_QUADRATURE_RTOL = 1e-8
 
 
 class PhysicsDomainError(ValueError):
@@ -361,44 +357,23 @@ def _substituted_quadrature(
     )
 
 
-def _needs_substitution(
-    params: NDArray[np.float64],
-    bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
-    u_bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
-    geometry: tuple[float, float],
-    integration_limit: float,
-    n_quad: int,
+def _quadrature_converged(
+    coarse: NDArray[np.float64], fine: NDArray[np.float64]
 ) -> NDArray[np.bool_]:
-    """Return where the substituted grid must replace the plain one.
+    """Whether refining the grid stopped moving the answer.
 
-    Both halves have to hold. The plain grid has to actually fail: whenever its
-    spacing is at least ``_KERNEL_RESOLUTION_FACTOR`` times finer than
-    ``track_offset`` it resolves the kernel to machine precision, and keeping it
-    there leaves the model's arithmetic bit-identical to the pre-substitution
-    version. And the substituted grid has to succeed: under
-    ``x = c + h * sinh(u)`` the profile becomes a bump of characteristic width
-    ``sigma / hypot(mu - c, h)``, which a uniform ``u`` grid must sample at least
-    once per step. Degenerate bounds -- non-finite ratios from an extreme
-    ``track_offset``, or endpoints that round to the same value -- also keep the
-    plain grid, which is well defined for them.
+    ``fine`` doubles the interval count, so ``|fine - coarse|`` estimates the
+    error of ``coarse`` and bounds the error of ``fine`` conservatively. This is
+    an accuracy criterion, not a resolution one: it asks what the quadrature
+    actually did rather than whether a spacing looks small enough.
     """
-    mu, sigma = params[:, 0], params[:, 1]
-    lo, hi = bounds
-    u_lo, u_hi = u_bounds
-    clock_position, track_offset = geometry
-    if integration_limit < _MIN_CONTAINED_LIMIT:
-        return np.zeros(params.shape[0], dtype=bool)
-    plain_resolves_kernel = (hi - lo) / (
-        n_quad - 1
-    ) * _KERNEL_RESOLUTION_FACTOR <= track_offset
-    bump_width = sigma / np.hypot(mu - clock_position, track_offset)
-    substitution_resolves_profile = (
-        np.isfinite(u_lo)
-        & np.isfinite(u_hi)
-        & (u_hi > u_lo)
-        & ((u_hi - u_lo) / (n_quad - 1) <= bump_width)
-    )
-    return ~plain_resolves_kernel & substitution_resolves_profile
+    with np.errstate(over="ignore", invalid="ignore"):
+        difference = np.abs(fine - coarse)
+        return (
+            np.isfinite(coarse)
+            & np.isfinite(fine)
+            & (difference <= _QUADRATURE_RTOL * np.abs(fine))
+        )
 
 
 def _density_potential_batch(
@@ -406,38 +381,51 @@ def _density_potential_batch(
     clock_array: ClockArray,
     integration_limit: float,
     n_quad: int,
-) -> NDArray[np.float64]:
+) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
     """Integrate each Gaussian profile against the clock kernel.
 
+    Returns the potential and, alongside it, whether each entry is trustworthy.
+    An entry that no grid here could certify comes back as ``nan`` with its flag
+    clear, so a caller must decide what to do about it rather than receive a
+    confident wrong number. ``density_support_mask`` rejects such a candidate;
+    the batch forward model raises.
+
     Two uniform grids are needed because no single one resolves every geometry.
+    The plain ``x`` grid spanning the profile's own support steps over the kernel
+    ``1 / sqrt((x - c)^2 + h^2)`` -- only ``h = track_offset`` wide -- once
+    ``track_offset / sigma`` gets small. Substituting ``x = c + h * sinh(u)``
+    makes ``sqrt((x - c)^2 + h^2) = h * cosh(u)`` and ``dx = h * cosh(u) du``, so
+    the kernel cancels analytically; but that grid spends its points near the
+    clock and starves the profile when the clock lies many sigma away.
 
-    The plain ``x`` grid spanning the profile's own support has spacing
-    ``2 * integration_limit * sigma / (n_quad - 1)``, so it steps straight over
-    the kernel ``1 / sqrt((x - c)^2 + h^2)`` -- which is only ``h = track_offset``
-    wide -- once ``track_offset / sigma`` falls below roughly ``0.1``.
+    Each grid is therefore run at ``n_quad`` and again at ``2 * n_quad - 1``
+    points, and believed only where refinement stops moving its answer
+    (:func:`_quadrature_converged`). Refinement is a real check here because the
+    finer grid contains the coarse nodes and halves their weight, so a feature
+    caught by a shared node is weighted differently by the two.
 
-    Substituting ``x = c + h * sinh(u)`` makes ``sqrt((x - c)^2 + h^2) =
-    h * cosh(u)`` and ``dx = h * cosh(u) du``, so the kernel cancels analytically.
-    That grid is exact where the kernel is sharp, but it spends its points near
-    the clock, so it starves the profile when the clock lies many sigma away.
+    What refinement alone cannot see is a feature that *neither* grid samples.
+    That needs the kernel to be narrower than a step and its peak to lie inside
+    the integrated span; there, and where the plain grid failed outright, the
+    substituted grid is run too and the two must agree before either is
+    believed. The discretizations fail in unrelated ways, so a shared answer is
+    evidence and a split one means neither is knowable here. Where no feature
+    can hide -- the shipped configuration included -- the second grid is not
+    computed at all.
 
-    Each grid is spectrally accurate on the geometry it suits, so this picks
-    between them per candidate and clock rather than merging them -- merging
-    destroys the uniform spacing that both rely on. The plain branch keeps the
-    amplitude inside the quadrature so its arithmetic is unchanged from the
-    pre-substitution model; the substituted branch factors the amplitude out,
-    which keeps an extreme amplitude from overflowing the summation.
+    This replaced a criterion that asked whether a *spacing* looked fine enough
+    relative to ``track_offset``. That question has no bearing on the achieved
+    error: at ``track_offset = 1e-50`` the plain grid's accuracy is decided by
+    where its nodes happen to fall, and it was measured right to 6.5e-12 at
+    ``n_quad = 200`` and wrong by a factor of 22 at ``n_quad = 400``. A spacing
+    rule certifies the first and the second equally.
 
-    Residual limitation, inherited from the fixed point count rather than from
-    the selection: once ``track_offset / sigma`` falls below roughly ``1e-8`` and
-    the clock sits a few sigma from the profile centre, neither grid resolves the
-    integrand and the error is unbounded in the worst case -- measured at 321
-    times the reference magnitude at ``track_offset = 1e-8`` with the clock
-    4.67 sigma out. Selecting between the grids also makes the model
-    discontinuous where the choice flips; across the kernel-resolution threshold
-    the two branches agree to about ``7e-16``, but in the unresolved corner above
-    the jump can approach the full width of the accepted rate range. Closing
-    either needs error-controlled subdivision rather than a fixed grid.
+    Residual limitation, stated because it is not closed: the corroboration rule
+    rests on a sufficient condition for a feature being sampled, not a proof
+    that the integrand has no other structure a fixed grid can miss. Two
+    resolutions agreeing on the same wrong answer is what no fixed-grid scheme
+    can rule out; requiring an independent grid wherever a spike could hide is
+    what makes it unlikely rather than merely undetected.
     """
     mu = params_batch[:, 0]
     sigma = params_batch[:, 1]
@@ -446,40 +434,80 @@ def _density_potential_batch(
     hi = mu + half_width
     track_offset = clock_array.track_offset
     fractions = np.linspace(0.0, 1.0, n_quad)
+    fine_fractions = np.linspace(0.0, 1.0, 2 * n_quad - 1)
+    spacing = (hi - lo) / (n_quad - 1)
 
-    potential = np.empty((params_batch.shape[0], len(clock_array.positions)))
+    shape = (params_batch.shape[0], len(clock_array.positions))
+    potential = np.full(shape, np.nan)
+    converged = np.zeros(shape, dtype=bool)
     with np.errstate(over="ignore", invalid="ignore"):
         for index, clock_position in enumerate(clock_array.positions[:, 0]):
-            u_lo = np.arcsinh((lo - clock_position) / track_offset)
-            u_hi = np.arcsinh((hi - clock_position) / track_offset)
-            substitute = _needs_substitution(
-                params_batch,
-                (lo, hi),
-                (u_lo, u_hi),
-                (clock_position, track_offset),
-                integration_limit,
-                n_quad,
+            plain_coarse = _plain_quadrature(
+                params_batch, (lo, hi), clock_position, track_offset, fractions
             )
-            column = potential[:, index]
+            plain_fine = _plain_quadrature(
+                params_batch, (lo, hi), clock_position, track_offset, fine_fractions
+            )
+            plain_ok = _quadrature_converged(plain_coarse, plain_fine)
+            # A spike can only hide between nodes when the kernel is narrower
+            # than a step AND its peak lies inside the integrated span. Wider,
+            # or with the clock outside, every feature is sampled and refinement
+            # alone is honest; otherwise refinement can agree on two equally
+            # wrong answers, so the other grid must corroborate before either is
+            # believed.
+            undersampled = (
+                (spacing >= track_offset)
+                & (clock_position > lo - spacing)
+                & (clock_position < hi + spacing)
+            )
 
-            plain_rows = ~substitute
-            if np.any(plain_rows):
-                column[plain_rows] = _plain_quadrature(
-                    params_batch[plain_rows],
-                    (lo[plain_rows], hi[plain_rows]),
-                    clock_position,
-                    track_offset,
-                    fractions,
+            substituted_fine = np.full(params_batch.shape[0], np.nan)
+            substituted_ok = np.zeros(params_batch.shape[0], dtype=bool)
+            # The substituted grid is only worth its cost where the plain one
+            # failed or cannot be taken on its own word, so the transform is
+            # evaluated for those rows alone rather than the whole batch.
+            candidate = np.flatnonzero(~plain_ok | undersampled)
+            if candidate.size:
+                u_lo = np.arcsinh((lo[candidate] - clock_position) / track_offset)
+                u_hi = np.arcsinh((hi[candidate] - clock_position) / track_offset)
+                usable = np.isfinite(u_lo) & np.isfinite(u_hi) & (u_hi > u_lo)
+                if np.any(usable):
+                    rows = candidate[usable]
+                    sub_coarse = _substituted_quadrature(
+                        params_batch[rows],
+                        (u_lo[usable], u_hi[usable]),
+                        clock_position,
+                        track_offset,
+                        fractions,
+                    )
+                    sub_fine = _substituted_quadrature(
+                        params_batch[rows],
+                        (u_lo[usable], u_hi[usable]),
+                        clock_position,
+                        track_offset,
+                        fine_fractions,
+                    )
+                    substituted_fine[rows] = sub_fine
+                    substituted_ok[rows] = _quadrature_converged(sub_coarse, sub_fine)
+
+            # Two independent discretizations of the same integral: agreement is
+            # evidence, and a split verdict means neither is knowable here.
+            corroborated = (
+                plain_ok
+                & substituted_ok
+                & (
+                    np.abs(plain_fine - substituted_fine)
+                    <= _QUADRATURE_RTOL * np.abs(plain_fine)
                 )
-            if np.any(substitute):
-                column[substitute] = _substituted_quadrature(
-                    params_batch[substitute],
-                    (u_lo[substitute], u_hi[substitute]),
-                    clock_position,
-                    track_offset,
-                    fractions,
-                )
-    return potential
+            )
+            trust_plain = plain_ok & (~undersampled | corroborated)
+            trust_substituted = substituted_ok & (~plain_ok | corroborated)
+
+            column_ok = trust_plain | trust_substituted
+            column = np.where(trust_plain, plain_fine, substituted_fine)
+            potential[:, index] = np.where(column_ok, column, np.nan)
+            converged[:, index] = column_ok
+    return potential, converged
 
 
 def _density_integration_bounds(
@@ -552,7 +580,12 @@ def clock_rates_density_gaussian_batch(
     if count < 2:
         raise ValueError("n_quad must be an integer >= 2")
     _density_integration_bounds(values[:, 0], values[:, 1], limit, clock_array)
-    potential = _density_potential_batch(values, clock_array, limit, count)
+    potential, converged = _density_potential_batch(values, clock_array, limit, count)
+    if not np.all(converged):
+        raise PhysicsDomainError(
+            "density quadrature did not converge; refine n_quad or widen "
+            "track_offset relative to sigma"
+        )
     if not np.all(np.isfinite(potential)):
         raise PhysicsDomainError("computed density potential must be finite")
     rates = time_dilation_factor(potential.reshape(-1))
