@@ -291,7 +291,10 @@ def _normalize_log_weights(
     return shifted / shifted.sum(), log_normalizer
 
 
-def _centering_shift(log_likelihood: NDArray[np.float64]) -> float:
+def _centering_shift(
+    log_likelihood: NDArray[np.float64],
+    base_log_weights: NDArray[np.float64],
+) -> float:
     """Offset to remove from a log likelihood before it is scaled and added.
 
     Near a magnitude of 1e16 the spacing between doubles exceeds 1, so
@@ -299,11 +302,23 @@ def _centering_shift(log_likelihood: NDArray[np.float64]) -> float:
     information away and every particle collapses to the same value. Removing
     the maximum first keeps the addition in a scale where the weights survive.
 
+    The maximum is taken over the particles that still *have* weight. A
+    particle already driven to zero keeps its log likelihood, and that
+    likelihood can still be the largest in the array; centering on it leaves
+    every surviving particle's centered likelihood enormous, which brings back
+    the very rounding this shift exists to prevent.
+
     A non-finite maximum (all ``-inf``, or any ``+inf``/NaN) is replaced by
     zero so the caller still produces the degenerate log weights that
     :func:`_normalize_log_weights` rejects loudly.
     """
-    shift = float(np.max(log_likelihood))
+    supported = log_likelihood[base_log_weights > -np.inf]
+    if not supported.size:
+        # No particle carries weight, so every shift yields the same all-``-inf``
+        # log weights that :func:`_normalize_log_weights` rejects loudly. Zero
+        # just keeps that path clear of a maximum over an empty array.
+        return 0.0
+    shift = float(np.max(supported))
     return shift if math.isfinite(shift) else 0.0
 
 
@@ -321,20 +336,33 @@ def _tempered_log_weights(
     Subtracting the shift from the raw log likelihood first scales an
     order-one difference instead of quantizing an enormous one.
 
-    The offset is exact for any finite shift, so the caller's evidence is
-    unchanged: ``logsumexp(log w + delta * (ll - m)) + delta * m ==
-    logsumexp(log w + delta * ll)``.
+    The offset restores the identity ``logsumexp(log w + delta * (ll - m)) +
+    delta * m == logsumexp(log w + delta * ll)``, which holds for any finite
+    ``m`` -- including one read from a subset of the particles.
 
     Both tempering call sites go through here; a copy of this arithmetic that
     drifts out of step is precisely the defect this function exists to prevent.
     """
-    shift = _centering_shift(observation_log_likelihood)
-    # An uncenterable spread (|ll| near the float ceiling) overflows to -inf,
-    # and a non-finite likelihood makes NaN; both reach the loud all-zero-weight
+    shift = _centering_shift(observation_log_likelihood, base_log_weights)
+    # A non-finite likelihood makes NaN, which reaches the loud all-zero-weight
     # failure in _normalize_log_weights without a bare numpy warning first.
     with np.errstate(over="ignore", invalid="ignore"):
-        centered = delta * (observation_log_likelihood - shift)
-        return base_log_weights + centered, delta * shift
+        spread = observation_log_likelihood - shift
+        centered = delta * spread
+        # The subtraction can leave the float range while the scaled result
+        # sits well inside it: 1e308 against -1e308 overflows to -inf, yet at
+        # delta 1e-308 the true centered value is only -2. Distributing the
+        # multiplication is exact for those entries -- and only those, because
+        # distributing everywhere is the non-injective arithmetic above.
+        rescued = delta * observation_log_likelihood - delta * shift
+        centered = np.where(np.isinf(spread) & np.isfinite(rescued), rescued, centered)
+        log_weights = base_log_weights + centered
+        # A particle with no weight has none after tempering either, whatever
+        # the arithmetic made of its centered likelihood. Without this, a dead
+        # particle whose likelihood dwarfs the shift contributes -inf + inf,
+        # and that NaN poisons the normalizer instead of the zero it owes.
+        alive = base_log_weights > -np.inf
+        return np.where(alive, log_weights, -np.inf), delta * shift
 
 
 def _next_beta(

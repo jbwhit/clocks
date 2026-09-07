@@ -1272,20 +1272,108 @@ def test_update_stage_keeps_the_particle_favoured_by_one_ulp(
     assert state.particles[0, 0] == state.particles[1, 0] == 0.0
 
 
-def test_next_beta_refuses_a_likelihood_spread_that_cannot_be_centered() -> None:
-    """An uncenterable spread fails loudly and silently -- an error, not a warning.
+# The 1e308-spread case this file used to pin as a loud failure now succeeds:
+# the ``1e308`` belonged to a *weightless* particle, so it never should have
+# reached the arithmetic. See
+# test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle for
+# the same call, and test_all_zero_weights_still_fail_loudly for the loud
+# failure that genuinely has no live particle to center on.
 
-    ``1e308 - -1e308`` overflows, so the supported particle's centered log
-    likelihood underflows to ``-inf`` and every weight is zero.  That is the
-    library's existing loud failure; what must not happen is a bare numpy
-    overflow warning escaping to the caller on the way to it.
+
+def _weightless_prediction_filter(ess_target: float = 0.4) -> ParticleFilter:
+    """Three particles whose predictions are their own coordinates."""
+    particles = np.array([[0.0, 0.0], [1e9, 0.0], [1e9, 2.0]])
+    return ParticleFilter(
+        3,
+        lambda rng, n: particles.copy(),
+        lambda p: p,
+        1.0,
+        log_prior_density=lambda p: np.zeros(len(p)),
+        forward_model_batch=lambda p: p,
+        ess_target=ess_target,
+    )
+
+
+def test_zero_weight_particle_does_not_erase_the_survivors_weights() -> None:
+    """The centering shift must come from particles that still carry weight.
+
+    A particle driven to zero weight keeps its log likelihood, and that
+    likelihood can still be the array maximum.  Centering on it leaves the
+    *surviving* particles' centered likelihoods enormous, so adding their
+    order-one log weights loses every bit of the prior information: two
+    particles that the first observation separated 0.599/0.401 come back out
+    of the second one at exactly 0.5/0.5, silently.
+    """
+    pf = _weightless_prediction_filter()
+    first = pf.update(Observation([1e9, 0.8], 0.0))
+    assert first.weights[0] == 0.0
+    np.testing.assert_allclose(first.weights[1:], [0.59868766, 0.40131234], rtol=1e-6)
+
+    # The second observation is equally likely under both survivors, so it
+    # carries no information about them and must leave their ratio alone.
+    second = pf.update(Observation([0.0, 1.0], 1.0))
+    assert second.weights[0] == 0.0
+    np.testing.assert_allclose(second.weights[1:], first.weights[1:], rtol=1e-12)
+
+
+def test_tempering_keeps_a_zero_weight_particle_at_zero_without_nan() -> None:
+    """``-inf + inf`` is NaN; a weightless particle must stay weightless.
+
+    Once the shift comes from the live particles, a zero-weight particle whose
+    likelihood is astronomically *larger* has a centered value that overflows
+    to ``+inf``.  Added to its ``-inf`` log weight that is NaN, which would
+    poison the normalizer instead of contributing the zero it should.
+    """
+    from clocks.inference import _tempered_log_weights
+
+    base = np.array([-np.inf, 0.0])
+    log_weights, _ = _tempered_log_weights(base, np.array([1e308, -1e308]), 1.0)
+    assert log_weights[0] == -np.inf
+    assert not np.isnan(log_weights).any()
+
+
+def test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle() -> None:
+    """The 1e308 spread is only uncenterable if the dead particle sets the shift.
+
+    Round 2 read the shift from every particle, so the weightless ``1e308``
+    drove the supported particle's centered likelihood to ``-inf`` and the
+    step failed loudly.  Centering on the supported particle instead, the
+    spread never enters the arithmetic and the full step is admissible.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        with pytest.raises(RuntimeError, match="All particles have zero weight"):
-            _next_beta(
-                np.array([0.0, 1.0]),
-                np.array([1e308, -1e308]),
-                0.0,
-                target_ess=0.5,
-            )
+        beta = _next_beta(
+            np.array([0.0, 1.0]),
+            np.array([1e308, -1e308]),
+            0.0,
+            target_ess=0.5,
+        )
+    assert beta == 1.0
+
+
+def test_small_delta_rescues_a_spread_the_raw_subtraction_cannot_hold() -> None:
+    """``delta * (ll - shift)`` must not lose to an intermediate overflow.
+
+    With both particles supported, ``1e308 - -1e308`` overflows to ``-inf``
+    before ``delta`` can bring it back into range -- yet the true centered
+    value at ``delta = 1e-308`` is merely ``-2``.  The overflow silently
+    handed all the weight to one particle and understated the evidence; no
+    error fired, because one weight survived.
+    """
+    from clocks.inference import _tempered_log_weights
+
+    base = np.log(np.array([0.5, 0.5]))
+    log_weights, offset = _tempered_log_weights(base, np.array([1e308, -1e308]), 1e-308)
+    weights, log_increment = _normalize_log_weights(log_weights)
+    np.testing.assert_allclose(weights, [0.88079708, 0.11920292], rtol=1e-7)
+    assert log_increment + offset == pytest.approx(0.4337808304830273, rel=1e-12)
+
+
+def test_all_zero_weights_still_fail_loudly() -> None:
+    """Restricting the shift to live particles must not mute the loud failure."""
+    from clocks.inference import _tempered_log_weights
+
+    base = np.array([-np.inf, -np.inf])
+    log_weights, _ = _tempered_log_weights(base, np.array([1.0, 2.0]), 0.5)
+    with pytest.raises(RuntimeError, match="All particles have zero weight"):
+        _normalize_log_weights(log_weights)
