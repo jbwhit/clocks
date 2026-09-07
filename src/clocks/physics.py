@@ -14,6 +14,9 @@ from clocks.types import ClockArray, MassConfig
 
 WEAK_FIELD_LIMIT = 0.1
 _MAX_ABS_POTENTIAL = WEAK_FIELD_LIMIT / 2.0
+# Points the plain x grid must place across the kernel width before it is
+# trusted; measured to reach machine precision from about 5 upwards.
+_KERNEL_RESOLUTION_FACTOR = 8.0
 
 
 class PhysicsDomainError(ValueError):
@@ -298,6 +301,88 @@ def _validate_density_params(value: object, *, batch: bool) -> NDArray[np.float6
     return params
 
 
+def _gaussian_shape(
+    x_grid: NDArray[np.float64],
+    mu: NDArray[np.float64],
+    sigma: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Return the unit-amplitude Gaussian profile sampled on ``x_grid``."""
+    z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
+    return np.exp(-0.5 * z**2)
+
+
+def _plain_quadrature(
+    params: NDArray[np.float64],
+    bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
+    clock_position: float,
+    track_offset: float,
+    fractions: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Integrate the kernel directly on the profile's own uniform ``x`` grid."""
+    mu, sigma, amplitude = params[:, 0], params[:, 1], params[:, 2]
+    lo, hi = bounds
+    x_grid = lo[:, np.newaxis] + (hi - lo)[:, np.newaxis] * fractions
+    density = amplitude[:, np.newaxis] * _gaussian_shape(x_grid, mu, sigma)
+    distance = np.sqrt((x_grid - clock_position) ** 2 + track_offset**2)
+    return np.trapezoid(-density / distance, x_grid, axis=1)
+
+
+def _substituted_quadrature(
+    params: NDArray[np.float64],
+    u_bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
+    clock_position: float,
+    track_offset: float,
+    fractions: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Integrate under ``x = c + h * sinh(u)``, where the kernel cancels.
+
+    The amplitude is applied after the quadrature so that an extreme but finite
+    amplitude cannot overflow the summation of the ordinates.
+    """
+    mu, sigma, amplitude = params[:, 0], params[:, 1], params[:, 2]
+    u_lo, u_hi = u_bounds
+    u_grid = u_lo[:, np.newaxis] + (u_hi - u_lo)[:, np.newaxis] * fractions
+    x_grid = clock_position + track_offset * np.sinh(u_grid)
+    return amplitude * np.trapezoid(-_gaussian_shape(x_grid, mu, sigma), u_grid, axis=1)
+
+
+def _needs_substitution(
+    params: NDArray[np.float64],
+    bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
+    u_bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
+    clock_position: float,
+    track_offset: float,
+    n_quad: int,
+) -> NDArray[np.bool_]:
+    """Return where the substituted grid must replace the plain one.
+
+    Both halves have to hold. The plain grid has to actually fail: whenever its
+    spacing is at least ``_KERNEL_RESOLUTION_FACTOR`` times finer than
+    ``track_offset`` it resolves the kernel to machine precision, and keeping it
+    there leaves the model's arithmetic bit-identical to the pre-substitution
+    version. And the substituted grid has to succeed: under
+    ``x = c + h * sinh(u)`` the profile becomes a bump of characteristic width
+    ``sigma / hypot(mu - c, h)``, which a uniform ``u`` grid must sample at least
+    once per step. Degenerate bounds -- non-finite ratios from an extreme
+    ``track_offset``, or endpoints that round to the same value -- also keep the
+    plain grid, which is well defined for them.
+    """
+    mu, sigma = params[:, 0], params[:, 1]
+    lo, hi = bounds
+    u_lo, u_hi = u_bounds
+    plain_resolves_kernel = (hi - lo) / (
+        n_quad - 1
+    ) * _KERNEL_RESOLUTION_FACTOR <= track_offset
+    bump_width = sigma / np.hypot(mu - clock_position, track_offset)
+    substitution_resolves_profile = (
+        np.isfinite(u_lo)
+        & np.isfinite(u_hi)
+        & (u_hi > u_lo)
+        & ((u_hi - u_lo) / (n_quad - 1) <= bump_width)
+    )
+    return ~plain_resolves_kernel & substitution_resolves_profile
+
+
 def _density_potential_batch(
     params_batch: NDArray[np.float64],
     clock_array: ClockArray,
@@ -306,19 +391,32 @@ def _density_potential_batch(
 ) -> NDArray[np.float64]:
     """Integrate each Gaussian profile against the clock kernel.
 
-    The kernel ``1 / sqrt((x - c)^2 + h^2)`` is only ``h = track_offset`` wide, so
-    a uniform grid spanning the density's own support steps straight over its peak
-    once ``track_offset / sigma`` falls below roughly ``2 * integration_limit /
-    n_quad``. Substituting ``x = c + h * sinh(u)`` makes
-    ``sqrt((x - c)^2 + h^2) = h * cosh(u)`` and ``dx = h * cosh(u) du``, so the
-    kernel cancels analytically and the integrand becomes a plain smooth Gaussian
-    in ``u`` that the same uniform grid resolves at every offset. The substitution
-    is always available because ``_validate_density_context`` requires a positive
-    ``track_offset`` for this model.
+    Two uniform grids are needed because no single one resolves every geometry.
+
+    The plain ``x`` grid spanning the profile's own support has spacing
+    ``2 * integration_limit * sigma / (n_quad - 1)``, so it steps straight over
+    the kernel ``1 / sqrt((x - c)^2 + h^2)`` -- which is only ``h = track_offset``
+    wide -- once ``track_offset / sigma`` falls below roughly ``0.1``.
+
+    Substituting ``x = c + h * sinh(u)`` makes ``sqrt((x - c)^2 + h^2) =
+    h * cosh(u)`` and ``dx = h * cosh(u) du``, so the kernel cancels analytically.
+    That grid is exact where the kernel is sharp, but it spends its points near
+    the clock, so it starves the profile when the clock lies many sigma away.
+
+    Each grid is spectrally accurate on the geometry it suits, so this picks
+    between them per candidate and clock rather than merging them -- merging
+    destroys the uniform spacing that both rely on. The plain branch keeps the
+    amplitude inside the quadrature so its arithmetic is unchanged from the
+    pre-substitution model; the substituted branch factors the amplitude out,
+    which keeps an extreme amplitude from overflowing the summation.
+
+    Residual limitation: for ``track_offset / sigma`` below about ``1e-10`` with
+    the clock a few sigma from the profile centre, neither grid resolves the
+    integrand at this fixed point count and the result can carry a percent-level
+    error. Closing that corner needs error-controlled subdivision.
     """
     mu = params_batch[:, 0]
     sigma = params_batch[:, 1]
-    amplitude = params_batch[:, 2]
     half_width = integration_limit * sigma
     lo = mu - half_width
     hi = mu + half_width
@@ -330,11 +428,33 @@ def _density_potential_batch(
         for index, clock_position in enumerate(clock_array.positions[:, 0]):
             u_lo = np.arcsinh((lo - clock_position) / track_offset)
             u_hi = np.arcsinh((hi - clock_position) / track_offset)
-            u_grid = u_lo[:, np.newaxis] + (u_hi - u_lo)[:, np.newaxis] * fractions
-            x_grid = clock_position + track_offset * np.sinh(u_grid)
-            z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
-            density = amplitude[:, np.newaxis] * np.exp(-0.5 * z**2)
-            potential[:, index] = np.trapezoid(-density, u_grid, axis=1)
+            substitute = _needs_substitution(
+                params_batch,
+                (lo, hi),
+                (u_lo, u_hi),
+                clock_position,
+                track_offset,
+                n_quad,
+            )
+            column = potential[:, index]
+
+            plain_rows = ~substitute
+            if np.any(plain_rows):
+                column[plain_rows] = _plain_quadrature(
+                    params_batch[plain_rows],
+                    (lo[plain_rows], hi[plain_rows]),
+                    clock_position,
+                    track_offset,
+                    fractions,
+                )
+            if np.any(substitute):
+                column[substitute] = _substituted_quadrature(
+                    params_batch[substitute],
+                    (u_lo[substitute], u_hi[substitute]),
+                    clock_position,
+                    track_offset,
+                    fractions,
+                )
     return potential
 
 

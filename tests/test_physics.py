@@ -9,6 +9,7 @@ from clocks._support import density_support_mask
 from clocks.physics import (
     WEAK_FIELD_LIMIT,
     PhysicsDomainError,
+    _density_potential_batch,
     _point_mass_potential_batch,
     clock_rates,
     clock_rates_batch,
@@ -706,6 +707,68 @@ class TestGaussianDensity:
             f"shipped configuration moved by {max_difference:.3e}, which is not "
             "negligible against NOISE_STD=0.005"
         )
+
+    def test_density_batch_rejects_far_clock_with_tiny_offset(self) -> None:
+        """A clock many sigma from the profile must not lose the profile.
+
+        The ``sinh`` substitution concentrates its grid at the clock, so with the
+        clock 9.25 sigma away and a tiny track_offset it starves the profile and
+        understates ``|Phi|`` by about 14%, wrongly accepting this state. Here
+        the true ``|2 Phi|`` is about 0.1042, so both paths must reject it.
+        """
+        ca = ClockArray(positions=np.array([[9.25]]), track_offset=1e-12)
+        params = np.array([0.0, 1.0, 0.19])
+
+        with pytest.raises(PhysicsDomainError):
+            clock_rates_density_gaussian(params, ca)
+        with pytest.raises(PhysicsDomainError):
+            clock_rates_density_gaussian_batch(params[np.newaxis], ca)
+
+        mask = density_support_mask(
+            params[np.newaxis],
+            clock_array=ca,
+            mu_range=(-10.0, 10.0),
+            sigma_range=(0.1, 5.0),
+            amplitude_range=(0.001, 0.5),
+        )
+        assert not bool(mask[0])
+
+    @pytest.mark.parametrize(
+        ("params", "clock_position", "track_offset", "expected"),
+        [
+            # Bounds so narrow that both endpoints minus the clock round to the
+            # same float: the substituted grid collapses to zero width.
+            ((0.0, 1e-18, 3e16), 1.0, 1.0, -0.0531736155271655),
+            # Amplitude large enough to overflow a summation that carries it.
+            ((0.0, 1e-310, 1e308), 0.0, 10.0, -0.00250662827463),
+            # track_offset so small that (x - c) / h overflows to infinity.
+            ((0.0, 1.0, 0.001), 20.0, 1e-310, -0.00012564712213),
+        ],
+        ids=["collapsed-bounds", "overflowing-amplitude", "overflowing-offset"],
+    )
+    def test_density_potential_survives_extreme_scales(
+        self,
+        params: tuple[float, float, float],
+        clock_position: float,
+        track_offset: float,
+        expected: float,
+    ) -> None:
+        """Extreme but finite states must stay computable, not go to 0/inf/NaN.
+
+        Each of these is representable and integrable; a quadrature that leans on
+        ``arcsinh((x - c) / h)`` alone returns exactly zero, ``-inf`` and ``NaN``
+        for them respectively.
+        """
+        ca = ClockArray(
+            positions=np.array([[clock_position]]), track_offset=track_offset
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            potential = _density_potential_batch(np.array([params]), ca, 10.0, 200)
+
+        assert np.isfinite(potential).all()
+        np.testing.assert_allclose(potential[0, 0], expected, rtol=1e-9)
 
     def test_density_batch_shape(self) -> None:
         """Batch output should have correct shape."""
