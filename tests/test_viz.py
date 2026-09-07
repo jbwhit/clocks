@@ -719,17 +719,35 @@ class TestEcholocationDashboard:
 
 class TestAnimateEcholocation:
     def test_diffuse_posterior_renders_when_mean_is_outside_physical_support(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """The rates panel must plot E[f(theta)], not f(E[theta]) or an
+        unweighted particle mean.
+
+        ``noise_std`` is small enough that the surviving particles carry
+        markedly different weights (and the ESS still clears the resampling
+        threshold, so those weights reach the panel), which is what lets the
+        assertion below tell a weighted average from a plain one.
+        """
+        import clocks._animate as animate_module
         from clocks._scenarios import (
             build_echolocation_filter,
             build_head_lattice,
             echo_mass_config,
         )
-        from clocks.physics import PhysicsDomainError
+        from clocks.physics import PhysicsDomainError, clock_rates_batch
 
         head = build_head_lattice()
-        pf = build_echolocation_filter(seed=0, n_particles=200, noise_std=0.1)
+        pf = build_echolocation_filter(seed=0, n_particles=200, noise_std=0.01)
+        recorded: list[np.ndarray] = []
+        real_plot = animate_module.plot_centered_rates
+
+        def record(ax: object, observed: object, predicted: np.ndarray) -> None:
+            recorded.append(np.asarray(predicted, dtype=float).copy())
+            real_plot(ax, observed, predicted)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(animate_module, "plot_centered_rates", record)
+
         output = tmp_path / "diffuse.gif"
         animate_echolocation(
             clock_array=head,
@@ -745,6 +763,23 @@ class TestAnimateEcholocation:
         mean = pf.estimate()["mean"]
         with pytest.raises(PhysicsDomainError):
             clock_rates(MassConfig(mean[:3].reshape(1, 3), mean[3:]), head)
+
+        state = pf.state
+        assert state.weights.max() > 10.0 * state.weights.min()
+
+        particle_rates = clock_rates_batch(
+            state.particles[:, :3], state.particles[:, 3], head
+        )
+        expected = np.average(particle_rates, weights=state.weights, axis=0)
+        expected -= expected.mean()
+        unweighted = particle_rates.mean(axis=0)
+        unweighted -= unweighted.mean()
+
+        assert recorded  # FuncAnimation may draw the single frame more than once
+        for predicted in recorded:
+            np.testing.assert_allclose(predicted, expected, rtol=1e-12, atol=0.0)
+        # The two candidates are far apart, so the assertion above discriminates.
+        assert np.max(np.abs(unweighted - expected)) > 0.5 * np.max(np.abs(expected))
 
     @staticmethod
     def _paired_streams() -> tuple[list[Observation], list[Observation]]:
