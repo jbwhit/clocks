@@ -6,23 +6,6 @@ from numpy.typing import NDArray
 from clocks._validation import finite_float, finite_float_array
 
 
-def _at_caller_precision(
-    original: object, validated: NDArray[np.float64]
-) -> NDArray[np.floating]:
-    """The validated array, unless the caller supplied a wider float type.
-
-    Validation narrows to float64, which is right for the checks and wrong for
-    the arithmetic: a ``longdouble`` residual below the float64 spacing rounds
-    to zero before it is ever used, silently changing the likelihood. The
-    validated array is still what proved the input finite, real and correctly
-    shaped -- this only restores the precision the caller asked for.
-    """
-    source = np.asarray(original)
-    if source.dtype.kind == "f" and source.dtype.itemsize > validated.dtype.itemsize:
-        return source
-    return validated
-
-
 def add_clock_noise(
     true_rates: NDArray[np.floating],
     noise_std: float,
@@ -43,10 +26,12 @@ def log_likelihood_gaussian(
     """Log-likelihood of observed rates given predicted rates and Gaussian noise.
 
     Inputs must be finite matching nonempty 1-D channel vectors, with a
-    finite, strictly positive noise standard deviation.
+    finite, strictly positive noise standard deviation. They are evaluated in
+    float64, as everything else in this library is, so an extended-precision
+    argument is narrowed rather than carried -- and a value outside the float64
+    range is rejected rather than silently accepted.
     Returns: scalar log-likelihood (sum over clocks).
     """
-    observed_input, predicted_input = observed, predicted
     observed = finite_float_array("observed", observed, ndim=1)
     predicted = finite_float_array("predicted", predicted, ndim=1)
     if predicted.shape != observed.shape:
@@ -56,9 +41,7 @@ def log_likelihood_gaussian(
     noise_std = finite_float("noise_std", noise_std)
     if noise_std <= 0:
         raise ValueError("noise_std must be > 0")
-    residuals = _at_caller_precision(observed_input, observed) - _at_caller_precision(
-        predicted_input, predicted
-    )
+    residuals = observed - predicted
     return float(
         -0.5 * np.sum((residuals / noise_std) ** 2)
         - len(residuals) * np.log(noise_std * np.sqrt(2 * np.pi))
@@ -74,10 +57,10 @@ def log_likelihood_gaussian_batch(
 
     observed: (n_clocks,)
     predicted_batch: (n_particles, n_clocks)
-    All inputs must be finite; noise_std must be strictly positive.
+    All inputs must be finite; noise_std must be strictly positive. Evaluated
+    in float64, as in :func:`log_likelihood_gaussian`.
     Returns: (n_particles,) log-likelihoods.
     """
-    observed_input, predicted_input = observed, predicted_batch
     observed = finite_float_array("observed", observed, ndim=1)
     predicted_batch = finite_float_array(
         "predicted_batch", predicted_batch, ndim=2, nonempty=False
@@ -90,9 +73,7 @@ def log_likelihood_gaussian_batch(
     noise_std = finite_float("noise_std", noise_std)
     if noise_std <= 0:
         raise ValueError("noise_std must be > 0")
-    residuals = _at_caller_precision(observed_input, observed)[
-        np.newaxis, :
-    ] - _at_caller_precision(predicted_input, predicted_batch)
+    residuals = observed[np.newaxis, :] - predicted_batch
     n_clocks = observed.shape[0]
     return -0.5 * np.sum((residuals / noise_std) ** 2, axis=1) - n_clocks * np.log(
         noise_std * np.sqrt(2 * np.pi)

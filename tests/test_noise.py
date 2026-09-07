@@ -107,28 +107,3 @@ def test_likelihood_rejects_column_vector_observation(batch: bool) -> None:
     predicted = np.array([[0.9, 0.95]]) if batch else np.array([0.9, 0.95])
     with pytest.raises(ValueError, match="1-D"):
         function(np.array([[0.9], [0.95]]), predicted, 0.01)
-
-
-def test_extended_precision_inputs_are_not_narrowed_before_use() -> None:
-    """Validation narrows to float64; the arithmetic must not.
-
-    A ``longdouble`` residual smaller than the float64 spacing rounds to zero if
-    the inputs are narrowed before subtraction, and the likelihood then silently
-    omits it.  With ``noise_std`` small enough for that residual to matter, the
-    omission is worth 0.376 nats here.
-    """
-    one = np.longdouble(1.0)
-    delta = np.longdouble(2.0) ** -60  # representable in longdouble, not float64
-    observed = np.array([one + delta, 2.0], dtype=np.longdouble)
-    predicted = np.array([one, 2.0], dtype=np.longdouble)
-    assert float(observed[0] - predicted[0]) != 0.0
-    assert observed.astype(np.float64)[0] - predicted.astype(np.float64)[0] == 0.0
-
-    narrowed = -len(observed) * np.log(1e-18 * np.sqrt(2 * np.pi))
-    actual = log_likelihood_gaussian(observed, predicted, 1e-18)
-
-    assert actual != pytest.approx(narrowed)
-    assert actual == pytest.approx(80.67902808911316, rel=1e-15)
-
-    batch = log_likelihood_gaussian_batch(observed, predicted[np.newaxis, :], 1e-18)
-    assert batch[0] == pytest.approx(actual, rel=1e-15)
