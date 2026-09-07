@@ -287,6 +287,89 @@ def _normalize_log_weights(
     return np.exp(values - log_normalizer), log_normalizer
 
 
+def _centering_shift(
+    log_likelihood: NDArray[np.float64],
+    base_log_weights: NDArray[np.float64],
+) -> float:
+    """Offset to remove from a log likelihood before it is scaled and added.
+
+    Near a magnitude of 1e16 the spacing between doubles exceeds 1, so
+    ``np.log(weights) + scaled_log_likelihood`` rounds the order-one weight
+    information away and every particle collapses to the same value. Removing
+    the maximum first keeps the addition in a scale where the weights survive.
+
+    The maximum is taken over the particles that still *have* weight. A
+    particle already driven to zero keeps its log likelihood, and that
+    likelihood can still be the largest in the array; centering on it leaves
+    every surviving particle's centered likelihood enormous, which brings back
+    the very rounding this shift exists to prevent.
+
+    A non-finite maximum (all ``-inf``, or any ``+inf``/NaN) is replaced by
+    zero so the caller still produces the degenerate log weights that
+    :func:`_normalize_log_weights` rejects loudly.
+    """
+    supported = log_likelihood[base_log_weights > -np.inf]
+    if not supported.size:
+        # No particle carries weight, so every shift yields the same all-``-inf``
+        # log weights that :func:`_normalize_log_weights` rejects loudly. Zero
+        # just keeps that path clear of a maximum over an empty array.
+        return 0.0
+    shift = float(np.max(supported))
+    return shift if math.isfinite(shift) else 0.0
+
+
+def _tempered_log_weights(
+    base_log_weights: NDArray[np.float64],
+    observation_log_likelihood: NDArray[np.float64],
+    delta: float,
+) -> tuple[NDArray[np.float64], float]:
+    """Log weights for one tempering step, and the offset owed to the evidence.
+
+    Centering happens *before* the multiplication. ``delta * log_likelihood``
+    is not injective: two log likelihoods one ULP apart at 1e18 differ by 128
+    -- a likelihood ratio of ``e**128`` -- yet a fractional ``delta`` can round
+    both products onto the same float and erase the difference outright.
+    Subtracting the shift from the raw log likelihood first scales an
+    order-one difference instead of quantizing an enormous one.
+
+    The offset restores the identity ``logsumexp(log w + delta * (ll - m)) +
+    delta * m == logsumexp(log w + delta * ll)``, which holds in exact
+    arithmetic for any finite ``m`` -- including one read from a subset of the
+    particles. In floating point the two sides differ in the last bit, and at
+    the underflow boundary that can be the difference between a weight of
+    ``5e-324`` and one of zero, in either direction. A particle rounded to zero
+    there is gone for good, since resampling drops it.
+
+    Both tempering call sites go through here; a copy of this arithmetic that
+    drifts out of step is precisely the defect this function exists to prevent.
+    """
+    shift = _centering_shift(observation_log_likelihood, base_log_weights)
+    # An invalid likelihood on a live particle makes +inf or NaN, and either
+    # reaches the loud all-zero-weight failure in _normalize_log_weights without
+    # a bare numpy warning escaping first. A genuine -inf is not an error: it is
+    # zero likelihood, and it correctly yields zero weight.
+    with np.errstate(over="ignore", invalid="ignore"):
+        spread = observation_log_likelihood - shift
+        centered = delta * spread
+        # The subtraction can leave the float range while the scaled result
+        # sits well inside it: centering -1e308 on a shift of 1e308 overflows
+        # to -inf, yet at delta 1e-308 the true centered value is only -2.
+        # Distributing the multiplication recovers those entries to ordinary
+        # rounding -- and is applied to those alone, because distributing
+        # everywhere is the non-injective arithmetic above.
+        rescued = delta * observation_log_likelihood - delta * shift
+        centered = np.where(np.isinf(spread) & np.isfinite(rescued), rescued, centered)
+        log_weights = base_log_weights + centered
+        # A particle with no weight has none after tempering either, whatever
+        # the arithmetic made of its centered likelihood. Without this, a dead
+        # particle whose likelihood dwarfs the shift contributes -inf + inf,
+        # and that NaN poisons the normalizer instead of the zero it owes.
+        # Only an actual -inf is overridden: a NaN base weight is invalid input
+        # and must reach validation rather than be quietly read as zero.
+        dead = base_log_weights == -np.inf
+        return np.where(dead, -np.inf, log_weights), delta * shift
+
+
 def _next_beta(
     weights: NDArray[np.floating],
     observation_log_likelihood: NDArray[np.floating],
@@ -305,7 +388,10 @@ def _next_beta(
         base = np.log(weights_array)
 
     def ess_at(candidate: float) -> float:
-        normalized, _ = _normalize_log_weights(base + (candidate - beta) * likelihood)
+        candidate_log_weights, _ = _tempered_log_weights(
+            base, likelihood, candidate - beta
+        )
+        normalized, _ = _normalize_log_weights(candidate_log_weights)
         return _effective_sample_size(normalized)
 
     if ess_at(1.0) >= target_ess:
@@ -677,11 +763,21 @@ class ParticleFilter:
                 target_ess=target_ess,
             )
             delta = next_beta - beta
-            with np.errstate(divide="ignore", invalid="ignore"):
-                candidate_log_weights = np.log(weights) + delta * observation_ll
+            with np.errstate(divide="ignore"):
+                base_log_weights = np.log(weights)
+            candidate_log_weights, evidence_offset = _tempered_log_weights(
+                base_log_weights, observation_ll, delta
+            )
             weights, log_increment = _normalize_log_weights(candidate_log_weights)
-            self.log_evidence += log_increment
-            evidence_increments.append(log_increment)
+            # In exact arithmetic centering leaves the weights untouched, so
+            # its scaled offset belongs to the evidence: log_increment is the
+            # normalizer of the centered weights. In floating point it moves
+            # them by the last bit, and near the underflow boundary a weight
+            # can round to zero here that would not have without it -- and
+            # vice versa. Neither ordering is correctly rounded everywhere.
+            increment = log_increment + evidence_offset
+            self.log_evidence += increment
+            evidence_increments.append(increment)
             beta = next_beta
             stages += 1
 

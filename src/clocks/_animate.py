@@ -35,7 +35,7 @@ from clocks._panels3d import (
     plot_scene_3d,
 )
 from clocks.inference import ModelComparison, ParticleFilter
-from clocks.physics import clock_rates
+from clocks.physics import clock_rates, clock_rates_batch
 from clocks.types import ClockArray, MassConfig, Observation, ParticleState
 
 _ECHO_CENTER_ATOL = 1e-12
@@ -566,12 +566,16 @@ def animate_echolocation(
     n_frames = len(observations)
 
     def predicted_centered(frame: int) -> NDArray[np.floating]:
-        """Centered forward model at the frame's posterior mean (spec §2)."""
-        mean = means[frame]
-        rates = clock_rates(
-            MassConfig(positions=mean[:3].reshape(1, 3), masses=mean[3:4]),
+        """Posterior mean clock prediction, centered for display."""
+        state = states[frame]
+        # Valid particles can have an invalid mean position (even at a clock).
+        # Average their predictions instead of evaluating that mean position.
+        particle_rates = clock_rates_batch(
+            state.particles[:, :3],
+            state.particles[:, 3],
             clock_array,
         )
+        rates = np.average(particle_rates, weights=state.weights, axis=0)
         return rates - rates.mean()
 
     def render(frame: int) -> None:

@@ -23,16 +23,19 @@ data-generating model or that model comparison must recover truth every time.
 
 ## Occam's razor, automatic
 
-Why should $K=3$ not win automatically? A three-mass model *can mimic* many
+Why should $K=3$ not win automatically? A three-mass model can approximate many
 two-mass configurations by pushing the extra mass toward the lower
-[prior](../method/notation-and-glossary.qmd#term-prior) bound or into a weakly visible location, so its best fit can be at
-least as good. Evidence is not best-fit, though: it
+[prior](../method/notation-and-glossary.qmd#term-prior) bound or into a weakly visible
+location. Here that lower bound is strictly positive and positions are bounded,
+so the candidate models are not guaranteed to be nested: a larger $K$ need not
+have an equally good best fit. Evidence instead
 averages the likelihood over the model's whole prior. Extra parameters
 spread that average across vast regions of configuration space the data
 rejects, and the dilution is the tax. Complexity isn't punished by rule;
 it is punished by arithmetic. Here each model's prior is a normalized
 uniform rectangle conditioned on its configured bounds, strict mass
-ordering, and weak-field validity, so that support is part of the comparison.
+ordering by first spatial coordinate, and weak-field validity, so that support
+is part of the comparison.
 
 ## Run it live
 

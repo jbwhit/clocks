@@ -6,6 +6,7 @@ import warnings
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 from scipy.special import logsumexp
 from scipy.stats import multivariate_normal, norm
 
@@ -14,7 +15,9 @@ from clocks.inference import (
     GaussianObservationStats,
     ModelComparison,
     ParticleFilter,
+    _effective_sample_size,
     _next_beta,
+    _normalize_log_weights,
 )
 from clocks.types import Observation
 
@@ -930,3 +933,461 @@ def test_failed_model_comparison_update_rolls_back_every_filter(
     assert comparison.evidence() == before_evidence
     for key, particle_filter in filters.items():
         _assert_filter_matches_snapshot(particle_filter, **snapshots[key])
+
+
+def test_constant_unlikely_observation_keeps_equal_weights_and_finite_evidence() -> (
+    None
+):
+    pf = ParticleFilter(
+        3,
+        lambda rng, n: np.zeros((n, 1)),
+        lambda params: np.array([0.99]),
+        1e-5,
+        log_prior_density=lambda particles: np.zeros(len(particles)),
+        forward_model_batch=lambda particles: np.full((len(particles), 1), 0.99),
+    )
+    state = pf.update(Observation(np.array([1.0]), 0.0))
+
+    np.testing.assert_allclose(state.weights, np.full(3, 1 / 3), rtol=1e-15)
+    expected_log_evidence = -0.5 * ((1 - 0.99) / 1e-5) ** 2 - np.log(
+        1e-5 * np.sqrt(2 * np.pi)
+    )
+    assert pf.log_evidence == pytest.approx(expected_log_evidence, rel=0, abs=1e-9)
+    assert state.observations_seen == 1
+    assert pf.last_diagnostics.tempering_stages == 1
+
+
+def _echolocation_style_filter() -> ParticleFilter:
+    """Two particles whose predictions differ by two noise widths, in one channel."""
+
+    def forward_batch(particles: np.ndarray) -> np.ndarray:
+        predictions = np.empty((len(particles), 2))
+        predictions[:, 0] = 1.0 + 1e-9 * particles[:, 0]
+        predictions[:, 1] = 1.0
+        return predictions
+
+    return ParticleFilter(
+        2,
+        lambda rng, n: np.array([[-1.0], [1.0]]),
+        lambda params: forward_batch(np.atleast_2d(params))[0],
+        1e-9,
+        log_prior_density=lambda particles: np.zeros(len(particles)),
+        forward_model_batch=forward_batch,
+        ess_target=0.8,
+        rng=np.random.default_rng(0),
+    )
+
+
+def test_huge_constant_log_likelihood_preserves_nonuniform_weights() -> None:
+    """A constant but enormous log likelihood must not erase prior weights.
+
+    The second observation misses one channel by 1.5e8 noise widths, so its log
+    likelihood is ``-1.125e16`` for *both* particles.  A likelihood that is
+    constant across particles leaves the posterior unchanged, yet
+    ``log(weights) + delta * likelihood`` quantizes the order-one
+    ``log(weights)`` away at that magnitude (the float spacing near 1e16 is
+    2.0) and collapses the particles toward equal weight.
+
+    ``test_constant_unlikely_observation_keeps_equal_weights_and_finite_evidence``
+    cannot catch this: it starts from uniform weights, whose collapse is
+    indistinguishable from the correct answer.
+    """
+    pf = _echolocation_style_filter()
+
+    first = pf.update(Observation(np.array([1.0 + 0.2e-9, 1.0]), 0.0))
+    np.testing.assert_allclose(first.weights, [0.40131236, 0.59868764], rtol=1e-7)
+    evidence_after_first = pf.log_evidence
+
+    unlikely = Observation(np.array([1.0 + 0.2e-9, 1.0 + 0.15]), 1.0)
+    # Premise of the test: both particles are exactly this (un)likely, at a
+    # magnitude where one float step is 2.0.
+    shared = pf._observation_log_likelihood(pf.state.particles, unlikely)
+    assert shared[0] == shared[1] < -1e16
+
+    second = pf.update(unlikely)
+
+    np.testing.assert_allclose(second.weights, first.weights, rtol=1e-12, atol=0.0)
+    assert pf.last_diagnostics.tempering_stages == 1
+    # A likelihood constant across particles contributes exactly its own value
+    # to the log evidence and nothing to the weights.
+    assert pf.last_log_evidence_increments == pytest.approx(
+        (float(shared[0]),), rel=1e-15
+    )
+    assert pf.log_evidence == pytest.approx(
+        evidence_after_first + float(shared[0]), rel=1e-15
+    )
+
+
+def _flat_filter(n_particles: int) -> ParticleFilter:
+    """A filter whose likelihood is always overridden by ``_pin_log_likelihood``."""
+    return ParticleFilter(
+        n_particles,
+        lambda rng, n: np.arange(n, dtype=float).reshape(n, 1),
+        lambda params: np.zeros(1),
+        1.0,
+        log_prior_density=lambda particles: np.zeros(len(particles)),
+        forward_model_batch=lambda particles: np.zeros((len(particles), 1)),
+        ess_target=0.4,
+        rng=np.random.default_rng(0),
+    )
+
+
+def _pin_log_likelihood(
+    monkeypatch: pytest.MonkeyPatch,
+    particle_filter: ParticleFilter,
+    values: NDArray[np.float64],
+) -> None:
+    monkeypatch.setattr(
+        particle_filter,
+        "_observation_log_likelihood",
+        lambda particles, observation: values,
+    )
+
+
+def _filter_with_nonuniform_weights(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[ParticleFilter, NDArray[np.float64]]:
+    """Run one ordinary update so the weights are distinct and unresampled."""
+    pf = _flat_filter(3)
+    _pin_log_likelihood(monkeypatch, pf, np.array([0.0, -0.5, -1.0]))
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+    assert len(set(state.weights.tolist())) == 3
+    return pf, state.weights.copy()
+
+
+@pytest.mark.parametrize("offset", [0.0, -1e6, -1e10, -1e16, 1e16])
+def test_constant_offset_log_likelihood_leaves_the_posterior_unchanged(
+    monkeypatch: pytest.MonkeyPatch, offset: float
+) -> None:
+    """An observation equally (un)likely for every particle is uninformative.
+
+    The weights must come through to a relative 1e-15 whatever the shared
+    magnitude, and the offset must land in the evidence instead of in the
+    weights. Normalizing sends them through ``log`` and back through ``exp``,
+    which is why the claim is a tolerance and not bit-for-bit equality; what
+    matters is that the magnitude of the offset does not widen it.
+    """
+    pf, before = _filter_with_nonuniform_weights(monkeypatch)
+    evidence_before = pf.log_evidence
+    _pin_log_likelihood(monkeypatch, pf, np.full(3, offset))
+
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+
+    np.testing.assert_allclose(state.weights, before, rtol=1e-15, atol=0.0)
+    assert pf.last_diagnostics.tempering_stages == 1
+    assert pf.last_log_evidence_increments == pytest.approx((offset,), abs=1e-12)
+    assert pf.log_evidence == pytest.approx(evidence_before + offset, abs=1e-9)
+
+
+@pytest.mark.parametrize("offset", [0.0, -1e16, 1e16])
+def test_impossible_particles_get_exactly_zero_weight_under_large_offsets(
+    monkeypatch: pytest.MonkeyPatch, offset: float
+) -> None:
+    """A ``-inf`` mixed with huge finite values still zeroes only that particle."""
+    pf, before = _filter_with_nonuniform_weights(monkeypatch)
+    _pin_log_likelihood(monkeypatch, pf, np.array([offset, offset, -np.inf]))
+
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+
+    assert state.weights[2] == 0.0
+    expected = before[:2] / before[:2].sum()
+    np.testing.assert_allclose(state.weights[:2], expected, rtol=1e-15, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param(np.full(3, -np.inf), id="all-minus-inf"),
+        pytest.param(np.array([0.0, np.inf, -1.0]), id="plus-inf"),
+        pytest.param(np.array([0.0, np.nan, -1.0]), id="nan"),
+        pytest.param(np.array([-1e16, np.inf, -1e16]), id="plus-inf-large-offset"),
+        pytest.param(np.array([-1e16, np.nan, -1e16]), id="nan-large-offset"),
+    ],
+)
+def test_update_rejects_degenerate_log_likelihoods(
+    monkeypatch: pytest.MonkeyPatch, values: NDArray[np.float64]
+) -> None:
+    """Centering must not silence the existing loud failure."""
+    pf = _flat_filter(3)
+    _pin_log_likelihood(monkeypatch, pf, values)
+
+    with pytest.raises(RuntimeError, match="All particles have zero weight"):
+        pf.update(Observation(np.array([0.0]), 0.0))
+
+    assert pf.state.observations_seen == 0
+    assert pf.log_evidence == 0.0
+
+
+@pytest.mark.parametrize("offset", [0.0, -1e6, -1e10, -1e16, 1e16])
+def test_next_beta_reaches_one_whatever_the_shared_likelihood_magnitude(
+    offset: float,
+) -> None:
+    """The ESS probe must see the real spread, not a shared offset's rounding.
+
+    ``base + (candidate - beta) * likelihood`` loses the order-one ``base`` at
+    large magnitudes, so the probe reports an ESS that belongs to a different
+    posterior and the schedule refuses a single-stage update it should accept.
+    """
+    weights = np.array([0.7, 0.2, 0.1])
+    spread = np.array([0.0, -4.0, -8.0])
+    posterior = weights * np.exp(spread)
+    posterior /= posterior.sum()
+    exact_ess = 1.0 / np.sum(posterior**2)
+
+    beta = _next_beta(
+        weights,
+        offset + spread,
+        0.0,
+        target_ess=exact_ess * (1.0 - 1e-12),
+    )
+
+    assert beta == 1.0
+
+
+def _one_ulp_apart_log_likelihood(n_low: int) -> np.ndarray:
+    """One high log likelihood and ``n_low`` values exactly one float step below.
+
+    At a magnitude of 1e18 one float step is 128.0, so the two values describe
+    likelihoods a factor of ``e**128`` apart -- the widest gap the array can
+    express without a second float appearing between them.  ``delta *
+    log_likelihood`` for a fractional ``delta`` can round both to the same
+    float and erase that gap entirely.
+    """
+    high = -1e18
+    low = float(np.nextafter(high, -np.inf))
+    assert high - low == 128.0
+    assert float(np.nextafter(low, np.inf)) == high
+    return np.concatenate(([high], np.full(n_low, low)))
+
+
+def _ess_without_multiplying_first(
+    weights: np.ndarray, log_likelihood: np.ndarray, delta: float
+) -> float:
+    """ESS of a tempering step, computed so the multiplication cannot lose bits."""
+    centered = delta * (log_likelihood - log_likelihood.max())
+    with np.errstate(divide="ignore"):
+        normalized, _ = _normalize_log_weights(np.log(weights) + centered)
+    return _effective_sample_size(normalized)
+
+
+def test_next_beta_probes_ess_without_multiplying_one_ulp_differences_away() -> None:
+    """The ESS probe must scale *centered* log likelihoods, not center scaled ones.
+
+    ``(candidate - beta) * likelihood`` maps two log likelihoods one ULP apart
+    at 1e18 onto the *same* float for many fractional multipliers, so the probe
+    sees a uniform likelihood and reports the prior's ESS.  It then certifies a
+    beta whose real ESS is ~1: the update resamples away the one particle the
+    observation favours by ``e**128``.
+    """
+    log_likelihood = _one_ulp_apart_log_likelihood(100)
+    weights = np.concatenate(([np.exp(-64.0)], np.ones(100)))
+    weights /= weights.sum()
+    target_ess = 80.8
+
+    # Premise: multipliers that collapse the two values onto one float lie in
+    # the range the bisection searches -- this is the one it used to certify.
+    lossy = 0.5766165428796963
+    assert lossy * log_likelihood[0] == lossy * log_likelihood[1]
+
+    beta = _next_beta(weights, log_likelihood, 0.0, target_ess=target_ess)
+
+    assert _ess_without_multiplying_first(
+        weights, log_likelihood, beta
+    ) == pytest.approx(target_ess, rel=1e-9)
+
+
+def test_next_beta_from_a_partial_temperature_keeps_one_ulp_differences() -> None:
+    """A resumed schedule multiplies by ``candidate - beta``, never by ``candidate``.
+
+    Resuming part-way through the schedule is where the multiplier is
+    genuinely fractional and rounding can erase a one-ULP difference; the
+    ``beta=0 -> 1`` regressions exercise a multiplier of exactly 1.0, where it
+    cannot.
+    """
+    log_likelihood = _one_ulp_apart_log_likelihood(100)
+    weights = np.concatenate(([np.exp(-64.0)], np.ones(100)))
+    weights /= weights.sum()
+    target_ess = 80.8
+    beta_so_far = 0.25
+    # Premise: the step this probe used to certify from here collapses the two
+    # log likelihoods onto one float.
+    lossy = 0.5767396867449922
+    assert lossy * log_likelihood[0] == lossy * log_likelihood[1]
+
+    beta = _next_beta(weights, log_likelihood, beta_so_far, target_ess=target_ess)
+
+    delta = beta - beta_so_far
+    assert 0.0 < delta < 1.0
+    assert _ess_without_multiplying_first(
+        weights, log_likelihood, delta
+    ) == pytest.approx(target_ess, rel=1e-9)
+    # The importance weights of a step depend on its width alone, so a schedule
+    # resumed at 0.25 must take the same step as one starting from 0.
+    assert delta == pytest.approx(
+        _next_beta(weights, log_likelihood, 0.0, target_ess=target_ess), rel=1e-12
+    )
+
+
+def test_update_stage_keeps_the_particle_favoured_by_one_ulp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tempering loop must center before it scales, exactly as the probe does.
+
+    With a fractional ``delta`` the loop's ``delta * observation_ll`` rounds the
+    one-ULP gap away, both particles keep their prior weights, and the
+    resampler carries the particle the observation rejects by ``e**128`` into
+    the next stage.
+    """
+    log_likelihood = _one_ulp_apart_log_likelihood(1)
+    pf = _flat_filter(2)
+    _pin_log_likelihood(monkeypatch, pf, log_likelihood)
+    monkeypatch.setattr(
+        pf,
+        "_metropolis_move",
+        lambda particles, **kwargs: (particles, inference_module.UpdateDiagnostics()),
+    )
+    # A fractional first stage; the multiplication maps both values onto one float.
+    schedule = iter([0.5766165428796963, 1.0])
+    monkeypatch.setattr(
+        inference_module, "_next_beta", lambda *args, **kwargs: next(schedule)
+    )
+
+    state = pf.update(Observation(np.array([0.0]), 0.0))
+
+    # _flat_filter lays the particles out as [[0.0], [1.0]], so the favoured
+    # one is 0.0; resampling stage 1 must carry only it into stage 2.
+    assert pf.last_diagnostics.tempering_stages == 2
+    assert state.particles[0, 0] == state.particles[1, 0] == 0.0
+
+
+# The 1e308-spread case this file used to pin as a loud failure now succeeds:
+# the ``1e308`` belonged to a *weightless* particle, so it can no longer reach
+# the surviving weights.  Its own centered value does still overflow, and the
+# weightless override is what discards the resulting NaN.  See
+# test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle for
+# the same call, and test_all_zero_weights_still_fail_loudly for the loud
+# failure that genuinely has no live particle to center on.
+
+
+def _weightless_prediction_filter(ess_target: float = 0.4) -> ParticleFilter:
+    """Three particles whose predictions are their own coordinates."""
+    particles = np.array([[0.0, 0.0], [1e9, 0.0], [1e9, 2.0]])
+    return ParticleFilter(
+        3,
+        lambda rng, n: particles.copy(),
+        lambda p: p,
+        1.0,
+        log_prior_density=lambda p: np.zeros(len(p)),
+        forward_model_batch=lambda p: p,
+        ess_target=ess_target,
+    )
+
+
+def test_zero_weight_particle_does_not_erase_the_survivors_weights() -> None:
+    """The centering shift must come from particles that still carry weight.
+
+    A particle driven to zero weight keeps its log likelihood, and that
+    likelihood can still be the array maximum.  Centering on it leaves the
+    *surviving* particles' centered likelihoods enormous, so adding their
+    order-one log weights loses every bit of the prior information: two
+    particles that the first observation separated 0.599/0.401 come back out
+    of the second one at exactly 0.5/0.5.  Silently, at the time this was
+    found; the loud all-zero-weight failure that a later fix added now catches
+    the mutant, so the mutation raises rather than returning even weights.
+    """
+    pf = _weightless_prediction_filter()
+    first = pf.update(Observation([1e9, 0.8], 0.0))
+    assert first.weights[0] == 0.0
+    np.testing.assert_allclose(first.weights[1:], [0.59868766, 0.40131234], rtol=1e-6)
+
+    # The second observation is equally likely under both survivors, so it
+    # carries no information about them and must leave their ratio alone.
+    second = pf.update(Observation([0.0, 1.0], 1.0))
+    assert second.weights[0] == 0.0
+    np.testing.assert_allclose(second.weights[1:], first.weights[1:], rtol=1e-12)
+
+
+def test_tempering_keeps_a_zero_weight_particle_at_zero_without_nan() -> None:
+    """``-inf + inf`` is NaN; a weightless particle must stay weightless.
+
+    Once the shift comes from the live particles, a zero-weight particle whose
+    likelihood is astronomically *larger* has a centered value that overflows
+    to ``+inf``.  Added to its ``-inf`` log weight that is NaN, which would
+    poison the normalizer instead of contributing the zero it should.
+    """
+    from clocks.inference import _tempered_log_weights
+
+    base = np.array([-np.inf, 0.0])
+    log_weights, _ = _tempered_log_weights(base, np.array([1e308, -1e308]), 1.0)
+    assert log_weights[0] == -np.inf
+    assert not np.isnan(log_weights).any()
+
+
+def test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle() -> None:
+    """A dead particle's overflow must not reach the surviving weights.
+
+    Round 2 read the shift from every particle, so the weightless ``1e308``
+    drove the supported particle's centered likelihood to ``-inf`` and the
+    step failed loudly.  Centering on the supported particle instead, the dead
+    particle can no longer affect the result -- its own centered value still
+    overflows, to ``+inf`` here, and the weightless override discards it -- so
+    the full step is admissible.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        beta = _next_beta(
+            np.array([0.0, 1.0]),
+            np.array([1e308, -1e308]),
+            0.0,
+            target_ess=0.5,
+        )
+    assert beta == 1.0
+
+
+def test_small_delta_rescues_a_spread_the_raw_subtraction_cannot_hold() -> None:
+    """``delta * (ll - shift)`` must not lose to an intermediate overflow.
+
+    With both particles supported the shift is ``1e308``, so centering the
+    second likelihood is ``-1e308 - 1e308``, which overflows to ``-inf`` before
+    ``delta`` can bring it back into range -- yet the true centered value at
+    ``delta = 1e-308`` is merely ``-2``.  The overflow silently
+    handed all the weight to one particle and understated the evidence; no
+    error fired, because one weight survived.
+    """
+    from clocks.inference import _tempered_log_weights
+
+    base = np.log(np.array([0.5, 0.5]))
+    log_weights, offset = _tempered_log_weights(base, np.array([1e308, -1e308]), 1e-308)
+    weights, log_increment = _normalize_log_weights(log_weights)
+    np.testing.assert_allclose(weights, [0.88079708, 0.11920292], rtol=1e-7)
+    assert log_increment + offset == pytest.approx(0.4337808304830273, rel=1e-12)
+
+
+def test_all_zero_weights_still_fail_loudly() -> None:
+    """Restricting the shift to live particles must not mute the loud failure."""
+    from clocks.inference import _tempered_log_weights
+
+    base = np.array([-np.inf, -np.inf])
+    log_weights, _ = _tempered_log_weights(base, np.array([1.0, 2.0]), 0.5)
+    with pytest.raises(RuntimeError, match="All particles have zero weight"):
+        _normalize_log_weights(log_weights)
+
+
+def test_nan_base_weight_reaches_validation_instead_of_being_read_as_zero() -> None:
+    """The weightless override must not swallow an invalid weight.
+
+    A dead particle is overridden to ``-inf`` so that ``-inf + inf`` cannot
+    poison the normalizer.  Written as ``base > -inf`` that test is also false
+    for NaN, which would silently reclassify a corrupt weight as a legitimate
+    zero and return a plausible answer.  ``ParticleState`` rejects NaN weights,
+    so this is a guard on the helper rather than a reachable public path.
+    """
+    from clocks.inference import _tempered_log_weights
+
+    log_weights, _ = _tempered_log_weights(
+        np.array([np.nan, 0.0]), np.array([1.0, 2.0]), 0.5
+    )
+
+    assert np.isnan(log_weights[0])
+    with pytest.raises(RuntimeError, match="All particles have zero weight"):
+        _normalize_log_weights(log_weights)

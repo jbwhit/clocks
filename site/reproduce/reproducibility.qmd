@@ -7,9 +7,12 @@ title: "Reproducibility"
 Every demo and every executed cell on this site fixes its RNG seed.
 `SimulationConfig.seed` and `InferenceConfig.seed` thread a single
 generator through observation noise and the particle filter respectively,
-so a given configuration produces the same observations, the same particle
-trajectories, and the same posterior every time. Rerun any page's code with
-the seeds shown and you will get the numbers printed on the page.
+so a given configuration is repeatable in the same numerical environment.
+Matching seeds alone do not guarantee identical trajectories or final numbers
+across platforms: NumPy draws, floating-point arithmetic, BLAS, and the host
+math library can differ. The frozen SMC replays therefore compare floating
+results with tolerances while checking counts and controls exactly. Use the
+locked dependencies and the displayed settings when reproducing a page.
 
 ## Tests
 
