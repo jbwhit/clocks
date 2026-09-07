@@ -17,6 +17,10 @@ _MAX_ABS_POTENTIAL = WEAK_FIELD_LIMIT / 2.0
 # Points the plain x grid must place across the kernel width before it is
 # trusted; measured to reach machine precision from about 5 upwards.
 _KERNEL_RESOLUTION_FACTOR = 8.0
+# The substituted grid's accuracy argument assumes the profile has decayed at the
+# integration endpoints; below this many sigma the truncated tails dominate and
+# the plain grid is kept instead.
+_MIN_CONTAINED_LIMIT = 6.0
 
 
 class PhysicsDomainError(ValueError):
@@ -302,12 +306,17 @@ def _validate_density_params(value: object, *, batch: bool) -> NDArray[np.float6
 
 
 def _gaussian_shape(
-    x_grid: NDArray[np.float64],
-    mu: NDArray[np.float64],
+    offset_from_mu: NDArray[np.float64],
     sigma: NDArray[np.float64],
 ) -> NDArray[np.float64]:
-    """Return the unit-amplitude Gaussian profile sampled on ``x_grid``."""
-    z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
+    """Return the unit-amplitude Gaussian profile at ``offset_from_mu``.
+
+    Callers pass the displacement from the centre rather than an absolute
+    coordinate: reconstructing ``x`` and subtracting ``mu`` afterwards quantises
+    the profile to the float spacing at ``mu``, which for ``mu ~ 1e15`` is 0.125
+    and destroys the resolution the quadrature depends on.
+    """
+    z = offset_from_mu / sigma[:, np.newaxis]
     return np.exp(-0.5 * z**2)
 
 
@@ -322,7 +331,9 @@ def _plain_quadrature(
     mu, sigma, amplitude = params[:, 0], params[:, 1], params[:, 2]
     lo, hi = bounds
     x_grid = lo[:, np.newaxis] + (hi - lo)[:, np.newaxis] * fractions
-    density = amplitude[:, np.newaxis] * _gaussian_shape(x_grid, mu, sigma)
+    density = amplitude[:, np.newaxis] * _gaussian_shape(
+        x_grid - mu[:, np.newaxis], sigma
+    )
     distance = np.sqrt((x_grid - clock_position) ** 2 + track_offset**2)
     return np.trapezoid(-density / distance, x_grid, axis=1)
 
@@ -342,16 +353,20 @@ def _substituted_quadrature(
     mu, sigma, amplitude = params[:, 0], params[:, 1], params[:, 2]
     u_lo, u_hi = u_bounds
     u_grid = u_lo[:, np.newaxis] + (u_hi - u_lo)[:, np.newaxis] * fractions
-    x_grid = clock_position + track_offset * np.sinh(u_grid)
-    return amplitude * np.trapezoid(-_gaussian_shape(x_grid, mu, sigma), u_grid, axis=1)
+    offset_from_mu = (clock_position - mu)[:, np.newaxis] + track_offset * np.sinh(
+        u_grid
+    )
+    return amplitude * np.trapezoid(
+        -_gaussian_shape(offset_from_mu, sigma), u_grid, axis=1
+    )
 
 
 def _needs_substitution(
     params: NDArray[np.float64],
     bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
     u_bounds: tuple[NDArray[np.float64], NDArray[np.float64]],
-    clock_position: float,
-    track_offset: float,
+    geometry: tuple[float, float],
+    integration_limit: float,
     n_quad: int,
 ) -> NDArray[np.bool_]:
     """Return where the substituted grid must replace the plain one.
@@ -370,6 +385,9 @@ def _needs_substitution(
     mu, sigma = params[:, 0], params[:, 1]
     lo, hi = bounds
     u_lo, u_hi = u_bounds
+    clock_position, track_offset = geometry
+    if integration_limit < _MIN_CONTAINED_LIMIT:
+        return np.zeros(params.shape[0], dtype=bool)
     plain_resolves_kernel = (hi - lo) / (
         n_quad - 1
     ) * _KERNEL_RESOLUTION_FACTOR <= track_offset
@@ -410,10 +428,16 @@ def _density_potential_batch(
     pre-substitution model; the substituted branch factors the amplitude out,
     which keeps an extreme amplitude from overflowing the summation.
 
-    Residual limitation: for ``track_offset / sigma`` below about ``1e-10`` with
-    the clock a few sigma from the profile centre, neither grid resolves the
-    integrand at this fixed point count and the result can carry a percent-level
-    error. Closing that corner needs error-controlled subdivision.
+    Residual limitation, inherited from the fixed point count rather than from
+    the selection: once ``track_offset / sigma`` falls below roughly ``1e-8`` and
+    the clock sits a few sigma from the profile centre, neither grid resolves the
+    integrand and the error is unbounded in the worst case -- measured at 321
+    times the reference magnitude at ``track_offset = 1e-8`` with the clock
+    4.67 sigma out. Selecting between the grids also makes the model
+    discontinuous where the choice flips; across the kernel-resolution threshold
+    the two branches agree to about ``7e-16``, but in the unresolved corner above
+    the jump can approach the full width of the accepted rate range. Closing
+    either needs error-controlled subdivision rather than a fixed grid.
     """
     mu = params_batch[:, 0]
     sigma = params_batch[:, 1]
@@ -432,8 +456,8 @@ def _density_potential_batch(
                 params_batch,
                 (lo, hi),
                 (u_lo, u_hi),
-                clock_position,
-                track_offset,
+                (clock_position, track_offset),
+                integration_limit,
                 n_quad,
             )
             column = potential[:, index]

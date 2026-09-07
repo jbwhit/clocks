@@ -733,6 +733,54 @@ class TestGaussianDensity:
         )
         assert not bool(mask[0])
 
+    def test_density_batch_keeps_resolution_at_large_coordinates(self) -> None:
+        """Absolute coordinates must not quantise the profile.
+
+        Reconstructing ``x = c + h * sinh(u)`` and only then subtracting ``mu``
+        rounds the profile onto the float spacing at ``mu`` -- 0.125 near 1e15 --
+        which understated ``|Phi|`` enough to accept this state. The true
+        ``|2 Phi|`` is about 0.1004, so it must be rejected.
+        """
+        centre = 1e15
+        ca = ClockArray(positions=np.array([[centre + 8.0]]), track_offset=1e-4)
+        params = np.array([centre, 1.0, 0.1575])
+
+        with pytest.raises(PhysicsDomainError):
+            clock_rates_density_gaussian_batch(params[np.newaxis], ca)
+
+    def test_density_batch_keeps_plain_grid_for_truncated_profiles(self) -> None:
+        """A short integration limit leaves the profile alive at the endpoints.
+
+        The substituted grid's accuracy rests on the integrand decaying to zero
+        at both ends, which a limit of two sigma does not give, so the plain grid
+        must be kept. With the substitution forced here the potential shrinks to
+        -0.0496 and the state is wrongly accepted.
+        """
+        ca = ClockArray(positions=np.array([[0.0]]), track_offset=1.0)
+        params = np.array([0.0, 1.0, 0.0264])
+
+        with pytest.raises(PhysicsDomainError):
+            clock_rates_density_gaussian_batch(
+                params[np.newaxis], ca, integration_limit=2.0, n_quad=5
+            )
+
+    def test_density_substituted_branch_survives_extreme_amplitude(self) -> None:
+        """The substituted branch must not carry the amplitude into the sum.
+
+        This geometry takes the substituted branch, and summing ordinates scaled
+        by a 1e308 amplitude overflows to ``-inf`` before the interval width is
+        applied. Factoring the amplitude out keeps the result exact.
+        """
+        ca = ClockArray(positions=np.array([[10.0]]), track_offset=0.5)
+        params = np.array([[0.0, 1.0, 1e308]])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            potential = _density_potential_batch(params, ca, 10.0, 200)
+
+        assert np.isfinite(potential).all()
+        np.testing.assert_allclose(potential[0, 0], -2.529157059929335e307, rtol=1e-12)
+
     @pytest.mark.parametrize(
         ("params", "clock_position", "track_offset", "expected"),
         [
