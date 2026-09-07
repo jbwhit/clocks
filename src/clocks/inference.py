@@ -344,10 +344,10 @@ def _tempered_log_weights(
     drifts out of step is precisely the defect this function exists to prevent.
     """
     shift = _centering_shift(observation_log_likelihood, base_log_weights)
-    # An invalid likelihood on a live particle makes NaN, which reaches the loud
-    # all-zero-weight failure in _normalize_log_weights without a bare numpy
-    # warning escaping first. A genuine -inf is not an error: it is zero
-    # likelihood, and it correctly yields zero weight.
+    # An invalid likelihood on a live particle makes +inf or NaN, and either
+    # reaches the loud all-zero-weight failure in _normalize_log_weights without
+    # a bare numpy warning escaping first. A genuine -inf is not an error: it is
+    # zero likelihood, and it correctly yields zero weight.
     with np.errstate(over="ignore", invalid="ignore"):
         spread = observation_log_likelihood - shift
         centered = delta * spread

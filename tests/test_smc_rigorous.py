@@ -1273,8 +1273,9 @@ def test_update_stage_keeps_the_particle_favoured_by_one_ulp(
 
 
 # The 1e308-spread case this file used to pin as a loud failure now succeeds:
-# the ``1e308`` belonged to a *weightless* particle, so it never should have
-# reached the arithmetic. See
+# the ``1e308`` belonged to a *weightless* particle, so it can no longer reach
+# the surviving weights.  Its own centered value does still overflow, and the
+# weightless override is what discards the resulting NaN.  See
 # test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle for
 # the same call, and test_all_zero_weights_still_fail_loudly for the loud
 # failure that genuinely has no live particle to center on.
@@ -1333,7 +1334,7 @@ def test_tempering_keeps_a_zero_weight_particle_at_zero_without_nan() -> None:
 
 
 def test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle() -> None:
-    """The 1e308 spread is only uncenterable if the dead particle sets the shift.
+    """A dead particle's overflow must not reach the surviving weights.
 
     Round 2 read the shift from every particle, so the weightless ``1e308``
     drove the supported particle's centered likelihood to ``-inf`` and the
@@ -1356,9 +1357,10 @@ def test_next_beta_survives_an_uncenterable_spread_from_a_weightless_particle() 
 def test_small_delta_rescues_a_spread_the_raw_subtraction_cannot_hold() -> None:
     """``delta * (ll - shift)`` must not lose to an intermediate overflow.
 
-    With both particles supported, ``1e308 - -1e308`` overflows to ``-inf``
-    before ``delta`` can bring it back into range -- yet the true centered
-    value at ``delta = 1e-308`` is merely ``-2``.  The overflow silently
+    With both particles supported the shift is ``1e308``, so centering the
+    second likelihood is ``-1e308 - 1e308``, which overflows to ``-inf`` before
+    ``delta`` can bring it back into range -- yet the true centered value at
+    ``delta = 1e-308`` is merely ``-2``.  The overflow silently
     handed all the weight to one particle and understated the evidence; no
     error fired, because one weight survived.
     """
