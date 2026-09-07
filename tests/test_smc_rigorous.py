@@ -1426,7 +1426,7 @@ def test_normalization_still_rescales_a_shared_large_offset() -> None:
 
     Subtracting the full normalizer loses its log-sum correction when every log
     weight shares a large offset: at 1e18 the ULP is 128, so ``logsumexp``'s
-    ``+log(3)`` disappears and the weights come back unnormalized.  Both
+    ``+log(2)`` disappears and the weights come back unnormalized.  Both
     properties have to hold at once.
     """
     weights, _ = _normalize_log_weights(np.array([1e18, 1e18, 1e18 - 744.3]))
@@ -1435,35 +1435,38 @@ def test_normalization_still_rescales_a_shared_large_offset() -> None:
     np.testing.assert_allclose(weights[:2], [0.5, 0.5], rtol=1e-15)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #17: no double-precision exponent rounds these correctly",
-)
 @pytest.mark.parametrize(
     ("log_weights", "expected_last"),
     [
         # Sixteen identical heads make `total` exactly 16, so log(total) carries
-        # the whole correction and the exponent rounds a hair low.
+        # the whole correction; the two-step exponent rounds a hair low here.
         ([-math.log(17)] * 16 + [-745.1938437237576], 5e-324),
-        # The mirror image: here the same form invents a weight that the exact
-        # arithmetic rounds away.
+        # The mirror image: the same form invents a weight the exact arithmetic
+        # rounds away, so "recover whenever we can" is not the rule either.
         ([50.00000000000005] * 2 + [-694.4400719213812], 0.0),
+        # 128 heads: subtracting the normalizer is the form that fails here,
+        # which is why neither exponent can simply be preferred.
+        ([-math.log(129)] * 128 + [-745.1410012423833], 5e-324),
+        # Large peaks, where forming `peak + log(total)` loses the correction
+        # partially -- overstating it at 3.6e12, understating it at 3.6e16.
+        ([3.6e12] * 2 + [3599999999255.56], 5e-324),
+        ([3.6e16] * 257 + [3.599999999999926e16], 0.0),
     ],
-    ids=["must-recover", "must-not-invent"],
+    ids=["16-heads", "must-not-invent", "128-heads", "peak-3.6e12", "peak-3.6e16"],
 )
 def test_subnormal_recovery_matches_exact_arithmetic_at_the_boundary(
     log_weights: list[float], expected_last: float
 ) -> None:
-    """Known limitation, pinned so that fixing it announces itself.
+    """Recovery must round where the exact arithmetic rounds, both directions.
 
-    Both inputs were constructed to sit within a rounding step of the boundary
-    between zero and the smallest positive double, and they fail in opposite
-    directions: the first is a weight that exists and is dropped, the second one
-    that does not exist and is conjured.  Every double-precision exponent tried
-    so far gets at least one of them wrong -- subtracting the normalizer was
-    correctly rounded in none of 366 measured disagreements, and selecting
-    between the two forms in eight.  ``strict`` so that a future fix fails here
-    rather than passing silently.
+    Each of these sits within a rounding step of the gap between zero and the
+    smallest positive double, and they disagree about which double-precision
+    exponent is right: the first two are cases the two-step form gets wrong, the
+    last three are cases subtracting the normalizer gets wrong.  No single
+    double-precision expression passes all five, which is why the flushed
+    entries are redone in exact arithmetic instead.
+
+    Expected values are from 200-digit Decimal.
     """
     weights, _ = _normalize_log_weights(np.array(log_weights))
 
