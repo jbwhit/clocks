@@ -425,24 +425,30 @@ def _quadrature_converged(
     identically and agree on the same wrong answer; with the peak in closed form
     there is no such feature left to miss.
 
-    It is an estimate and not a bound, and the difference is measured rather
-    than assumed. Over 19,883 certified samples spanning 40 decades of
-    ``track_offset`` it understated the true error in 144 of them -- 0.72% -- by
-    a median factor of 1.6 and at worst 204. What held anyway is what the caller
-    is promised: the true error of a certified result never exceeded 4.75e-4
-    against a tight reference, inside ``_QUADRATURE_RTOL``, with a median of
-    4.4e-16 and a 99th percentile of 2.3e-4.
+    It is an estimate and **not a bound**. The error has a first-order
+    contribution from the ``track_offset``-wide transition the grid steps over,
+    which the second-order extrapolation does not cancel, and it can arrive with
+    the opposite sign to the smooth part -- so at particular resolutions the two
+    nearly cancel *between* the coarse and fine values and the gap collapses
+    while a real error remains. The worst understatement reproduced so far is
+    **1771x**: ``sigma=4.752219248552492``, clock offset ``0.246 * sigma``,
+    ``track_offset=2.84e-06`` gives an estimate of 1.9e-09 against a true error
+    of 3.3e-06.
 
-    A third-model review predicted the mechanism and a search aimed at it
-    confirmed the mechanism while bounding the consequence. The first-order term
-    from the stepped-over transition is negative, while the Gaussian's curvature
-    contributes positively once the clock sits in the convex tails, so at
-    particular resolutions the two nearly cancel *between* the pair and the gap
-    collapses. Sweeping 312,000 such geometries found 17 certified with the
-    estimate understating more than tenfold, worst 185 -- and the worst true
-    error among them was 6.2e-06, still 160 times inside the tolerance. That
-    margin is why the tolerance is 1e-3 rather than something that looks
-    tighter.
+    Do not read a frequency into this. Three samplings of the same property
+    returned 0.72%, 1.17% and 6.66%, and worst factors of 204, 305 and 1771 --
+    it depends entirely on where the sample concentrates, so no rate here is a
+    property of the method. An earlier version of this docstring also blamed the
+    clock being in the convex tails; the 1771x case sits inside the core, where
+    the cancellation is between the two integration pieces instead.
+
+    What has held under every sampling is what a caller depends on: the true
+    error of a certified result stayed inside ``_QUADRATURE_RTOL``. Largest
+    observed across three independent searches, one of them adversarial and
+    aimed at the weak-field threshold, over roughly 140,000 certified samples:
+    5.05e-4, 5.31e-4 and 4.57e-4 against a tolerance of 1e-3, with medians
+    around 1e-9. That margin is why the tolerance is 1e-3 and not something that
+    looks tighter.
     """
     with np.errstate(over="ignore", invalid="ignore"):
         difference = np.abs(fine - coarse)
@@ -482,9 +488,10 @@ def _density_potential_batch(
 
     The two resolutions are then combined rather than merely compared. Halving
     the step quarters a second-order error, so ``(4 * fine - coarse) / 3``
-    cancels it; the returned value is typically three or four orders better than
-    the gap the certificate is drawn from, which is why that certificate is
-    loose but never optimistic.
+    cancels it, and the returned value is typically orders better than the gap
+    the certificate is drawn from. That gap is usually loose for the same
+    reason -- but not always, and not by construction: see
+    :func:`_quadrature_converged` for where it understates and by how much.
 
     Refinement still cannot see a grid too coarse to resolve the profile
     *itself*, where both resolutions are equally blind and agree on nothing.
@@ -522,11 +529,12 @@ def _density_potential_batch(
             # free -- but the error is only second order where the integrand is
             # smooth enough. The transition of width ``track_offset`` around the
             # clock, which the grid steps over when it is narrow, contributes a
-            # FIRST-order term that this does not cancel. Measured, extrapolating
-            # is worse than the finer grid alone in 0.68% of certified samples,
-            # by a median factor of 1.6 and at worst 329; it is kept because the
-            # median case is three to four orders better and the tolerance was
-            # measured to hold regardless.
+            # FIRST-order term that this does not cancel, so extrapolating can
+            # be worse than the finer grid alone. Measured at 1.09%, 0.68% and
+            # 3.78% of certified samples across three searches, worst factor 95,
+            # 329 and 126: the rate is sampling-dependent, the phenomenon is
+            # not. It is kept because the median case is orders better and the
+            # tolerance was measured to hold regardless.
             extrapolated = (4.0 * fine_smooth - coarse_smooth) / 3.0
             amplitude = params_batch[:, 2]
             coarse = -amplitude * (coarse_smooth + peak)
