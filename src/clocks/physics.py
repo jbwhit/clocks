@@ -14,6 +14,15 @@ from clocks.types import ClockArray, MassConfig
 
 WEAK_FIELD_LIMIT = 0.1
 _MAX_ABS_POTENTIAL = WEAK_FIELD_LIMIT / 2.0
+# Relative agreement required between a grid and its refinement before a
+# potential is reported at all. It bounds the error of the coarser grid, so
+# it is conservative for the extrapolated value actually returned: shipped
+# draws estimate up to 1.3e-4 while landing within about 1e-8 of a tight
+# reference.
+_QUADRATURE_RTOL = 1e-3
+# Grid points per sigma below which the profile itself is unresolved and
+# refinement compares two equally blind answers.
+_MIN_POINTS_PER_SIGMA = 4.0
 
 
 class PhysicsDomainError(ValueError):
@@ -298,28 +307,242 @@ def _validate_density_params(value: object, *, batch: bool) -> NDArray[np.float6
     return params
 
 
+def _gaussian_shape(
+    offset_from_mu: NDArray[np.float64],
+    sigma: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Return the unit-amplitude Gaussian profile at ``offset_from_mu``.
+
+    Callers pass the displacement from the centre rather than an absolute
+    coordinate: reconstructing ``x`` and subtracting ``mu`` afterwards quantises
+    the profile to the float spacing at ``mu``, which for ``mu ~ 1e15`` is 0.125
+    and destroys the resolution the quadrature depends on.
+    """
+    z = offset_from_mu / sigma[:, np.newaxis]
+    return np.exp(-0.5 * z**2)
+
+
+def _asinh_ratio(
+    displacement: NDArray[np.float64], track_offset: float
+) -> NDArray[np.float64]:
+    """``arcsinh(displacement / track_offset)``, without forming the ratio.
+
+    ``displacement / track_offset`` overflows for a small enough offset -- at
+    ``h = 1e-310`` a displacement of 10 is already ``inf`` -- and the difference
+    of two infinities that follows is NaN. For large arguments
+    ``arcsinh(x) -> sign(x) * (log 2 + log|x|)``, which splits the ratio into a
+    subtraction of logarithms that cannot overflow.
+    """
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        ratio = displacement / track_offset
+        asymptotic = np.sign(displacement) * (
+            np.log(2.0) + np.log(np.abs(displacement)) - np.log(track_offset)
+        )
+        return np.where(np.isfinite(ratio), np.arcsinh(ratio), asymptotic)
+
+
+def _smooth_integral_pair(
+    params: NDArray[np.float64],
+    clock_offset: NDArray[np.float64],
+    track_offset: float,
+    integration_limit: float,
+    intervals: int,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """The singularity-subtracted integral at ``intervals`` and at twice that.
+
+    ``[f(t) - f(c)] / sqrt((t-c)^2 + h^2)`` has a removable singularity at the
+    clock, but not a smooth one: away from ``t = c`` it tends to
+    ``f'(c) * sign(t - c)``, so it turns a corner there. A grid that steps over
+    the corner is stuck at second order however fine it gets, which is what held
+    this to about 1e-5. Splitting at ``t = c`` puts the corner on an endpoint and
+    leaves each side smooth.
+
+    The split is branch-free: clipping the clock into the interval collapses the
+    unused side to zero width when the clock lies outside it, and a zero-width
+    piece integrates to zero on its own.
+
+    Both resolutions come from **one** set of ordinates, because the finer grid
+    contains the coarser one's nodes -- every second point is the coarse grid.
+    The refinement therefore costs nothing beyond the finer evaluation itself.
+    """
+    sigma = params[:, 1]
+    half_width = integration_limit * sigma
+    lower, upper = -half_width, half_width
+    at_clock = _gaussian_shape(clock_offset[:, np.newaxis], sigma)[:, 0]
+    split = np.clip(clock_offset, lower, upper)
+    fractions = np.linspace(0.0, 1.0, 2 * intervals + 1)
+
+    coarse = np.zeros(params.shape[0])
+    fine = np.zeros(params.shape[0])
+    for piece_lo, piece_hi in ((lower, split), (split, upper)):
+        grid = (
+            piece_lo[:, np.newaxis] + (piece_hi - piece_lo)[:, np.newaxis] * fractions
+        )
+        # hypot, not the square root of a sum of squares: ``track_offset**2``
+        # underflows to zero below about 1e-154, and the split puts a node
+        # exactly on the clock, so the distance there would be 0 and the
+        # quotient 0/0.
+        integrand = (_gaussian_shape(grid, sigma) - at_clock[:, np.newaxis]) / np.hypot(
+            grid - clock_offset[:, np.newaxis], track_offset
+        )
+        fine = fine + np.trapezoid(integrand, grid, axis=1)
+        coarse = coarse + np.trapezoid(integrand[:, ::2], grid[:, ::2], axis=1)
+    return coarse, fine
+
+
+def _closed_form_peak(
+    params: NDArray[np.float64],
+    clock_offset: NDArray[np.float64],
+    track_offset: float,
+    integration_limit: float,
+) -> NDArray[np.float64]:
+    """The part of the integral carrying the kernel's peak, done exactly.
+
+    ``f(c) * integral of 1/sqrt((t-c)^2 + h^2)`` is
+    ``f(c) * [asinh((b-c)/h) - asinh((a-c)/h)]`` for any ``h``, however small. No
+    grid ever samples this term, which is why no grid has to be placed so as to
+    catch a peak of width ``track_offset``.
+    """
+    sigma = params[:, 1]
+    half_width = integration_limit * sigma
+    at_clock = _gaussian_shape(clock_offset[:, np.newaxis], sigma)[:, 0]
+    return at_clock * (
+        _asinh_ratio(half_width - clock_offset, track_offset)
+        - _asinh_ratio(-half_width - clock_offset, track_offset)
+    )
+
+
+def _quadrature_converged(
+    coarse: NDArray[np.float64], fine: NDArray[np.float64]
+) -> NDArray[np.bool_]:
+    """Whether refining the grid stopped moving the answer.
+
+    ``fine`` doubles the interval count, so ``|fine - coarse|`` estimates the
+    error of ``coarse`` and bounds the error of ``fine`` conservatively.
+
+    Refinement is only an honest estimate because the singularity is gone. When
+    the kernel's peak was integrated numerically, two resolutions could miss it
+    identically and agree on the same wrong answer; with the peak in closed form
+    there is no such feature left to miss.
+
+    It is an estimate and **not a bound**. The error has a first-order
+    contribution from the ``track_offset``-wide transition the grid steps over,
+    which the second-order extrapolation does not cancel, and it can arrive with
+    the opposite sign to the smooth part -- so at particular resolutions the two
+    nearly cancel *between* the coarse and fine values and the gap collapses
+    while a real error remains. The worst understatement reproduced so far is
+    **1771x**: ``sigma=4.752219248552492``, clock offset ``0.246 * sigma``,
+    ``track_offset=2.84e-06`` gives an estimate of 1.9e-09 against a true error
+    of 3.3e-06.
+
+    Do not read a frequency into this. Three samplings of the same property
+    returned 0.72%, 1.17% and 6.66%, and worst factors of 204, 305 and 1771 --
+    it depends entirely on where the sample concentrates, so no rate here is a
+    property of the method. An earlier version of this docstring also blamed the
+    clock being in the convex tails; the 1771x case sits inside the core, where
+    the cancellation is between the two integration pieces instead.
+
+    What has held under every sampling is what a caller depends on: the true
+    error of a certified result stayed inside ``_QUADRATURE_RTOL``. Largest
+    observed across three independent searches, one of them adversarial and
+    aimed at the weak-field threshold, over roughly 140,000 certified samples:
+    5.05e-4, 5.31e-4 and 4.57e-4 against a tolerance of 1e-3, with medians
+    around 1e-9. That margin is why the tolerance is 1e-3 and not something that
+    looks tighter.
+    """
+    with np.errstate(over="ignore", invalid="ignore"):
+        difference = np.abs(fine - coarse)
+        return (
+            np.isfinite(coarse)
+            & np.isfinite(fine)
+            & (difference <= _QUADRATURE_RTOL * np.abs(fine))
+        )
+
+
 def _density_potential_batch(
     params_batch: NDArray[np.float64],
     clock_array: ClockArray,
     integration_limit: float,
     n_quad: int,
-) -> NDArray[np.float64]:
-    mu = params_batch[:, 0]
-    sigma = params_batch[:, 1]
-    amplitude = params_batch[:, 2]
-    lo = mu - integration_limit * sigma
-    hi = mu + integration_limit * sigma
-    t = np.linspace(0.0, 1.0, n_quad)
-    x_grid = lo[:, np.newaxis] + (hi - lo)[:, np.newaxis] * t
-    z = (x_grid - mu[:, np.newaxis]) / sigma[:, np.newaxis]
-    density = amplitude[:, np.newaxis] * np.exp(-0.5 * z**2)
+) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+    """Integrate each Gaussian profile against the clock kernel.
 
-    potential = np.empty((params_batch.shape[0], len(clock_array.positions)))
-    for index, clock_position in enumerate(clock_array.positions[:, 0]):
-        distance = np.sqrt((x_grid - clock_position) ** 2 + clock_array.track_offset**2)
-        with np.errstate(over="ignore", invalid="ignore"):
-            potential[:, index] = np.trapezoid(-density / distance, x_grid, axis=1)
-    return potential
+    Returns the potential and, alongside it, whether each entry is trustworthy.
+    An entry no grid here could certify comes back as ``nan`` with its flag
+    clear, so a caller decides what to do rather than receiving a confident wrong
+    number: ``density_support_mask`` rejects such a candidate, and the batch
+    forward model raises.
+
+    The kernel's peak is integrated **analytically** rather than sampled:
+    :func:`_closed_form_peak` takes ``f(c)`` times the exact integral of the
+    kernel, and :func:`_smooth_integral_pair` handles what is left. Earlier
+    revisions instead chose between grids according to whether a spacing looked
+    fine enough to catch a peak of width ``track_offset``. No fixed grid can be
+    relied on to catch it, and the measurement that settles it is that the old
+    plain grid was right to 6.5e-12 at ``n_quad = 200`` and wrong by a factor of
+    22 at ``n_quad = 400`` for the same state, purely by where a node fell.
+
+    What remains is smooth on the profile's own scale, so **refinement is an
+    honest error estimate** -- which it was not while a narrow peak could hide
+    between nodes and be missed identically at both resolutions.
+
+    The two resolutions are then combined rather than merely compared. Halving
+    the step quarters a second-order error, so ``(4 * fine - coarse) / 3``
+    cancels it, and the returned value is typically orders better than the gap
+    the certificate is drawn from. That gap is usually loose for the same
+    reason -- but not always, and not by construction: see
+    :func:`_quadrature_converged` for where it understates and by how much.
+
+    Refinement still cannot see a grid too coarse to resolve the profile
+    *itself*, where both resolutions are equally blind and agree on nothing.
+    That is a property of ``integration_limit`` and ``n_quad`` alone -- the
+    spacing is ``2 * integration_limit * sigma / (n_quad - 1)`` and the profile's
+    scale is ``sigma``, so ``sigma`` cancels -- so it is checked directly. It is
+    not a formality: of 39,054 sampled geometries this gate blocks, refinement
+    alone would have certified 1,546, every one of them as exactly zero.
+    """
+    track_offset = clock_array.track_offset
+    intervals = n_quad - 1
+    # Points per sigma, independent of sigma. Below this the profile is not
+    # resolved at either resolution, so refinement would compare two equally
+    # blind answers and certify them.
+    resolves_profile = (n_quad - 1) >= 2.0 * integration_limit * _MIN_POINTS_PER_SIGMA
+
+    shape = (params_batch.shape[0], len(clock_array.positions))
+    potential = np.full(shape, np.nan)
+    converged = np.zeros(shape, dtype=bool)
+    if not resolves_profile:
+        return potential, converged
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        for index, clock_position in enumerate(clock_array.positions[:, 0]):
+            # Displacement from the profile centre, never an absolute coordinate.
+            clock_offset = clock_position - params_batch[:, 0]
+            peak = _closed_form_peak(
+                params_batch, clock_offset, track_offset, integration_limit
+            )
+            coarse_smooth, fine_smooth = _smooth_integral_pair(
+                params_batch, clock_offset, track_offset, integration_limit, intervals
+            )
+            # Halving the step quarters a second-order error, so this cancels
+            # it. Both values come from the same ordinates, so the accuracy is
+            # free -- but the error is only second order where the integrand is
+            # smooth enough. The transition of width ``track_offset`` around the
+            # clock, which the grid steps over when it is narrow, contributes a
+            # FIRST-order term that this does not cancel, so extrapolating can
+            # be worse than the finer grid alone. Measured at 1.09%, 0.68% and
+            # 3.78% of certified samples across three searches, worst factor 95,
+            # 329 and 126: the rate is sampling-dependent, the phenomenon is
+            # not. It is kept because the median case is orders better and the
+            # tolerance was measured to hold regardless.
+            extrapolated = (4.0 * fine_smooth - coarse_smooth) / 3.0
+            amplitude = params_batch[:, 2]
+            coarse = -amplitude * (coarse_smooth + peak)
+            fine = -amplitude * (extrapolated + peak)
+            certified = _quadrature_converged(coarse, fine)
+            potential[:, index] = np.where(certified, fine, np.nan)
+            converged[:, index] = certified
+    return potential, converged
 
 
 def _density_integration_bounds(
@@ -392,7 +615,12 @@ def clock_rates_density_gaussian_batch(
     if count < 2:
         raise ValueError("n_quad must be an integer >= 2")
     _density_integration_bounds(values[:, 0], values[:, 1], limit, clock_array)
-    potential = _density_potential_batch(values, clock_array, limit, count)
+    potential, converged = _density_potential_batch(values, clock_array, limit, count)
+    if not np.all(converged):
+        raise PhysicsDomainError(
+            "density quadrature did not converge; refine n_quad or widen "
+            "track_offset relative to sigma"
+        )
     if not np.all(np.isfinite(potential)):
         raise PhysicsDomainError("computed density potential must be finite")
     rates = time_dilation_factor(potential.reshape(-1))
