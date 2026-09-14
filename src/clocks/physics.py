@@ -15,10 +15,10 @@ from clocks.types import ClockArray, MassConfig
 WEAK_FIELD_LIMIT = 0.1
 _MAX_ABS_POTENTIAL = WEAK_FIELD_LIMIT / 2.0
 # Relative agreement required between a grid and its refinement before a
-# potential is reported at all. It bounds the error of the coarser grid, so
-# it is conservative for the extrapolated value actually returned: shipped
-# draws estimate up to 1.3e-4 while landing within about 1e-8 of a tight
-# reference.
+# potential is reported at all. Usually far looser than the error of the
+# extrapolated value actually returned -- shipped draws estimate up to 1.3e-4
+# while landing within about 1e-8 of a tight reference -- but not a bound on it;
+# see _quadrature_converged for where it understates and by how much.
 _QUADRATURE_RTOL = 1e-3
 # Grid points per sigma below which the profile itself is unresolved and
 # refinement compares two equally blind answers.
@@ -418,7 +418,9 @@ def _quadrature_converged(
     """Whether refining the grid stopped moving the answer.
 
     ``fine`` doubles the interval count, so ``|fine - coarse|`` estimates the
-    error of ``coarse`` and bounds the error of ``fine`` conservatively.
+    error of ``coarse``, and is usually far larger than the error of what is
+    returned. That is the textbook rationale for step halving, and it assumes a
+    smoothness this integrand does not always have -- see below.
 
     Refinement is only an honest estimate because the singularity is gone. When
     the kernel's peak was integrated numerically, two resolutions could miss it
