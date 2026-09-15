@@ -1,0 +1,437 @@
+"""Prototype (revision 2) of the correctly-rounded normalizer plus a reference.
+
+NOT repository code. Used only to measure claims for pr18-design.md.
+
+Revision 2 changes (see the design document, "Changes in revision 2"):
+  * the deep path's first estimate is a vectorized double-double exp whose
+    error bound is derived from IEEE-754 semantics (no libm assumption), so a
+    deep call costs O(N) numpy work instead of O(N) Decimal exps, and the
+    correctly-rounded guarantee covers the whole subnormal range;
+  * an entry still undecided at P_MAX Decimal digits RAISES instead of warning;
+  * every float -> Decimal conversion is Decimal.from_float (context-free).
+"""
+
+from __future__ import annotations
+
+import math
+from decimal import (
+    MAX_EMAX,
+    MIN_EMIN,
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DivisionByZero,
+    Inexact,
+    InvalidOperation,
+    Overflow,
+)
+from fractions import Fraction
+
+import numpy as np
+from scipy.special import logsumexp
+
+# ---------------------------------------------------------------- Decimal helpers
+
+
+def _isolated_context(prec: int) -> Context:
+    # Every field is given explicitly: Context() copies unspecified fields from
+    # the *mutable* module-level DefaultContext, which a hostile caller can edit.
+    return Context(
+        prec=prec,
+        rounding=ROUND_HALF_EVEN,
+        Emin=MIN_EMIN,
+        Emax=MAX_EMAX,
+        capitals=1,
+        clamp=0,
+        flags=[],
+        traps=[InvalidOperation, DivisionByZero, Overflow],
+    )
+
+
+def _dec(x: float) -> Decimal:
+    # Decimal(float) consults the *thread* context's FloatOperation signal
+    # (sets the flag; raises if trapped).  Decimal.from_float does not.
+    return Decimal.from_float(float(x))
+
+
+# The difference of two doubles is an integer multiple of 2**-1074 with at most
+# 2099 bits; its decimal expansion has at most ~1383 significant digits.  1500
+# digits therefore make the subtraction exact, and Inexact is trapped so that a
+# violation of this claim is loud rather than a silently rounded exponent.
+P_EXACT_DIFF = 1500
+
+
+def _exact_difference(value: float, peak: float) -> Decimal:
+    ctx = _isolated_context(P_EXACT_DIFF)
+    ctx.traps[Inexact] = True
+    return ctx.subtract(_dec(value), _dec(peak))
+
+
+def reference_weights(values, prec: int = 300) -> tuple[list[float], list[Decimal]]:
+    """Correctly rounded weights from a ``prec``-digit Decimal computation."""
+    ctx = _isolated_context(prec)
+    vals = [float(v) for v in np.asarray(values, dtype=np.float64)]
+    finite = [v for v in vals if math.isfinite(v)]
+    peak = max(finite)
+    exps = []
+    for v in vals:
+        if v == -math.inf:
+            exps.append(Decimal(0))
+        else:
+            exps.append(ctx.exp(_exact_difference(v, peak)))
+    total = Decimal(0)
+    for e in exps:
+        total = ctx.add(total, e)
+    ws = [ctx.divide(e, total) for e in exps]
+    return [float(w) for w in ws], ws
+
+
+# ---------------------------------------------------------------- main / branch
+
+
+def normalize_main(log_weights):
+    values = np.asarray(log_weights, dtype=np.float64)
+    log_normalizer = float(logsumexp(values))
+    if not math.isfinite(log_normalizer):
+        raise RuntimeError("All particles have zero weight")
+    return np.exp(values - log_normalizer), log_normalizer
+
+
+def normalize_branch(log_weights):
+    values = np.asarray(log_weights, dtype=np.float64)
+    log_normalizer = float(logsumexp(values))
+    if not math.isfinite(log_normalizer):
+        raise RuntimeError("All particles have zero weight")
+    shifted = np.exp(values - np.max(values))
+    return shifted / shifted.sum(), log_normalizer
+
+
+# ---------------------------------------------------------------- double-double
+#
+# Error-free transformations and double-word arithmetic, vectorized over numpy
+# arrays.  Every operation below is a sequence of IEEE-754 binary64 additions,
+# subtractions and multiplications in round-to-nearest; no libm function is
+# involved.  Bounds (u = 2**-53) are from Joldes, Muller & Popescu, "Tight and
+# rigorous error bounds for basic building blocks of double-word arithmetic",
+# ACM TOMS 2017: AccurateDWPlusDW <= 3u^2 (+13u^3), DWTimesDW1 <= 7u^2 (the
+# paper's 2Prod is an FMA; Dekker's split-based 2Prod is exact too, absent
+# underflow/overflow, so the same bound applies).  Division is the textbook
+# one-correction quotient; its bound is reasoned below and measured.
+
+_SPLITTER = 134217729.0  # 2**27 + 1
+DD_OP_EPS = 2.0**-100  # budget per dd add / mul (proved <= 7u^2 = 2**-103.2; measured 2**-104.5)
+DD_DIV_EPS = 2.0**-98  # budget per dd division  (reasoned ~6u^2 = 2**-103.4; measured 2**-103.4)
+
+
+def _two_sum(a, b):
+    s = a + b
+    bb = s - a
+    err = (a - (s - bb)) + (b - bb)
+    return s, err
+
+
+def _quick_two_sum(a, b):  # requires |a| >= |b| (or a == 0)
+    s = a + b
+    err = b - (s - a)
+    return s, err
+
+
+def _split(a):
+    t = _SPLITTER * a
+    hi = t - (t - a)
+    return hi, a - hi
+
+
+def _two_prod(a, b):
+    p = a * b
+    ah, al = _split(a)
+    bh, bl = _split(b)
+    err = ((ah * bh - p) + ah * bl + al * bh) + al * bl
+    return p, err
+
+
+def _dd_add(ah, al, bh, bl):
+    """AccurateDWPlusDW: relative error <= 3u^2 + 13u^3 for any operands."""
+    s1, s2 = _two_sum(ah, bh)
+    t1, t2 = _two_sum(al, bl)
+    s2 = s2 + t1
+    s1, s2 = _quick_two_sum(s1, s2)
+    s2 = s2 + t2
+    return _quick_two_sum(s1, s2)
+
+
+def _dd_add_nocancel(ah, al, bh, bl):
+    """Sloppy DWPlusDW: absolute error <= 3u^2 (|a| + |b|).
+
+    Only valid where |fl(ah + bh)| dominates the low parts (no catastrophic
+    cancellation), which is the case at both call sites: Horner steps
+    (|p * r''| <= 0.002 c_i, design section 5) and sums of positive terms
+    (where |a| + |b| = |a + b|, so the bound is relative as well).
+    """
+    s, e = _two_sum(ah, bh)
+    e = e + (al + bl)
+    return _quick_two_sum(s, e)
+
+
+def _dd_mul(ah, al, bh, bl):
+    p1, p2 = _two_prod(ah, bh)
+    p2 = p2 + (ah * bl + al * bh)
+    return _quick_two_sum(p1, p2)
+
+
+def _dd_div(ah, al, bh, bl):
+    q1 = ah / bh
+    p1, p2 = _two_prod(q1, bh)  # q1 * b, as a dd
+    p2 = p2 + q1 * bl
+    p1, p2 = _quick_two_sum(p1, p2)
+    r1, _r2 = _dd_add(ah, al, -p1, -p2)  # remainder a - q1 * b
+    q2 = r1 / bh
+    return _quick_two_sum(q1, q2)
+
+
+def _dd_sum(h, l):
+    """Pairwise (tree) sum of a dd array; ceil(log2 n) levels of _dd_add."""
+    h = np.asarray(h, dtype=np.float64)
+    l = np.asarray(l, dtype=np.float64)
+    while h.size > 1:
+        if h.size % 2:
+            h = np.append(h, 0.0)
+            l = np.append(l, 0.0)
+        h, l = _dd_add_nocancel(h[0::2], l[0::2], h[1::2], l[1::2])
+    return float(h[0]), float(l[0])
+
+
+def _dd_from_decimal(x: Decimal) -> tuple[float, float]:
+    hi = float(x)
+    lo = float(_isolated_context(60).subtract(x, _dec(hi)))
+    return hi, lo
+
+
+def _dd_from_fraction(x: Fraction) -> tuple[float, float]:
+    hi = float(x)
+    lo = float(x - Fraction(hi))
+    return hi, lo
+
+
+# ln 2 as a triple-double.  LN2_HI carries 42 significant bits, so k * LN2_HI
+# is exact for |k| < 2**11 (53 bits).  |LN2_HI + LN2_LO + LN2_LO2 - ln 2| is
+# below 2**-157 [measured].
+_ctx80 = _isolated_context(80)
+_LN2_DEC = _ctx80.ln(Decimal(2))
+LN2 = float(_LN2_DEC)
+LN2_HI = float(np.ldexp(np.rint(np.ldexp(LN2, 42)), -42))
+LN2_LO = float(_ctx80.subtract(_LN2_DEC, _dec(LN2_HI)))
+LN2_LO2 = float(
+    _ctx80.subtract(_ctx80.subtract(_LN2_DEC, _dec(LN2_HI)), _dec(LN2_LO))
+)
+
+# exp(j / 256) for j in [-J_MAX, J_MAX], as dd (relative error <= 2**-105 each).
+# |r| <= ln2/2 (1 + 2**-42) -> |256 r| <= 88.8, so J_MAX = 89 covers rint.
+J_MAX = 89
+_TABLE_J = np.arange(-J_MAX, J_MAX + 1)
+_tab = [_dd_from_decimal(_ctx80.exp(_ctx80.divide(Decimal(int(j)), Decimal(256)))) for j in _TABLE_J]
+TABLE_HI = np.array([t[0] for t in _tab])
+TABLE_LO = np.array([t[1] for t in _tab])
+
+# Taylor coefficients 1 / i!, i = 0..POLY_DEGREE, as dd (exact to 2**-106).
+# |r''| <= 1/512 (+ slop): truncation |r''|**10 / 10! * e**|r''| <= 2**-111.
+POLY_DEGREE = 9
+_coef = [_dd_from_fraction(Fraction(1, math.factorial(i))) for i in range(POLY_DEGREE + 1)]
+COEF_HI = [c[0] for c in _coef]
+COEF_LO = [c[1] for c in _coef]
+
+# Certified relative error of _exp_dd (section 5 of the design): reasoned
+# 2**-100.4, measured 2**-103.9 on 20,000 arguments, budgeted with a 20x margin.
+EXP_DD_EPS = 2.0**-96
+
+
+def _exp_dd(s, e):
+    """exp(s + e) = (mh + ml) * 2**k for double arrays s in [-1100, 64], |e| <= 2**-43.
+
+    s + e is an exact sum (from _two_sum), s the rounded difference and e its
+    remainder.  Returns mantissa dd (mh, ml) with mh in [0.70, 1.42] and an
+    integer exponent array k.  Every step is an IEEE-754 add/sub/mul.
+    """
+    s = np.asarray(s, dtype=np.float64)
+    e = np.asarray(e, dtype=np.float64)
+    zero = np.zeros_like(s)
+    # 1. s = k ln2 + r, |r| <= ln2/2 (+ 2**-42 slop), r as a dd.
+    k = np.rint(s / LN2)
+    r1 = s - k * LN2_HI  # exact: k * LN2_HI exact, and the difference is representable
+    p1, p2 = _two_prod(k, LN2_LO)  # exact
+    p2 = p2 + k * LN2_LO2  # |k * LN2_LO2| <= 2**-85; its roundings are ~2**-138
+    rh, rl = _dd_add(r1, zero, -p1, -p2)
+    # 2. r = j/256 + r'', |r''| <= 1/512 (+ slop); exp(j/256) from the table.
+    j = np.rint(rh * 256.0)
+    rh, rl = _dd_add(rh, rl, -j / 256.0, zero)
+    # 3. Taylor polynomial of degree POLY_DEGREE in dd (Horner; no cancellation:
+    #    |p * r''| <= 0.002 |c_i| at every step).
+    ph = np.full_like(s, COEF_HI[POLY_DEGREE])
+    pl = np.full_like(s, COEF_LO[POLY_DEGREE])
+    for i in range(POLY_DEGREE - 1, -1, -1):
+        ph, pl = _dd_mul(ph, pl, rh, rl)
+        ph, pl = _dd_add_nocancel(ph, pl, COEF_HI[i], COEF_LO[i])
+    idx = (j + J_MAX).astype(np.intp)
+    mh, ml = _dd_mul(ph, pl, TABLE_HI[idx], TABLE_LO[idx])
+    # 4. exp(e) = 1 + e + e^2/2 (+ e^3/6 <= 2**-131 dropped), as a dd.
+    fh, fl = _two_sum(1.0, e)
+    fh, fl = _dd_add(fh, fl, 0.5 * e * e, zero)
+    mh, ml = _dd_mul(mh, ml, fh, fl)
+    return mh, ml, k.astype(np.int64)
+
+
+# ---------------------------------------------------------------- prototype
+
+QUANTUM = 2.0**-1074
+TINY = float(np.finfo(np.float64).tiny)  # 2**-1022, smallest normal double
+# Certified relative error of the dd quanta estimate q, arithmetic only
+# (section 5): numerator + denominator exps, <= 26 tree-sum levels (K <= 2**26),
+# one division: 2 EXP_DD_EPS + 26 DD_OP_EPS + DD_DIV_EPS = 2**-94.1.  Budgeted
+# with a 17x margin; the denominator tail is added separately (tail_rel).
+EPS_Q = 2.0**-90
+# Denominator terms below D_CUT contribute < 2**-96 relative in total
+# (n * exp(D_CUT + 1) with total >= 1); D_CUT depends on n, see _deep_weights.
+TAIL_LOG2 = 96
+# Numerator exponents below this are certified zero: exp(-1100) * 2**1074 < 2**-513.
+D_ZERO = -1100.0
+# Decimal escalation for entries the dd round leaves within EPS_Q of a boundary.
+P_START = 56
+P_MAX = 224  # 56, 112, 224: three rounds, then raise (section 10)
+
+
+class WeightRoundingUndecided(RuntimeError):
+    """A weight sits closer to a rounding boundary than P_MAX digits resolve."""
+
+
+def _decide_exactly(
+    v_flagged: np.ndarray,
+    values: np.ndarray,
+    shifted: np.ndarray,
+    peak: float,
+    stats: dict | None = None,
+) -> np.ndarray:
+    """Correctly rounded weights for the flagged entries, by Ziv iteration.
+
+    Exponents are the *exact* differences value - peak, never the float
+    ``shifted``: that subtraction is inexact when the peak is small, and the
+    flagged entries are by construction within that error of a boundary.
+    """
+    finite_mask = np.isfinite(shifted)
+    n = int(finite_mask.sum())
+    uniq, inverse = np.unique(v_flagged, return_inverse=True)
+    out = np.empty(uniq.size)
+    prec = P_START
+    undecided = np.ones(uniq.size, dtype=bool)
+    while True:
+        ctx = _isolated_context(prec)
+        u = Decimal(f"5e-{prec}")  # unit roundoff at prec digits; string ctor is context-free
+        # Terms whose float shift is below d_cut are dropped from the Decimal
+        # sum; the float shift is within 2**-43 of the exact one, so exp(d_cut+1)
+        # bounds each dropped term with room to spare.
+        d_cut = -((prec + 3) * math.log(10.0) + math.log(n))
+        keep = finite_mask & (shifted >= d_cut)
+        kept = int(keep.sum())
+        dropped = n - kept
+        total = Decimal(0)
+        for x in values[keep].tolist():
+            total = ctx.add(total, ctx.exp(_exact_difference(x, peak)))
+        # total >= 1 (the peak contributes exp(0) = 1), so the tail is a
+        # relative bound as well as an absolute one.
+        tail = ctx.multiply(Decimal(dropped), ctx.exp(_dec(d_cut + 1.0))) if dropped else Decimal(0)
+        # first-order relative error: exp + kept additions + division, plus tail
+        eps = ctx.add(ctx.multiply(Decimal(kept + 3), u), tail)
+        eps = ctx.multiply(eps, Decimal(2))  # slack for second-order terms and the lo/hi products
+        if stats is not None:
+            stats.setdefault("rounds", []).append((prec, kept, int(undecided.sum())))
+        for k in np.flatnonzero(undecided):
+            e = ctx.exp(_exact_difference(float(uniq[k]), peak))
+            w = ctx.divide(e, total)
+            lo = float(ctx.multiply(w, ctx.subtract(Decimal(1), eps)))
+            hi = float(ctx.multiply(w, ctx.add(Decimal(1), eps)))
+            if lo == hi:
+                out[k] = lo
+                undecided[k] = False
+            elif prec >= P_MAX:
+                raise WeightRoundingUndecided(
+                    f"weight rounding undecided at {prec} Decimal digits: log weight "
+                    f"{uniq[k]!r} (peak {peak!r}) lies within ~1e-{prec} relative of a "
+                    "rounding boundary of the subnormal range"
+                )
+        if not undecided.any():
+            break
+        prec *= 2
+    return out[inverse]
+
+
+def _deep_weights(values, peak, shifted, deep, stats=None):
+    """Correctly rounded weights for the entries whose float weight is < TINY."""
+    dv = shifted[deep]
+    w = np.zeros(dv.size)
+    # Entries at -inf or below D_ZERO are certified zero (Q < 2**-513 < 0.5)
+    # without any arithmetic; dead particles between tempering stages are the
+    # common case, and they must not pay for a denominator.
+    live = np.isfinite(dv) & (dv >= D_ZERO)
+    if stats is not None:
+        stats["n_flagged"] = 0
+        stats["n_live"] = int(live.sum())
+    if not live.any():
+        return w
+    finite = np.isfinite(shifted)
+    n = int(finite.sum())
+    # Exact differences: shifted == s (same IEEE operation), e its remainder.
+    s_f, e_f = _two_sum(values[finite], -peak)
+    e = np.zeros_like(shifted)
+    e[finite] = e_f
+    # --- denominator: every term within D_CUT of the peak, as a dd sum -------
+    d_cut = -(TAIL_LOG2 * LN2 + math.log(n) + 1.0)
+    keep = finite & (shifted >= d_cut)
+    kept = int(keep.sum())
+    mh, ml, k = _exp_dd(shifted[keep], e[keep])
+    th, tl = _dd_sum(np.ldexp(mh, k), np.ldexp(ml, k))  # k >= -110: no underflow
+    # Dropped terms: each < exp(d_cut + 1) (exact d_j < float d_j + 2**-43),
+    # total >= 1, so this bounds their relative contribution; <= 2**-96 by the
+    # choice of d_cut.  The libm calls here only evaluate a bound, padded.
+    tail_rel = (n - kept) * math.exp(d_cut + 1.0) * (1.0 + 2.0**-40)
+    # --- numerators for the live deep entries ---------------------------------
+    ev = e[deep]
+    mh, ml, k = _exp_dd(dv[live], ev[live])
+    kq = k + 1074  # <= ~93 for a deep entry (w < TINY forces exp(d) < N * TINY)
+    if np.any(kq > 200):
+        raise RuntimeError("deep entry with a normal-range weight; classification is inconsistent")
+    qh, ql = _dd_div(np.ldexp(mh, kq), np.ldexp(ml, kq), th, tl)
+    # q = Q (1 + err), |err| <= EPS_Q + tail_rel.  Decide the side of the
+    # nearest half-integer from the exact dd fraction (section 5).
+    m = np.floor(qh)
+    fh = qh - m  # exact
+    a, b = _two_sum(fh - 0.5, ql)  # fh - 0.5 exact when it matters (section 5)
+    err_abs = (EPS_Q + tail_rel) * qh * (1.0 + 2.0**-40)
+    near_live = (np.abs(a) - np.abs(b)) <= err_abs * (1.0 + 2.0**-50)
+    up = (a > 0.0) & ~near_live
+    w[live] = (m + up) * QUANTUM  # exact: integer < 2**53 times a power of two
+    near = np.zeros(dv.size, dtype=bool)
+    near[live] = near_live
+    if stats is not None:
+        stats["n_flagged"] = int(near.sum())
+        stats["kept"] = kept
+    if near.any():
+        w[near] = _decide_exactly(values[deep][near], values, shifted, float(peak), stats)
+    return w
+
+
+def normalize_proto(log_weights, stats: dict | None = None):
+    values = np.asarray(log_weights, dtype=np.float64)
+    log_normalizer = float(logsumexp(values))  # unchanged: evidence + loud guard
+    if not math.isfinite(log_normalizer):
+        raise RuntimeError("All particles have zero weight")
+    peak = np.max(values)  # finite here
+    shifted = values - peak  # <= 0
+    scaled = np.exp(shifted)  # exp(0) == 1 at the peak
+    total = scaled.sum()  # >= 1
+    weights = scaled / total  # the branch's arithmetic, kept bitwise
+    deep = weights < TINY  # the quotient landed in the subnormal range (or is 0)
+    if stats is not None:
+        stats["n_deep"] = int(deep.sum())
+        stats["n_flagged"] = 0
+    if deep.any():
+        weights[deep] = _deep_weights(values, float(peak), shifted, deep, stats)
+    return weights, log_normalizer

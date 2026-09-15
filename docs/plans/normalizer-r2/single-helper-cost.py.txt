@@ -1,0 +1,26 @@
+import math,sys,time
+from decimal import Decimal
+import numpy as np
+import clocks.inference as inf
+assert inf.__file__.startswith('/Users/jonathan/projects/clocks/.worktrees/normalizer/')
+sys.path.insert(0,'/private/tmp/claude-501/-Users-jonathan-projects-clocks/c69dd40d-c0be-43fe-ae13-7280f5717025/scratchpad')
+import proto as p
+n=2000;c=p._isolated_context(160);base=float(np.log(1/n));norm=inf._gaussian_log_normalizer(1.,1.)
+def cv(x):return float(base+((-norm-.5*np.float64(x)**2)+norm))
+def ex(x):return c.exp(p._exact_difference(cv(x),base))
+rng=np.random.default_rng(719)
+xs=[0.]+list(rng.normal(0.,1.,1995));total=Decimal(0)
+for x in xs:total=c.add(total,ex(x))
+tail=math.sqrt(-2*float(c.ln(c.divide(c.multiply(total,p._dec(p.QUANTUM)),Decimal(2)))))
+while c.divide(c.multiply(ex(tail),Decimal(2)),p._dec(p.QUANTUM)) <= c.add(total,ex(tail)):
+    tail=float(np.nextafter(tail,0.))
+xs.append(tail);target=c.divide(c.multiply(ex(tail),Decimal(2)),p._dec(p.QUANTUM));rem=c.subtract(target,c.add(total,ex(tail)))
+for _ in range(1):
+    raw=math.sqrt(-2*float(c.ln(rem)))
+    while ex(raw)>=rem:raw=float(np.nextafter(raw,np.inf))
+    xs.append(raw);rem=c.subtract(rem,ex(raw))
+xs+=[100.]*(n-len(xs));v=np.asarray([cv(x) for x in xs])
+ref,rw=p.reference_weights(v,200);q=c.divide(rw[1996],p._dec(p.QUANTUM))
+print('Q-.5',c.subtract(q,Decimal('.5')),'special_positions',xs[1996:])
+s={};t=time.perf_counter();p.normalize_proto(v,s);print('r2_ms',(time.perf_counter()-t)*1000,'stats',s)
+t=time.perf_counter();p.normalize_main(v);print('main_ms',(time.perf_counter()-t)*1000)

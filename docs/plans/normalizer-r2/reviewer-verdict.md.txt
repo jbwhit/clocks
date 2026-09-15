@@ -1,0 +1,88 @@
+I found a wrong “certified” result, a reachable `ParticleFilter.update()` regression, and material cost counterexamples. The venv was left untouched; Python 3.13.13 imports this worktree, and HEAD/status remain unchanged.
+
+1. **High — the rounding decision misses the lower midpoint.** In [proto.py:404](/private/tmp/claude-501/-Users-jonathan-projects-clocks/c69dd40d-c0be-43fe-ae13-7280f5717025/scratchpad/proto.py:404), this five-entry input fails:
+
+   ```python
+   [-14.171583200817665, -14.628378654822516,
+    -722.077393183382, -44.60327978867792,
+    -78.51114028012964]
+   ```
+
+   For entry 2, the executed 650-digit reference gives:
+
+   ```text
+   Q = 4503599627370499.5 − 3.09565900865e-27
+   expected: 4503599627370499 quanta
+   returned: 4503599627370500 quanta
+   n_deep=1, n_flagged=0
+   ```
+
+   The double-double estimate is `qh=4503599627370500`, `ql=-0.5`. Its uncertainty interval straddles `qh−0.5`, but the code tests `floor(qh)+0.5`, obtains `a=-1`, and incorrectly certifies the answer.
+
+   This exact weight is slightly **normal**, but float-classified deep—explicitly covered by §2’s guarantee. The failure is independent of the exponential bound. Both adjacent rounding boundaries must be considered. [Executed reproduction](/private/tmp/normalizer-r2-review/reproduce.py).
+
+2. **High — a real Gaussian filter can hit the cap and abort an update.** The statement in §10 that a physical likelihood cannot produce this is false.
+
+   I executed a 32-particle filter with identity forward model, unit Gaussian noise, observation zero, and default `ess_target=.8`. Its deliberately constructed finite particle population gives `Q−0.5 ≈ 7.73463e-250`.
+
+   The branch completes **seven stages**. The prototype raises `WeightRoundingUndecided` during `_next_beta`’s initial, speculative `ess_at(1.0)` evaluation. Thus certification can abort the filter for a candidate distribution that tempering would reject.
+
+   This demonstrates physical-model reachability, **not appreciable probability under random sampling**. State remained unchanged, but the exception precedes mutations, so that observation does not validate rollback after partial progress. [Executed public-update reproduction](/private/tmp/pr18_gaussian_cap_default_review.py).
+
+3. **Medium — the exponential proof has unmet preconditions, although I found no violation of `EXP_DD_EPS`.**
+
+   The sloppy-add **no-cancellation argument holds at its intended sites**: tree summands are positive, and the Horner product is too small relative to its positive coefficient to cause catastrophic cancellation. Independent instrumentation found zero dominance failures across 153,378 Horner additions; maximum product/coefficient ratio was `0.00195461`.
+
+   The cited addition and multiplication bounds are appropriate for normalized double-double inputs under their exponent assumptions. The [original paper](https://www.researchgate.net/publication/320313271_Tight_and_Rigorous_Error_Bounds_for_Basic_Building_Blocks_of_Double-Word_Arithmetic) explicitly permits either Dekker or FMA `2Prod`; transferring from FMA is not the unresolved issue.
+
+   Two executed counterexamples invalidate assumptions used in the document’s application of those bounds:
+
+   - At reduction `k=-19`, adding `k*LN2_LO2` leaves `p1 != RN(p1+p2)` before `_dd_add`. The cited normalized-input condition is unmet.
+   - `[0, -5e-324, -745]` reaches a Horner multiplication whose exact product is nonzero while `_two_prod` returns `(-0.0, 0.0)`. The blanket no-underflow assertion is false.
+
+   Neither probe demonstrates excessive exponential error. I reproduced the 20,000-argument maximum of **`2^-103.91`**. The budget has substantial headroom, and conservative composition looks feasible after explicitly handling normalization, underflow and higher-order terms. That is a repairable proof gap, rather than a completed certificate. [Executed proof probes](/private/tmp/codex_dd_bound_review.py).
+
+4. **Medium — correct rounding still does not cover every exact subnormal weight.** Executed input:
+
+   ```python
+   [98.28463995512519, -610.1117785771389]
+   ```
+
+   gives:
+
+   ```text
+   exact Q: 4503599627370491.738276…
+   expected: 4503599627370492 quanta
+   returned: 4503599627370620 quanta
+   n_deep=0
+   ```
+
+   Section 2 acknowledges this classification seam; the whole-range assertions in the summary and §6 contradict it. Either change classification or narrow the guarantee consistently. The [same reproduction script](/private/tmp/normalizer-r2-review/reproduce.py) covers this case.
+
+   The round-1 example `[-59.88145743137663, -782.1408195747232]` **does now correctly return `4294967297` quanta**.
+
+5. **Medium — the cost envelope remains optimistic.** Two distinct executed counterexamples matter:
+
+   | Input | Executed result |
+   |---|---|
+   | Seed 731; 1,800 `N(0,1)` and 200 `N(20,1)` particles; `ll=-0.5*x*x*300`; target ESS 1,000 | **55/61** expensive bisection calls; median **78.68 ms versus 12.90 ms** on main |
+   | 2,000-particle Gaussian construction with one residual-matched helper | `Q−0.5≈3.30e-28`; one Decimal round with 1,997 terms; **58.39 ms** |
+
+   The first is an ordinary sampled population. Bisection converges inside the expensive region; it need not cross it in only a few evaluations. The second is deliberately tuned, but requires neither the claimed `1e-70` hard case nor many tuned helpers. [Stage reproduction](/private/tmp/pr18_cost_cap_review.py), [single-helper reproduction](/private/tmp/pr18_single_helper_cost_review.py).
+
+   The dead shortcut is **safe but narrower than described**. It skips `-inf` and shifts below `-1100`; many weights that correctly round to zero still pay for double-double arithmetic. A finite `-800` tail with 1,999 healthy heads returned zero while costing **1.16 ms**, with `n_live=1`.
+
+6. **Low — the evidence and proposed tests need corrections.**
+
+   - Clean baseline: **898 passed, 4 xfailed**, with two slow tests deselected. I retract the round-1 “pre-existing physics failure” claim.
+   - Prototype-patched suite: **898 passed**, plus only the four expected strict XPASS results.
+   - Hostile Decimal contexts passed, including `FloatOperation` and eight independent threads inheriting mutated `DefaultContext`; caller flags remained unchanged.
+   - Requirement (A), normal-entry bitwise identity, and per-call evidence identity passed the targeted checks.
+   - `r2_ddacc.py` compares its table against `exp(j/64)` instead of `exp(j/256)`. Its current output reports error `1.838`; the corrected check recovers `2^-107.07`.
+   - The proposed rounded-shift cutoff oracle is invalid: `[-3e-14, -745.1332191019412]` correctly returns `5e-324`, despite its rounded shift meeting the proposed zero cutoff.
+
+The unresolved-items discussion therefore understates availability and stage-cost consequences, and omits the midpoint defect and concrete proof-precondition failures.
+
+I would keep shifted-scale arithmetic for ESS searches and separately validate that path: corrected subnormal weights square to zero, so repeatedly certifying them cannot improve those ESS contributions. Certify stored weights only, repair both midpoint handling and classification, and complete the exponential proof before implementation. The current cost and complexity are not justified inside every speculative normalization call.
+
+NOT SOUND ENOUGH TO IMPLEMENT
