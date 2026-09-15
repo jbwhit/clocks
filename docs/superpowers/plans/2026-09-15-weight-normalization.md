@@ -51,7 +51,7 @@ Task 1 also runs `uv run --no-sync pytest docs/plans/normalizer-r3 --tb=short`, 
 - Produces `_normalize_log_weights_fast(log_weights: NDArray[np.floating]) -> tuple[NDArray[np.float64], float]` (shifted scale).
 - Produces `WeightRoundingUndecided(RuntimeError)` and the reviewed private arithmetic helpers. No changes to inference bindings in this task.
 
-- [ ] **Step 1: Pin red numerical behavior before adding production arithmetic.**
+- [x] **Step 1: Pin red numerical behavior before adding production arithmetic.**
 
 Start `tests/test_weight_normalization.py` with the regression fixtures/test body from archived `test_prototype.py`, temporarily importing `clocks.inference as p` and naming the call `p._normalize_log_weights`. The exact assertions include:
 
@@ -63,7 +63,7 @@ assert weights[1] == np.ldexp(float(4503599627370492), -1074)
 
 Run `uv run --no-sync pytest tests/test_weight_normalization.py -k rounding_regressions --tb=short`. Record the wrong numerical outputs, not a collection/import error, as RED evidence. Do not weaken fixtures or expected integers.
 
-- [ ] **Step 2: Promote the reviewed implementation without changing arithmetic.**
+- [x] **Step 2: Promote the reviewed implementation without changing arithmetic.**
 
 Use the complete archived `prototype.py` as the source text. Preserve every arithmetic helper body, constant/certificate, DD reduction step, rounding-cell decision, and Decimal enclosure. Rename `normalize_branch` to `_normalize_log_weights_fast`, and `normalize_proto` to `_normalize_log_weights`, including their internal call. Remove the optional `stats` parameters and the three `if stats is not None` recording blocks; remove only the corresponding trailing argument in `_decide_exactly` calls. These counters belong in external instrumentation, not the package API.
 
@@ -78,7 +78,7 @@ raise RuntimeError(
 
 Add `numpy.typing.NDArray` and the two signatures above. Replace the experimental module docstring with the supported contract, link to the derivation, and a warning not to reassociate DD operations. Keep helper names/constant names unchanged to make proof-to-code comparison straightforward. No public stats object, lazy cache, configuration option, Cython or new algorithm.
 
-- [ ] **Step 3: Port the existing numerical and interval tests onto production imports.**
+- [x] **Step 3: Port the existing numerical and interval tests onto production imports.**
 
 Replace the temporary test import with `from clocks import _weight_normalization as p`. Port the 17 prototype and 12 interval cases into the two named files, retaining independent literal/Fraction/Decimal expectations. Do not import the archive in runtime tests. Rename calls to `_normalize_log_weights`; use the production `_decide_exactly` signature without stats.
 
@@ -98,7 +98,7 @@ Assert the existing hard cases require `[56, 112]`, and the real cap fixture req
 
 Add parameterized invalid-input checks for NaN, positive infinity, and all `-inf`, covering both normalization functions with the existing RuntimeError message prefix. Add bitwise equality of strict/fast healthy weights and exact equality of their evidence results on a finite non-candidate fixture.
 
-- [ ] **Step 4: Focused green, self-review, independent review, then main-session gate/commit.**
+- [x] **Step 4: Focused green, self-review, independent review, then main-session gate/commit.**
 
 Run `uv run --no-sync pytest tests/test_weight_normalization.py tests/test_weight_intervals.py --tb=short`. Report RED/GREEN commands and outputs plus exact promotion differences. Main controller compares operation ASTs against the reviewed prototype, obtains the task review, runs the complete gate and archives review evidence. The four production-inference xfails remain expected until Task 2. Commit/push only after gate output is read.
 
