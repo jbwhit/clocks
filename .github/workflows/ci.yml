@@ -25,9 +25,6 @@ jobs:
       - name: Test
         run: uv run pytest --tb=short
 
-      - name: Normalizer design regressions
-        run: uv run pytest docs/plans/normalizer-r3 --tb=short
-
       # pyproject sets `addopts = "-m 'not slow'"`, so the step above skips the
       # acceptance replays. Those are the only multi-observation, full-control
       # regressions there are; leaving them out of CI meant nothing here noticed

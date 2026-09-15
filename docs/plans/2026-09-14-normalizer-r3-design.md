@@ -1,8 +1,15 @@
 # Revision 3: correctly rounded tiny SMC weights
 
-Status: independently reviewed design and executable experiment; sound enough to implement.
-The package implementation is still the draft shifted-scale change in PR #18.
+Status: independently reviewed design and executable experiment; implemented in
+the package on 2026-09-15. This document remains the historical design record.
 This supersedes [revision 2](2026-09-14-normalizer-round-2-review.md).
+
+**Implementation status (2026-09-15):** the historical prototype, proof, and
+design tests below remain reproducible evidence at commit `3f7df94`. Their old
+binding and xfail assumptions no longer describe the production source. Current
+production evidence is recorded in
+[the implementation evidence](2026-09-15-normalizer-implementation.md), using
+the package tests and mutation commands named there.
 
 ## Contract and scope
 
@@ -193,7 +200,8 @@ ordinary assertions in the test process. Environment imports are asserted
 against the active checkout before that run. All four selected mutations were
 detected in complete 935-test runs; see the [evidence table](normalizer-r3/review.md).
 
-Run the dedicated design tests with:
+The following archived design commands are historical and reproducible at
+`3f7df94`; they no longer test the current production bindings:
 
 ```sh
 uv run --no-sync pytest docs/plans/normalizer-r3 --tb=short
@@ -209,11 +217,8 @@ The suite harness uses an explicit allowlist to remove precisely four known
 xfail marks and asserts the allowlist matched. It never changes source files
 or virtual environments. Injection affects only the pytest interpreter: tests
 that launch a fresh CLI process still exercise the branch implementation.
-Production integration must rerun the suite with the actual source changed.
-`NORMALIZER_MUTATION` selects in-memory faults for
-the old midpoint, old float classification, absent DD radius, or collapsed
-Decimal interval; mutation runs must complete the whole suite and fail on the
-intended property. Focused tests are also wired into repository CI.
+For current production verification, use the commands and measured evidence in
+[the implementation evidence](2026-09-15-normalizer-implementation.md).
 
 The independent design gate is recorded in [the review trail](normalizer-r3/review.md).
 The next checkpoint is a production implementation plan and its independent review.

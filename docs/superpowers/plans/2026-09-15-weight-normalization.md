@@ -115,7 +115,7 @@ Run `uv run --no-sync pytest tests/test_weight_normalization.py tests/test_weigh
 - Existing `clocks.inference._normalize_log_weights` remains importable; `_next_beta` explicitly calls `_normalize_log_weights_fast`.
 - `clocks.WeightRoundingUndecided` is the catchable public exception, exported through `__all__`, matching the existing PhysicsDomainError export convention.
 
-- [ ] **Step 1: Expose the four existing regressions as ordinary failing tests.**
+- [x] **Step 1: Expose the four existing regressions as ordinary failing tests.**
 
 Remove only the strict xfail decorator on `test_normalization_keeps_a_weight_that_is_barely_representable` and `_ROUNDS_TWICE`/its three parameter marks. Keep all five parameter values, IDs, and existing assertions. Run:
 
@@ -125,7 +125,7 @@ uv run --no-sync pytest tests/test_smc_rigorous.py -k 'barely_representable or s
 
 Record the four expected numerical failures before changing inference. Correct stale docstrings that describe the old expressions as a universal fix; expected values remain independent literals.
 
-- [ ] **Step 2: Wire strict accepted stages and fast speculative stages.**
+- [x] **Step 2: Wire strict accepted stages and fast speculative stages.**
 
 Remove inference's old function body and import:
 
@@ -140,7 +140,7 @@ In `_next_beta`'s ESS trial only, replace the call with `_normalize_log_weights_
 
 In `clocks.__init__`, import `WeightRoundingUndecided` directly from the new module and add it to `__all__`. Document the public failure in `ParticleFilter.update` and README: cap exhaustion rolls back the update, and callers should not blindly retry unchanged inputs. Correct rounding is not a promise that every finite population completes.
 
-- [ ] **Step 3: Exercise real integration and rollback, not injected architecture.**
+- [x] **Step 3: Exercise real integration and rollback, not injected architecture.**
 
 Adapt the literal PARTICLES and `make_filter` from archived `test_filter.py` into `tests/test_weight_filter.py`. The successful Gaussian update runs unpatched production and asserts seven stages. Compare its resulting particles, weights and evidence to a control using the fast accepted-stage function only; label this as measured equality for that case, not universal trajectory invariance.
 
@@ -150,17 +150,25 @@ For rollback, adapt the archived later-stage test using real production normaliz
 
 Add a fresh interpreter regression via `subprocess.run([sys.executable, '-c', code], check=True, ...)` that imports `clocks`, catches the public exception type, and checks the literal seam output. Assert its module path lies inside the active checkout. This directly closes the previous in-process-harness gap.
 
-- [ ] **Step 4: Replace experimental CI coverage with production coverage and tools.**
+- [x] **Step 4: Replace experimental CI coverage with production coverage and tools.**
 
 Remove only the separate `Normalizer design regressions` CI step: all promoted regressions are now collected by default `pytest`. Keep the default suite, slow suite, wheel build and installed-entry-point smoke gates.
 
-Implement `scripts/check_normalizer_mutations.py` as a PEP 723 script using existing numpy/scipy/pytest dependencies. It selects exactly one of the four archived mutation names via argparse, imports and asserts the production normalizer path, installs its in-memory fault before pytest collection, and exits with `pytest.main(["tests", "-m", "", "--tb=short"])`. Port mutation bodies from the archive with strict/fast name changes; when wrapping strict classification, update both the module and inference bindings. No xfail stripping, prototype injection, filesystem edits or environment setup. Print the selected mutation and verified import. Invalid names must fail argument parsing. Main controller runs four separate processes concurrently and checks intended failed tests in each full-suite result.
+Implement `scripts/check_normalizer_mutations.py` as a project-environment tool using the existing locked numpy/scipy/pytest dependencies. It selects exactly one of the four archived mutation names via argparse, imports and asserts the production normalizer path, installs its in-memory fault before pytest collection, and exits with `pytest.main(["tests", "-m", "", "--tb=short"])`. Port mutation bodies from the archive with strict/fast name changes; when wrapping strict classification, update both the module and inference bindings. No xfail stripping, prototype injection, filesystem edits or environment setup. Print the selected mutation and verified import. Invalid names must fail argument parsing. Main controller runs four separate processes concurrently and checks intended failed tests in each full-suite result.
 
-Implement `scripts/benchmark_normalizer.py` as a PEP 723 script for existing numpy/scipy. Use seed 731, populations 2,000 and 40,000, normal(0,1) heads, one tail from `[-700,-720,-740,-800,-inf]`, median of five warmed calls, and print strict/fast timings with Python/NumPy/platform provenance. Include the 32-particle real filter fixture from the integration test as an explicitly documented fixed workload and measure a fresh filter update; do not import tests from the benchmark. No timing assertions in CI and no worst-case/rarity claim. Main may record results in the evidence document after implementation review.
+Implement `scripts/benchmark_normalizer.py` as a project-environment tool using the existing locked numpy/scipy. Use seed 731, populations 2,000 and 40,000, normal(0,1) heads, one tail from `[-700,-720,-740,-800,-inf]`, median of five warmed calls, and print strict/fast timings with Python/NumPy/platform provenance. Include the 32-particle real filter fixture from the integration test as an explicitly documented fixed workload and measure a fresh filter update; do not import tests from the benchmark. No timing assertions in CI and no worst-case/rarity claim. Verify and print exact normalizer and inference source paths before timing. Main may record results in the evidence document after implementation review.
+
+Review ruling: these tools require the project environment and must be invoked with the documented `uv run --no-sync python` commands. Do not advertise standalone script mode or create/synchronize environments. This intentionally supersedes the original PEP 723 tool packaging choice to preserve checkout and dependency provenance.
 
 Mark archived design test/run commands as historical and reproducible at `3f7df94`, because their old binding/xfail assumptions no longer describe current source. Link to the new evidence and current production test/mutation commands. Keep the archived prototype/proof/test files unchanged as evidence; no package runtime code may import them.
 
 - [ ] **Step 5: Focused green and reviewed whole-package finalization.**
+
+Commit-time checkpoint: focused and complete local gates, all four full-suite
+mutations, production benchmark, and build/wheel smoke have completed. The
+post-commit independent review and exact-SHA CI conclusion are tracked in
+[PR #18](https://github.com/jbwhit/clocks/pull/18), without rewriting this
+pre-review snapshot to claim those future gates have already run.
 
 Run the numerical, interval, filter and `test_smc_rigorous.py` suites. Self-review call-site routing and public export; report exact outputs. Main obtains independent task review, runs the full local gate and the four whole-suite mutations, then builds/smoke-tests:
 
