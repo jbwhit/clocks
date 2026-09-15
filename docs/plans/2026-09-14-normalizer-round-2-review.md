@@ -1,7 +1,8 @@
 # Normalizer design: round-2 findings and continuation
 
 Status: **revision 2 rejected; no production implementation of the prototype**.
-This is the current continuation record for [PR #18](https://github.com/jbwhit/clocks/pull/18).
+This is the round-2 continuation record for [PR #18](https://github.com/jbwhit/clocks/pull/18).
+The accepted guarantee choice is carried into the [revision-3 design](2026-09-14-normalizer-r3-design.md).
 It supersedes the correctness, cost, environment, and readiness claims in the
 archived revision-2 design. It is not an approved revision-3 specification.
 
@@ -69,11 +70,11 @@ every exact subnormal weight are incompatible requirements. The original design
 acknowledges a classification seam in section 2 but contradicts that limitation
 in its summary and whole-range claims.
 
-Recommendation for revision 3: prioritize exact-subnormal coverage and permit
-corrections near the normal/subnormal boundary. The alternative is to narrow the
-guarantee consistently to float-classified entries. The recommended policy is
-proposed here, not recorded as an explicit user decision. Either choice still
-requires fixing finding 1.
+Jonathan subsequently selected the recommended revision-3 policy explicitly:
+prioritize exact-subnormal coverage and permit corrections near the
+normal/subnormal boundary. The earlier alternative of narrowing the guarantee
+to float-classified entries is not the selected direction. Finding 1 still
+requires its separate rounding-cell fix.
 
 ### 3. The precision cap can abort a real filter's speculative search
 
