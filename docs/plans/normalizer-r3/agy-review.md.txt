@@ -1,0 +1,115 @@
+### Environment & Verification Baseline
+
+- **Previously Denied Command**: `find docs/plans -type f`
+- **cwd**: `/Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review`
+- **git rev-parse HEAD**: `ff5d39aa4f4c69dfd752e3a3835cea6dd750ca39`
+- **git status --short**:
+  ```text
+  ?? docs/plans/2026-09-14-normalizer-r3-design.md
+  ?? docs/plans/normalizer-r3/
+  ```
+- **Target-Specific Line**: `R3 full-exact-subnormal coverage; both-midpoint decision; trim=2^-350`
+- **Prototype SHA-256**: `3898927019a6fffe0ececdbbcf875cdf02da5425bac4ccad75bc59a695e27865` (verified against `docs/plans/normalizer-r3/prototype.py`)
+
+---
+
+### Executive Summary
+
+Revision 3 replaces the rejected heuristic and unproven constructs of Revision 2 with a mathematically rigorous design:
+1. **Lattice-bounded floating-point arithmetic** guarantees absence of internal underflow.
+2. **Symmetric two-boundary integer-cell decisions** with directed outward rounding eliminate midpoint certification errors.
+3. **Conservative classification** mathematically guarantees coverage of every exact subnormal entry up to all supported NumPy array lengths ($N \le 2^{63}$).
+4. **Isolated directed Decimal interval fallback** strictly encloses dropped tails and respects arbitrary caller context configurations.
+5. **ESS call-site separation** avoids speculative DD and Decimal evaluation while provably preserving exact float64 ESS behavior.
+
+---
+
+### Detailed Mathematical & Structural Review
+
+#### 1. Lattice / No-Underflow and Exact Reduction Claims
+- **Lattice Preservation ([`dd-analysis.md`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/dd-analysis.md#L88-L141), [`prototype.py:63-108`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L63-L108))**:
+  - For binary64, any float $x$ with $|x| \ge \tau = 2^{-350}$ has an exponent $e \ge -350$ and unit in the last place $\text{ulp}(x) = 2^{e - 52} \ge 2^{-402}$. Thus, every cleaned non-zero component and zero lie on the lattice $\Lambda_{402} = \mathbb{Z} \cdot 2^{-402}$.
+  - Addition and subtraction of lattice members remain in $\Lambda_{402}$. Veltkamp splitting by $S = 2^{27} + 1$ preserves the lattice since $S \in \mathbb{Z}$ and $|S x| \ge 2^{-323}$ with $\text{ulp}(S x) \ge 2^{-375} \in \Lambda_{402}$. Split components `ah, al` and `bh, bl` belong to $\Lambda_{402}$.
+  - In `_two_prod`, exact cross-products and products belong to $\Lambda_{804} = \mathbb{Z} \cdot 2^{-804}$. Any non-zero member has magnitude at least $2^{-804}$. Because binary64's subnormal boundary is $2^{-1022}$, every non-zero intermediate is $> 2^{218} \cdot 2^{-1022}$, entirely excluding gradual underflow.
+- **Exact Reduction ([`prototype.py:203-207`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L203-L207))**:
+  - `exponent = np.rint(shifted / LN2)` satisfies $|exponent| \le 1155 < 2^{11}$ for $shifted \in [-800, 0]$.
+  - `LN2_HI` is verified at import ([`prototype.py:169`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L169)) to have denominator $2^{42}$ as an exact rational. The product $exponent \cdot \text{LN2\_HI}$ requires at most $11 + 42 = 53$ significand bits, so `exponent * LN2_HI` is exact in binary64.
+  - The difference `residual = shifted - exponent * LN2_HI` has magnitude $< 0.35$. Both `shifted` and `exponent * LN2_HI` lie on a grid of $2^{-43}$ or coarser. A quantity of magnitude $< 0.35$ on a $2^{-43}$ grid requires at most 42 bits of precision. By Sterbenz-type grid arguments, this subtraction is mathematically exact.
+  - Line 207 passes `-ph, -pl` to `_dd_add`, whose entry [`_prepare`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L74-L75) renormalizes operands via `_two_sum`, resolving the unnormalized reduction issue of Revision 2.
+
+#### 2. Direct DD Operation Inequalities and Quotient Error Bounds
+- **Operation Bounds ([`dd-analysis.md:144-217`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/dd-analysis.md#L144-L217))**:
+  - With unit roundoff $u = 2^{-53}$ and normalized inputs ($|al| \le u|ah|$), Shewchuk's TwoSum and TwoProduct yield:
+    - Addition absolute error: $< 4 u^2 (|a| + |b|)$.
+    - Multiplication absolute error: $< 16 u^2 |ab|$.
+    - Division relative error: $< 64 u^2 < 2^{-98}$.
+- **Composition and Decision Radius ([`dd-analysis.md:318-344`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/dd-analysis.md#L318-L344), [`prototype.py:28-30`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L28-L30))**:
+  - Composing numerator mantissa ($e_n = 2^{-96}$), denominator ($e_d = 2^{-93}$, including the tail allowance $R/T < 2^{-96}$), and division ($e_v = 2^{-98}$) yields total relative error $\eta < 2^{-92}$.
+  - The absolute distance from true quanta $Q$ to represented DD estimate $q_{\text{est}} = qh + ql$ satisfies $|Q - q_{\text{est}}| \le \frac{\eta(1+u)}{1-\eta} |qh| < 2^{-91} |qh|$.
+  - `prototype.py` sets `EPS_Q = 2.0**-85`, which is $64\times$ wider than $2^{-91}$, conservative, and provably encloses all representation and arithmetic errors.
+
+#### 3. Soundness of the Integer-Cell Decision at Both Boundaries
+- **Symmetric Two-Boundary Formulation ([`prototype.py:284-296`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L284-L296))**:
+  - Initial `integer = np.rint(high)` is exact for `high <= CORRECTION_LIMIT < 2**53`. `high - integer` is exact (Sterbenz for $high < 2^{52}$; exact zero for $high \ge 2^{52}$ where floats are integers).
+  - Lines 287–289 adjust `integer` by $\pm 1$ if $(high + low) - integer$ crosses $\pm 0.5$, ensuring the offset $\delta = dh + dl \in [-0.5, 0.5]$.
+  - `_lower_sum(high, low, other)` computes:
+    $$\text{tail} = \text{nextafter}(\text{RN}(error + low), -\infty) \le error + low$$
+    $$\text{result} = \text{nextafter}(\text{RN}(first + tail), -\infty) \le first + tail \le high + low + other$$
+    Because every intermediate step rounds strictly downwards towards $-\infty$, `_lower_sum` is a verified mathematical lower bound.
+  - Distances to lower boundary ($integer - 0.5$) and upper boundary ($integer + 0.5$) are lower-bounded by `left` and `right`.
+  - `radius = np.nextafter(EPS_Q * np.abs(high), np.inf)` rounds strictly upwards.
+  - Certifying only when `left > radius` and `right > radius` guarantees that $Q \in (integer - 0.5, integer + 0.5)$ strictly. Midpoint ties or cross-cell intervals cannot pass, eliminating the round-2 lower-midpoint error.
+
+#### 4. Full Exact-Subnormal Coverage up to All Supported NumPy Lengths
+- **Mathematical Bound for Candidates ([`2026-09-14-normalizer-r3-design.md:54-77`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/2026-09-14-normalizer-r3-design.md#L54-L77), [`prototype.py:314-317`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L314-L317))**:
+  - For array length $N \le 2^{63}$, the exact shifted denominator satisfies $1 \le D \le 2^{63}$.
+  - Any exact subnormal weight satisfies $w_i < 2^{-1022}$, implying $\exp(d_i) < D \cdot 2^{-1022} \le 2^{-959}$, whence $d_i < -959 \ln(2) < -661.71$.
+  - Monotonic rounding $\text{RN}(d_i)$ has ulp $\le 2^{-43}$ at $-661$, so $s_i = \text{RN}(d_i) \le -661.71 + 2^{-44} < -650.0$.
+  - The gate `shifted < -650.0` provably captures every exact subnormal entry across all 64-bit NumPy lengths, with an 11.7 log-unit margin.
+- **Zero Cutoff**: For $s_i < -800.0$, $d_i < -799.99$, and $\exp(d_i) \cdot 2^{1074} < 2^{-68} \ll 0.5$. These entries are provably zero.
+- **Correction Limit ([`prototype.py:330`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L330))**: `CORRECTION_LIMIT = float(2**52 + 2**20)` covers the largest subnormal ($2^{52} - 1$ quanta) and the boundary seam ($2^{52}$ quanta) up to $2^{52} + 2^{20}$. Any candidate with $qh > \text{CORRECTION\_LIMIT}$ has $Q > 2^{52} + 2^{19} \gg 2^{52}$, so it is provably normal.
+
+#### 5. Directed Decimal Fallback Enclosure and Caller Isolation
+- **Isolation ([`prototype.py:40-50`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L40-L50))**: Uses explicit `Context` instances (`prec`, `rounding`, `Emin=MIN_EMIN`, `Emax=MAX_EMAX`, `clamp=0`) and explicit context methods. Thread-local and `DefaultContext` global settings remain unaltered.
+- **Exact Subtraction**: Binary64 floats across the full finite dynamic range require at most 1,383 decimal digits. Precision 1,500 with `Inexact` trapped guarantees exact difference representation.
+- **Tail and Enclosure ([`prototype.py:241-262`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L241-L262))**:
+  - For cutoff $-3(P + 24)$, each dropped term is bounded by $\exp(-3(P+24)) < 10^{-(P+24)}$ since $\exp(3) > 10$.
+  - All dropped finite entries (including those whose binary64 difference overflowed to $-\infty$) are counted in `dropped` and added to `total_high` using `ROUND_CEILING`.
+  - `low_q` (floor) and `high_q` (ceiling) rigorously enclose $Q$. Because `ROUND_HALF_EVEN` is monotonically non-decreasing, `to_integral_value(low_q) == to_integral_value(high_q)` certifies that every enclosed real value rounds to that exact integer.
+
+#### 6. Cap Policy Honesty and Transactional Rollback
+- Revision 3 explicitly disclaims speculative availability guarantees: real accepted stages can reach the 224-digit cap on pathological populations.
+- The failure mode is an explicit `WeightRoundingUndecided` exception.
+- Rollback after stage progress, RNG consumption, and evidence accumulation is verified in [`test_filter.py:87-126`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/test_filter.py#L87-L126).
+
+#### 7. ESS Split and Invariance of Observable Filtering Behavior
+- In particle filtering, candidate evaluation in `_next_beta` evaluates $\text{ESS} = 1.0 / \sum w_i^2$.
+- Subnormal corrections in `normalize_proto` only alter weights $w_i \le 2^{-1022} + 2^{-1052}$. In IEEE 754 binary64 arithmetic, $(w_i)^2 = 0.0$ identically ($w_i^2 \le 2^{-2044} \ll 2^{-1074}$).
+- Because normal weights are bitwise identical to the branch output and subnormal weights square to exact zero, $\sum w_i^2$ is bitwise identical between `normalize_branch` and `normalize_proto`.
+- Candidate bisection search is invariant under the split, preventing speculative DD and Decimal executions.
+
+#### 8. Honesty of Cost Characterization
+- Cost tables in [`2026-09-14-normalizer-r3-design.md:168-183`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/2026-09-14-normalizer-r3-design.md#L168-L183) are explicitly qualified as empirical sample medians rather than worst-case upper bounds.
+- The design honestly notes that near-normal candidates with $s \in [-800, -650]$ trigger DD even when no output requires correction, and Decimal fallback when triggered incurs tens to hundreds of milliseconds.
+
+#### 9. Test Suite Meaningfulness and Mutation Coverage
+- Focused test cases reproduce and verify fixes for all round-1 and round-2 failures.
+- Mutation suite ([`mutations.py`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/mutations.py)) confirms that regressions in midpoint checking (`old_midpoint`), normal boundary preservation (`float_classification`), zero DD interval (`no_dd_interval`), and collapsed Decimal intervals (`collapsed_decimal_interval`) are caught by the test assertions.
+
+---
+
+### Findings by Severity
+
+#### Low / Informational
+1. **Array Slicing Overhead in `_dd_sum` ([`prototype.py:125`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L125))**:
+   - `high, low = _dd_add(high[::2], low[::2], high[1::2], low[1::2])` allocates intermediate slices at each tree level. In production, this can be implemented in Cython or with pre-allocated buffers. This is purely a performance optimization for implementation planning; mathematical correctness is unaffected.
+2. **Explicit Helper Naming in Production Integration ([`2026-09-14-normalizer-r3-design.md:50-53`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/2026-09-14-normalizer-r3-design.md#L50-L53))**:
+   - Prototype injection via `_next_beta.__globals__` must be replaced by explicit distinct internal function bindings (`_normalize_log_weights_fast` for `_next_beta` candidate search, `_normalize_log_weights_certified` for accepted stage normalization in `update`).
+
+---
+
+### Conclusion and Readiness Verdict
+
+All mathematical derivations, lattice bounds, error inequalities, boundary decisions, fallback intervals, and behavioral split assumptions have been independently verified. No proof gaps remain. The design and prototype are mathematically sound and ready to proceed to production implementation planning.
+
+SOUND ENOUGH TO IMPLEMENT

@@ -1,0 +1,127 @@
+MUTATION: old_midpoint
+Verified package import: /Users/jonathan/projects/clocks/.worktrees/normalizer/src/clocks/inference.py
+........................................................................ [  7%]
+........................................................................ [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 30%]
+........................................................................ [ 38%]
+........................................................................ [ 46%]
+........................................................................ [ 53%]
+........................................................................ [ 61%]
+........................................................................ [ 69%]
+........................................................................ [ 77%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+......................................................F................  [100%]
+=================================== FAILURES ===================================
+____________ test_rounding_regressions[values0-2-4503599627370499] _____________
+docs/plans/normalizer-r3/test_prototype.py:94: in test_rounding_regressions
+    assert p.normalize_proto(values)[0][index] == expected
+E   assert np.float64(2.2250738585072034e-308) == np.float64(2.225073858507203e-308)
+=========================== short test summary info ============================
+FAILED docs/plans/normalizer-r3/test_prototype.py::test_rounding_regressions[values0-2-4503599627370499]
+1 failed, 934 passed in 469.55s (0:07:49)
+
+MUTATION: float_classification
+Verified package import: /Users/jonathan/projects/clocks/.worktrees/normalizer/src/clocks/inference.py
+........................................................................ [  7%]
+........................................................................ [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 30%]
+........................................................................ [ 38%]
+........................................................................ [ 46%]
+........................................................................ [ 53%]
+........................................................................ [ 61%]
+........................................................................ [ 69%]
+........................................................................ [ 77%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+.......................................................F...............  [100%]
+=================================== FAILURES ===================================
+____________ test_rounding_regressions[values1-1-4503599627370492] _____________
+docs/plans/normalizer-r3/test_prototype.py:94: in test_rounding_regressions
+    assert p.normalize_proto(values)[0][index] == expected
+E   assert np.float64(2.2250738585072626e-308) == np.float64(2.2250738585071994e-308)
+=========================== short test summary info ============================
+FAILED docs/plans/normalizer-r3/test_prototype.py::test_rounding_regressions[values1-1-4503599627370492]
+1 failed, 934 passed in 472.14s (0:07:52)
+
+MUTATION: no_dd_interval
+Verified package import: /Users/jonathan/projects/clocks/.worktrees/normalizer/src/clocks/inference.py
+........................................................................ [  7%]
+........................................................................ [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 30%]
+........................................................................ [ 38%]
+........................................................................ [ 46%]
+........................................................................ [ 53%]
+........................................................................ [ 61%]
+........................................................................ [ 69%]
+........................................................................ [ 77%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+........................................FF..................F.........F  [100%]
+=================================== FAILURES ===================================
+_______________ test_speculative_cap_is_real_and_split_avoids_it _______________
+docs/plans/normalizer-r3/test_filter.py:77: in test_speculative_cap_is_real_and_split_avoids_it
+    with pytest.raises(p.WeightRoundingUndecided):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'candidate_filter.WeightRoundingUndecided'>
+_________________ test_real_cap_after_rng_progress_rolls_back __________________
+docs/plans/normalizer-r3/test_filter.py:103: in test_real_cap_after_rng_progress_rolls_back
+    with pytest.raises(p.WeightRoundingUndecided):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'candidate_filter.WeightRoundingUndecided'>
+____________________ test_rounding_regressions[values6-4-0] ____________________
+docs/plans/normalizer-r3/test_prototype.py:94: in test_rounding_regressions
+    assert p.normalize_proto(values)[0][index] == expected
+E   assert np.float64(5e-324) == np.float64(0.0)
+____ test_rounding_refuses_a_cell_when_error_interval_crosses_its_boundary _____
+docs/plans/normalizer-r3/test_prototype.py:165: in test_rounding_refuses_a_cell_when_error_interval_crosses_its_boundary
+    assert ambiguous[0]
+E   assert np.False_
+=========================== short test summary info ============================
+FAILED docs/plans/normalizer-r3/test_filter.py::test_speculative_cap_is_real_and_split_avoids_it
+FAILED docs/plans/normalizer-r3/test_filter.py::test_real_cap_after_rng_progress_rolls_back
+FAILED docs/plans/normalizer-r3/test_prototype.py::test_rounding_regressions[values6-4-0]
+FAILED docs/plans/normalizer-r3/test_prototype.py::test_rounding_refuses_a_cell_when_error_interval_crosses_its_boundary
+4 failed, 931 passed in 468.34s (0:07:48)
+
+MUTATION: collapsed_decimal_interval
+Verified package import: /Users/jonathan/projects/clocks/.worktrees/normalizer/src/clocks/inference.py
+........................................................................ [  7%]
+........................................................................ [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 30%]
+........................................................................ [ 38%]
+........................................................................ [ 46%]
+........................................................................ [ 53%]
+........................................................................ [ 61%]
+........................................................................ [ 69%]
+........................................................................ [ 77%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+..........................................FFFF.........................  [100%]
+=================================== FAILURES ===================================
+_ test_exponential_endpoints_enclose_independent_high_precision_value[-0.125] __
+docs/plans/normalizer-r3/test_intervals.py:93: in test_exponential_endpoints_enclose_independent_high_precision_value
+    assert Decimal(0) <= lower < expected < upper
+E   AssertionError: assert Decimal('0.88249690258459540286489214322905073622200482499065074177030931920810929521130873009935514732994343864532351...802282490185238017721584833687803689636519216690223146322917510021053640902652216931470535553135220265656834268891625') < Decimal('0.88249690258459540286489214322905073622200482499065074177')
+___ test_exponential_endpoints_enclose_independent_high_precision_value[-1] ____
+docs/plans/normalizer-r3/test_intervals.py:93: in test_exponential_endpoints_enclose_independent_high_precision_value
+    assert Decimal(0) <= lower < expected < upper
+E   AssertionError: assert Decimal('0.36787944117144232159552377016146086744581113103176783451') < Decimal('0.36787944117144232159552377016146086744581113103176783450783680169746149574489980335714727434591964374662732...637021113897742282140173802328324652872913890046609866595124440976998514591642878037202025102245787321110595377768074')
+__ test_exponential_endpoints_enclose_independent_high_precision_value[-744] ___
+docs/plans/normalizer-r3/test_intervals.py:93: in test_exponential_endpoints_enclose_independent_high_precision_value
+    assert Decimal(0) <= lower < expected < upper
+E   AssertionError: assert Decimal('7.67194470417997907394977430442188785721037172594926069691827434875991533702480003409181313881946131200961303...3023287350430406681757783572803488537274332975511719726824333374698715663956326986310810335405365760802394864420E-324') < Decimal('7.6719447041799790739497743044218878572103717259492606969E-324')
+_ test_exponential_endpoints_enclose_independent_high_precision_value[-5e-324] _
+docs/plans/normalizer-r3/test_intervals.py:93: in test_exponential_endpoints_enclose_independent_high_precision_value
+    assert Decimal(0) <= lower < expected < upper
+E   AssertionError: assert Decimal('1.0000000000000000000000000000000000000000000000000000000') < Decimal('0.99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999...000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001250')
+=========================== short test summary info ============================
+FAILED docs/plans/normalizer-r3/test_intervals.py::test_exponential_endpoints_enclose_independent_high_precision_value[-0.125]
+FAILED docs/plans/normalizer-r3/test_intervals.py::test_exponential_endpoints_enclose_independent_high_precision_value[-1]
+FAILED docs/plans/normalizer-r3/test_intervals.py::test_exponential_endpoints_enclose_independent_high_precision_value[-744]
+FAILED docs/plans/normalizer-r3/test_intervals.py::test_exponential_endpoints_enclose_independent_high_precision_value[-5e-324]
+4 failed, 931 passed in 470.79s (0:07:50)
