@@ -40,6 +40,12 @@ simulate-then-infer round trip runs live on the site's
 [Getting Started](https://jbwhit.github.io/clocks/reproduce/getting-started.html)
 page, and the filter machinery is documented in
 [The Particle Filter](https://jbwhit.github.io/clocks/method/the-particle-filter.html).
+For accepted stages, exact subnormal weights are rounded nearest-even; a narrow
+near-normal strip can also change. Ordinary weights remain approximate. If the
+strict precision cap cannot settle a required rounding decision,
+`ParticleFilter.update` raises `WeightRoundingUndecided` and rolls the update
+back. Do not blindly retry unchanged inputs; correct rounding does not promise
+that every finite population completes.
 
 ## Run the demos
 

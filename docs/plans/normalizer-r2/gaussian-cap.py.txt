@@ -1,0 +1,56 @@
+import copy, math, sys, time
+from decimal import Decimal
+import numpy as np
+import clocks.inference as inf
+from clocks.types import Observation
+assert inf.__file__.startswith('/Users/jonathan/projects/clocks/.worktrees/normalizer/')
+sys.path.insert(0, '/private/tmp/claude-501/-Users-jonathan-projects-clocks/c69dd40d-c0be-43fe-ae13-7280f5717025/scratchpad')
+import proto as p
+ctx=p._isolated_context(650)
+n=32
+base=float(np.log(1./n))
+norm=inf._gaussian_log_normalizer(1.,1.)
+def cv(x):
+    ll=-norm-0.5*np.float64(x)**2
+    return float(base+(ll+norm))
+def ex(x):
+    return ctx.exp(p._exact_difference(cv(x),base))
+tail=math.sqrt(2*744.7)
+et=ex(tail)
+target=ctx.divide(ctx.multiply(Decimal(2),et),p._dec(p.QUANTUM))
+rem=ctx.subtract(target,ctx.add(Decimal(1),et))
+xs=[0.,tail]
+while rem>Decimal('1e-240'):
+    raw=math.sqrt(-2*float(ctx.ln(rem)))
+    while ex(raw)>=rem:
+        raw=float(np.nextafter(raw,np.inf))
+    xs.append(raw)
+    rem=ctx.subtract(rem,ex(raw))
+xs += [100.]*(n-len(xs))
+particles=np.asarray(xs).reshape(-1,1)
+def make():
+    return inf.ParticleFilter(n,lambda rng,n:particles.copy(),lambda x:x,1.,
+        log_prior_density=lambda ps:-0.5*np.sum(ps**2,axis=1),
+        forward_model_batch=lambda ps:ps,ess_target=.8,
+        rejuvenation_steps=1,rng=np.random.default_rng(54))
+obs=Observation(np.zeros(1),0.)
+pf=make()
+ll=pf._observation_log_likelihood(pf.state.particles,obs)
+values,_=inf._tempered_log_weights(np.log(pf.state.weights),ll,1.)
+assert np.array_equal(values,np.array([cv(x) for x in xs]))
+ref,rw=p.reference_weights(values,650)
+q=ctx.divide(rw[1],p._dec(p.QUANTUM))
+print('source',inf.__file__)
+print('n',n,'helpers',sum(x not in [0.,tail,100.] for x in xs),'Q-.5',ctx.subtract(q,Decimal('.5')),'ref_tail',ref[1])
+print('particles',repr(xs))
+print('values',repr(values.tolist()))
+for name,fn in [('branch',p.normalize_branch),('r2',p.normalize_proto)]:
+    inf._normalize_log_weights=fn
+    pf=make(); before=pf._checkpoint(); state_before=pf.state
+    t=time.perf_counter()
+    try:
+        pf.update(obs)
+        print(name,'success','tail_weight',pf.state.weights[1], 'stages',pf.last_diagnostics.tempering_stages,'ms',(time.perf_counter()-t)*1000)
+    except Exception as exc:
+        same=(pf.state is state_before and pf.rng.bit_generator.state==before.rng_state and pf.log_evidence==before.log_evidence and len(pf.history)==len(before.history) and pf._completed_stats is before.completed_stats and tuple(pf._log_evidence_history)==before.log_evidence_history and tuple(pf._diagnostics_history)==before.diagnostics_history)
+        print(name,type(exc).__name__,str(exc),'checkpoint_unchanged',same,'ms',(time.perf_counter()-t)*1000)

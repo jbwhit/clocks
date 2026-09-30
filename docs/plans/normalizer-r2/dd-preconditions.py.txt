@@ -1,0 +1,40 @@
+"""Read-only reproductions for the independent DD design review."""
+import math
+import sys
+from decimal import Decimal as D
+from fractions import Fraction as F
+import clocks.inference
+import numpy as np
+assert sys.version_info[:3] == (3, 13, 13), sys.version
+assert '/clocks/.worktrees/normalizer/' in clocks.inference.__file__
+sys.path.insert(0, '/private/tmp/claude-501/-Users-jonathan-projects-clocks/c69dd40d-c0be-43fe-ae13-7280f5717025/scratchpad')
+import proto as p
+v=[-14.171583200817665,-14.628378654822516,-722.077393183382,-44.60327978867792,-78.51114028012964]
+orig=p._dd_div
+def capture(*args):
+    qh,ql=orig(*args)
+    a,b=p._two_sum(qh-np.floor(qh)-.5,ql)
+    print('qh,ql hex:',qh[0].hex(),ql[0].hex(),'a,b:',a[0],b[0],'budget:',p.EPS_Q*qh[0])
+    return qh,ql
+p._dd_div=capture
+stats={}; got=p.normalize_proto(v,stats)[0]
+p._dd_div=orig
+ref,ws=p.reference_weights(v,prec=400)
+c=p._isolated_context(400)
+q=c.multiply(ws[2],c.power(D(2),D(1074)))
+print('got/reference quanta:',got[2]/p.QUANTUM,ref[2]/p.QUANTUM,stats)
+print('Q-midpoint:',c.subtract(q,D('4503599627370499.5')))
+assert got[2]!=ref[2] and stats['n_flagged']==0
+k=np.array([-19.]); h,l=p._two_prod(k,p.LN2_LO);l=l+k*p.LN2_LO2
+print('reduction s:',float(-19*p.LN2).hex(),'high,low,RN(sum):',h[0].hex(),l[0].hex(),(h+l)[0].hex())
+assert (h+l)[0]!=h[0]
+a=float(p.COEF_HI[9]);b=-5e-324;h,l=p._two_prod(a,b)
+print('underflow a,b,h,l:',a.hex(),b.hex(),h.hex(),l.hex(),'exact?',F(a)*F(b)==F(h)+F(l))
+assert F(a)*F(b)!=F(h)+F(l)
+print('underflow full normalizer:',p.normalize_proto([0.,-5e-324,-745.])[0])
+c=p._isolated_context(80);worst=0.
+for j,h,l in zip(p._TABLE_J,p.TABLE_HI,p.TABLE_LO):
+    exact=c.exp(c.divide(D(int(j)),D(256)))
+    actual=c.add(D.from_float(float(h)),D.from_float(float(l)))
+    worst=max(worst,abs(float(c.divide(c.subtract(actual,exact),exact))))
+print('table corrected check rel error:',worst,'log2:',math.log2(worst))

@@ -1,0 +1,77 @@
+"""Throwaway experiment: keep strict certification out of ESS candidate calls.
+
+Run with the archived prototype preloaded as ``proto`` (see continuation record).
+Only module references in this Python process are changed; no source is edited.
+"""
+
+import contextlib
+import io
+import pathlib
+import runpy
+import time
+
+import numpy as np
+import clocks.inference as inf
+import proto as p
+
+root = pathlib.Path.cwd().resolve()
+assert pathlib.Path(inf.__file__).resolve().is_relative_to(root)
+archive = root / "docs/plans/normalizer-r2"
+original_next = inf._next_beta
+original_normalizer = inf._normalize_log_weights
+calls = {"strict": 0, "search": 0}
+
+
+def strict(values):
+    calls["strict"] += 1
+    return p.normalize_proto(values)
+
+
+def search_normalize(values):
+    calls["search"] += 1
+    return p.normalize_branch(values)
+
+
+def next_probe(*args, **kwargs):
+    previous = inf._normalize_log_weights
+    inf._normalize_log_weights = search_normalize
+    try:
+        return original_next(*args, **kwargs)
+    finally:
+        inf._normalize_log_weights = previous
+
+
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        case = runpy.run_path(str(archive / "gaussian-cap.py.txt"))
+    inf._normalize_log_weights = p.normalize_branch
+    baseline = case["make"]()
+    baseline.update(case["obs"])
+
+    inf._next_beta = next_probe
+    inf._normalize_log_weights = strict
+    split = case["make"]()
+    split.update(case["obs"])
+    assert split.last_diagnostics.tempering_stages == 7
+    assert calls == {"strict": 7, "search": 367}
+    assert np.array_equal(split.state.particles, baseline.state.particles)
+    assert np.array_equal(split.state.weights, baseline.state.weights)
+    assert split.log_evidence == baseline.log_evidence
+    print("SPLIT: seven stages;", calls, "; final particles, weights, evidence match branch")
+
+    rng = np.random.default_rng(731)
+    x = np.r_[rng.normal(0, 1, 1800), rng.normal(20, 1, 200)]
+    likelihood = -0.5 * x * x * 300
+    weights = np.full(2000, 1 / 2000)
+    betas = []
+    for normalizer in (p.normalize_branch, p.normalize_proto):
+        inf._normalize_log_weights = normalizer
+        start = time.perf_counter()
+        beta = original_next(weights, likelihood, 0.0, target_ess=1000)
+        elapsed = time.perf_counter() - start
+        betas.append(beta.hex())
+        print("SEARCH:", normalizer.__name__, beta.hex(), elapsed * 1000, "ms")
+    assert betas[0] == betas[1] == "0x1.e4d5dce974f7cp-7"
+finally:
+    inf._next_beta = original_next
+    inf._normalize_log_weights = original_normalizer

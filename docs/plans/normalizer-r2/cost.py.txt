@@ -1,0 +1,40 @@
+import sys, time
+import numpy as np
+import clocks.inference as inf
+assert inf.__file__.startswith('/Users/jonathan/projects/clocks/.worktrees/normalizer/')
+sys.path.insert(0, '/private/tmp/claude-501/-Users-jonathan-projects-clocks/c69dd40d-c0be-43fe-ae13-7280f5717025/scratchpad')
+import proto as p
+print('source', inf.__file__)
+
+def bench(fn, reps=9):
+    fn()
+    times=[]
+    for _ in range(reps):
+        t=time.perf_counter(); fn(); times.append(time.perf_counter()-t)
+    return float(np.median(times))*1000
+
+for n in [2000, 40000]:
+    rng=np.random.default_rng(731)
+    heads=rng.normal(0,1,n-1)
+    for tail in [-740.,-800.,-1099.,-1101.,-np.inf]:
+        v=np.r_[heads,tail]
+        s={}; w,_=p.normalize_proto(v,s)
+        print('DIRECT',n,tail,'tail_weight',w[-1],'stats',s,'main_ms',bench(lambda:p.normalize_main(v)),'r2_ms',bench(lambda:p.normalize_proto(v)),flush=True)
+
+for sep in [15.,20.,25.]:
+    n=2000
+    rng=np.random.default_rng(731)
+    x=np.r_[rng.normal(0,1,1800),rng.normal(sep,1,200)]
+    ll=-0.5*x*x*300.
+    weights=np.full(n,1/n)
+    stats=[]
+    def wrapped(v):
+        s={}; out=p.normalize_proto(v,s); stats.append(s); return out
+    inf._normalize_log_weights=wrapped
+    beta=inf._next_beta(weights,ll,0.,target_ess=n*0.5)
+    counts={k:sum(s.get(k,0)>0 for s in stats) for k in ['n_deep','n_live','n_flagged']}
+    inf._normalize_log_weights=p.normalize_proto
+    r2=bench(lambda:inf._next_beta(weights,ll,0.,target_ess=n*0.5),3)
+    inf._normalize_log_weights=p.normalize_main
+    main=bench(lambda:inf._next_beta(weights,ll,0.,target_ess=n*0.5),3)
+    print('BISECTION',sep,'beta',repr(beta),'calls',len(stats),counts,'main_ms',main,'r2_ms',r2,'ratio',r2/main,flush=True)

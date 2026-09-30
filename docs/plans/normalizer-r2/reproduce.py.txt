@@ -1,0 +1,68 @@
+# /// script
+# dependencies = ["numpy", "scipy"]
+# ///
+"""Read-only probes; use this worktree's existing frozen Python environment."""
+import sys, math, threading
+from decimal import Decimal, DefaultContext, getcontext, setcontext, Inexact, Rounded, FloatOperation, Subnormal, Underflow, ROUND_UP, ROUND_DOWN
+from concurrent.futures import ThreadPoolExecutor
+import numpy as np
+import clocks.inference as inference
+assert inference.__file__.startswith('/Users/jonathan/projects/clocks/.worktrees/normalizer/')
+sys.path.insert(0,'/private/tmp/claude-501/-Users-jonathan-projects-clocks/c69dd40d-c0be-43fe-ae13-7280f5717025/scratchpad')
+import proto as p
+print('Interpreter',sys.version)
+print('Import',inference.__file__)
+c=p._isolated_context(650)
+bad=[-14.171583200817665,-14.628378654822516,-722.077393183382,-44.60327978867792,-78.51114028012964]
+saved_div=p._dd_div
+pairs=[]
+def capture(*args):
+    out=saved_div(*args);pairs.append(out);return out
+p._dd_div=capture
+st={};w,_=p.normalize_proto(bad,st)
+p._dd_div=saved_div
+ref,dec=p.reference_weights(bad,650)
+Q=c.divide(dec[2],p._dec(p.QUANTUM))
+print('CERTIFIED MISS got/ref',w[2]/p.QUANTUM,ref[2]/p.QUANTUM,'stats',st)
+print('Q minus 4503599627370499.5',c.subtract(Q,Decimal('4503599627370499.5')))
+qh,ql=pairs[0];a,b=p._two_sum(qh-np.floor(qh)-.5,ql)
+print('qh,ql,a,b,EPS_Q*qh',qh,ql,a,b,p.EPS_Q*qh)
+assert w[2]/p.QUANTUM==4503599627370500 and ref[2]/p.QUANTUM==4503599627370499 and st['n_flagged']==0
+seam=[98.28463995512519,-610.1117785771389]
+st={};w,_=p.normalize_proto(seam,st);ref,dec=p.reference_weights(seam,650)
+assert dec[-1]<p._dec(p.TINY) and w[-1]!=ref[-1] and st['n_deep']==0
+print('SUBNORMAL MISS got/ref',w[-1]/p.QUANTUM,ref[-1]/p.QUANTUM,'stats',st)
+assert p.normalize_proto([-59.88145743137663,-782.1408195747232])[0][-1]/p.QUANTUM==4294967297
+print('Round-1 example: 4294967297 quanta, correct')
+cases=[[-math.log(17)]*16+[-745.1938437237576],[50.00000000000005]*2+[-694.4400719213812],[0.,8.8448886818372e-14,-68.25321157879489,-100.6207187190934,-132.62286311459286,-166.42988573491488,-198.3315821246221,-744.4400719213812],[0.,0.,-744.3]]
+expected=[p.reference_weights(v)[0][-1] for v in cases]
+def exercise():
+    flags=dict(getcontext().flags)
+    for v,e in zip(cases,expected):assert p.normalize_proto(v)[0][-1]==e
+    assert dict(getcontext().flags)==flags
+saved=getcontext().copy()
+try:
+    ctx=getcontext();ctx.prec=3;ctx.Emin=-100;ctx.Emax=100;ctx.rounding=ROUND_UP
+    for signal in (Inexact,Rounded,Subnormal,Underflow,FloatOperation):ctx.traps[signal]=True
+    ctx.clear_flags();exercise()
+    print('Hostile thread Decimal context: all4 correct; flags untouched')
+finally:setcontext(saved)
+saved=DefaultContext.copy()
+try:
+    DefaultContext.prec=2;DefaultContext.Emin=-5;DefaultContext.Emax=5;DefaultContext.rounding=ROUND_DOWN
+    DefaultContext.traps[Inexact]=True;DefaultContext.traps[FloatOperation]=True
+    barrier=threading.Barrier(8)
+    def worker(_):
+        ctx=getcontext();assert ctx.Emin==-5 and ctx.traps[FloatOperation]
+        barrier.wait();exercise();return threading.get_ident()
+    with ThreadPoolExecutor(max_workers=8) as pool:assert len(set(pool.map(worker,range(8))))==8
+    print('Hostile DefaultContext:8 independent threads correct; flags untouched')
+finally:
+    for f in ('prec','rounding','Emin','Emax','capitals','clamp'):setattr(DefaultContext,f,getattr(saved,f))
+    DefaultContext.traps=saved.traps.copy();DefaultContext.flags=saved.flags.copy()
+rng=np.random.default_rng(313)
+for _ in range(1500):
+    v=rng.normal(0,300,int(rng.integers(2,41)))+rng.choice([0.,1e6,-1e6,1e16,-1e16,1e18,-1e18])
+    b,lb=p.normalize_branch(v);w,lw=p.normalize_proto(v)
+    assert np.array_equal(w[b>=p.TINY],b[b>=p.TINY]) and lb.hex()==lw.hex()
+print('1500 random calls: normal entries and per-call log_normalizer bitwise unchanged')

@@ -14,6 +14,10 @@ from numpy.typing import NDArray
 from scipy.special import logsumexp
 
 from clocks._validation import finite_float_array, real_float_array
+from clocks._weight_normalization import (
+    _normalize_log_weights,
+    _normalize_log_weights_fast,
+)
 from clocks.types import Observation, ParticleState, UpdateDiagnostics
 
 _RESAMPLING_METHODS = {"systematic", "stratified", "residual"}
@@ -274,19 +278,6 @@ def _effective_sample_size(weights: NDArray[np.floating]) -> float:
     return float(1.0 / np.sum(np.asarray(weights, dtype=np.float64) ** 2))
 
 
-def _normalize_log_weights(
-    log_weights: NDArray[np.floating],
-) -> tuple[NDArray[np.float64], float]:
-    values = np.asarray(log_weights, dtype=np.float64)
-    log_normalizer = float(logsumexp(values))
-    if not math.isfinite(log_normalizer):
-        raise RuntimeError(
-            "All particles have zero weight; the prior or forward model is "
-            "inconsistent with the observation"
-        )
-    return np.exp(values - log_normalizer), log_normalizer
-
-
 def _centering_shift(
     log_likelihood: NDArray[np.float64],
     base_log_weights: NDArray[np.float64],
@@ -391,7 +382,7 @@ def _next_beta(
         candidate_log_weights, _ = _tempered_log_weights(
             base, likelihood, candidate - beta
         )
-        normalized, _ = _normalize_log_weights(candidate_log_weights)
+        normalized, _ = _normalize_log_weights_fast(candidate_log_weights)
         return _effective_sample_size(normalized)
 
     if ess_at(1.0) >= target_ess:
@@ -731,6 +722,12 @@ class ParticleFilter:
             self.rng = copy.deepcopy(checkpoint.rng_state)
 
     def update(self, observation: Observation) -> ParticleState:
+        """Assimilate one observation, rolling back if certified rounding fails.
+
+        ``WeightRoundingUndecided`` means the strict accepted-stage normalizer
+        exhausted its precision cap.  The update restores its checkpoint; do
+        not blindly retry unchanged inputs.
+        """
         checkpoint = self._checkpoint()
         try:
             return self._update(observation)
@@ -771,10 +768,9 @@ class ParticleFilter:
             weights, log_increment = _normalize_log_weights(candidate_log_weights)
             # In exact arithmetic centering leaves the weights untouched, so
             # its scaled offset belongs to the evidence: log_increment is the
-            # normalizer of the centered weights. In floating point it moves
-            # them by the last bit, and near the underflow boundary a weight
-            # can round to zero here that would not have without it -- and
-            # vice versa. Neither ordering is correctly rounded everywhere.
+            # normalizer of the centered weights. The supplied centered
+            # binary64 logs receive the tiny-weight guarantee; centering can
+            # still change the upstream real target through rounding.
             increment = log_increment + evidence_offset
             self.log_evidence += increment
             evidence_increments.append(increment)

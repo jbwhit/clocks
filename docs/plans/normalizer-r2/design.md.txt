@@ -1,0 +1,748 @@
+# Design: correctly-rounded weight normalization for `_normalize_log_weights`
+
+Status: DESIGN ONLY, **revision 2** (after Codex xhigh round 1: NOT SOUND ENOUGH TO
+IMPLEMENT). Nothing in the repository was edited. Every number below was produced by
+probes in this scratchpad directory in this session (`proto.py` is the prototype and the
+reference; the probe scripts are listed in the appendix). Each claim is tagged
+**[measured]** or **[reasoned]**; the reasoned ones are the ones to attack in review.
+Sections changed in this revision are marked **[revised in r2]**; the rest are re-measured
+against the revision-2 prototype but not restructured.
+
+Environment of every measurement: Python 3.12.13, numpy 2.4.2, scipy 1.17.1, libmpdec
+4.0.0, macOS, `platform.machine() == "x86_64"`, subnormal arithmetic active
+(`0.5 * 2**-1074 == 0`, `0.5000000001 * 2**-1074 == 5e-324`) **[measured]**. Worktree
+`/Users/jonathan/projects/clocks/.worktrees/normalizer`, branch
+`claude-weight-normalization` at `e5e64dd`, clean.
+
+---
+
+## Changes in revision 2
+
+The architecture is unchanged: the float shifted-scale path stays bitwise for every entry
+whose weight is a normal double; entries whose weight is subnormal get an estimate with a
+*certified* relative error, decided against the nearest rounding boundary; only entries
+provably within that error of a boundary go to an isolated-Decimal Ziv loop whose
+denominator is built from exact arguments and never from the float total. What changed is
+**where the certified estimate comes from**: revision 1 built it from `np.exp` (an
+uncertified libm call) and could only afford to certify it by falling through to
+`O(N)` Decimal `exp`s; revision 2 builds it with a vectorized **double-double `exp`**
+whose error bound follows from IEEE-754 semantics of `+ - * /` alone. That one change
+resolves findings 1, 3 and 5 together, and simplifies the guarantee.
+
+| # | finding (round 1)                                                   | resolution |
+|---|---------------------------------------------------------------------|------------|
+| 1 | **Cost.** One flagged entry from an ordinary bimodal Gaussian cost 36.6 ms (215x `main`) because any flag dragged in `O(N)` Decimal `exp`s. | Confirmed: the r1 denominator *was* shared across flagged entries (one Decimal sum per round -- `rounds=[(28, 1800, 2)]` for the reviewer's case), so sharing was not the lever; and lowering the first-round Decimal precision buys under 2x (Decimal `exp` costs 5.8 / 9.2 / 10.4 / 29 us at 10 / 16 / 28 / 56 digits [measured]). The lever is to replace the first exact round by numpy double-double arithmetic: the reviewer's case now costs **1.32 ms at N = 2000, 1.72 at 4000, 2.82 at 8000** (was 27.8 / 60.4 / 111.4) [measured], the Decimal path is reached only for entries within `2**-90` of a boundary (0 of 10,229 deep entries in the suite; 0 of 1,500 random boundary entries; only the crafted hard cases), and there is no longer an adversarial blow-up short of the crafted `1e-70` cases (`~1.5 ms`) and the crafted `1e-230` cases (raise, section 10). **What could not be removed**: a call that has any *live* subnormal weight now costs `O(N)` numpy work -- **1.25 ms at N = 2000 (8x `main`), 13 ms at N = 40,000 (17x)** -- whether one entry is deep or a thousand. That is the design's real cost envelope and section 7 states it plainly, with the per-tempering-stage numbers (+25-40 % over `main` on populations with dead outliers, because dead particles take a shortcut). |
+| 2 | **The cap can lose a particle** (18-particle construction returned 0 at `P_MAX = 224` where a 650-digit reference gives `5e-324`); document said 224, prototype said 896. | Adopted the reviewer's recommendation: still undecided at `P_MAX` **raises** `WeightRoundingUndecided(RuntimeError)`; nothing is ever returned that is not certified. Reproduced the reviewer's construction: `n = 18`, `Q - 0.5 = 7.1e-236` -> raises after rounds 56/112/224 (5.7 ms); `n = 9`, `9.3e-113` -> decided at 224 digits, `5e-324` [measured]. `P_MAX = 224` in both the document and `proto.py` (verified by `proto.P_MAX`). `ParticleFilter.update` restores its checkpoint on any exception, so a raise leaves the filter state intact [read in `inference.py`, not exercised]. |
+| 3 | **Trigger failure consequence understated** (biasing the trigger `exp` by `2**-38` lost 1000 identical entries with zero flagged); derivation off by a factor 2; relative bound cannot cover vanishing weights. | Corrected statement: a violated bound loses **every entry within the violation of a boundary, and identical or clustered entries go together -- a whole particle class, silently**. Reproduced as mutation m9 (1000 of 1000 lost, 88/300 random entries wrong). **Decision: the `exp` bound is a REQUIREMENT TO CERTIFY, and revision 2 certifies it**: the deep path contains no libm call; its estimate is built from IEEE `+ - *` and `/` with per-operation bounds (Joldes, Muller & Popescu 2017) and a reasoned total of `2**-100.4` against a budget of `2**-96` (measured worst `2**-103.9` on 20,000 arguments). Cost of certifying: the `O(N)` numpy work in finding 1 -- the two are the same expense. Vanishing weights are handled by an explicit exponent (`exp(d) = m * 2**k`; `[0, -2000]` gives `k = -2885`, decided as `Q < 2**-513`, no relative bound needed). What remains of `np.exp` is only the *classification* of an entry as subnormal (section 2), whose failure mode is a few hundred quanta at `Q ~ 2**52`, not a lost particle. The r1 table's `2**-46` for 128 ULP is corrected to `2**-45` where it is still quoted (section 2). |
+| 4 | **Decimal isolation incomplete**: `Decimal(float)` sets/traps `FloatOperation`. | Every float -> Decimal conversion is `Decimal.from_float` (helper `_dec`). Hostile probe: `traps[FloatOperation] = True` on the caller's context -> all four crafted cases correct, **no flag changed**; a plain `Decimal(0.5)` raises under the same trap [measured]. Re-ran the prec-3 / four-trap / mutated-`DefaultContext` / 8-thread probes with the trap added: all pass, flags untouched [measured]. |
+| 5 | **Upper-band bound omitted quantization**; correctness ceased just above `T = 32`. | The band is gone: with the certified estimate the guarantee is **correct rounding for every entry whose weight is subnormal** (`Q < 2**52`), and `T`, `B`, `C_HI`, `C_LO` no longer exist. `[0, -722.2593621433466]` (`Q = 4294967296.49996`) is correctly rounded, and its relative error `1.164e-10` is the inherent quantization `0.5 / Q`, now stated as such; `[-59.88145743137663, -782.1408195747232]` (`Q = 4294967296.500141`) returns `4294967297` quanta, matching the reference, where r1 returned `4294967296` [measured]. Random stress across the whole subnormal range: **0 misses in 1,496 entries** (r1: 0 of 1,012 below `2**32`, 91 of 488 above). |
+| 6 | **Evidence claim too broad**: later stages consume `log(weights)`. | Section 9 narrowed. Reproduced the reviewer's filter exactly: branch `-1002.2433`, prototype `-765.5270`, direct `-766.0800`; the prototype's offset `0.5531` equals `ln(5e-324 / 2.8418e-324)`, the quantization of the stored stage-1 weight [measured]. Per-call `log_normalizer` is bitwise unchanged (2000/2000), but accumulated evidence inherits `ln(round(Q)/Q)` per stored subnormal weight that later dominates -- up to `ln 2` at one quantum, and the whole contribution when a weight rounds to zero (the branch's `-1002`). Correct rounding minimizes that error; it does not restore exact telescoping, which does not hold in floating point. |
+
+**Not resolved, stated plainly**: (a) the `~1.25 ms` (N = 2000) / `~13 ms` (N = 40,000)
+floor on any call with a live subnormal weight, above; a cheaper certified tier is sketched
+in section 14 but not built; (b) the evidence quantization in finding 6 is inherent to
+carrying *weights* rather than log-weights between stages and is out of this function's
+scope; (c) the double-double error bound is reasoned and measured, not machine-checked;
+(d) a pre-existing, unrelated `test_physics` failure on this checkout (section 12).
+
+---
+
+## 1. Summary  [revised in r2]
+
+Keep the branch's shifted-scale float path exactly as it is for every entry whose weight
+is a normal double. For every entry whose float weight is subnormal (`weights[i] < TINY`),
+compute the weight in units of the subnormal quantum `2**-1074` as a **double-double**
+`q = qh + ql` with a certified relative error `EPS_Q = 2**-90`, using a vectorized
+double-double `exp` on exact arguments (`v - peak` as an error-free `TwoSum` pair) and a
+double-double denominator built from every term within 74 nats of the peak. If `q` is
+provably on one side of the nearest half-integer, round accordingly -- that is the correct
+rounding. Only if `q` is within `EPS_Q * q` of a boundary is the entry decided in an
+isolated `Decimal` context at 56, 112 then 224 digits, whose denominator is the
+exact-argument, correctly-rounded Decimal sum; still undecided at 224 digits raises.
+
+- Requirement (A) holds because the weights are formed as `exp(v - peak) / total`, never by
+  subtracting a rounded `log_normalizer` (identical arithmetic to the branch outside the
+  subnormal set: **0 of 1500 random inputs differed bitwise** there) [measured].
+- Requirement (B) holds because every subnormal weight is correctly rounded: **0 of 1,496
+  random boundary entries** across the whole subnormal range missed the 200-digit
+  reference, against 306 misses for the branch and 612 for `main` [measured]; all four
+  failing inputs in the task, all five crafted boundary cases, the reviewer's three
+  upper-band cases and three crafted `1e-72`..`1e-113` hard cases return the exact-arithmetic
+  value [measured].
+- Cost: common path +8-14 % over `main` at N = 2000 (161-165 us vs 144-150 us, min of
+  9 x 500 calls on three input shapes; level with the branch), equal at N = 40,000
+  [measured]; **any call with a live subnormal weight costs ~1.25 ms at N = 2000 and ~13 ms
+  at N = 40,000** regardless of how many entries are deep [measured]; calls whose only
+  subnormal weights are exactly zero (dead particles) cost ~0.25 ms [measured, via
+  `_next_beta`]. The Decimal path costs `~35 us x K` per round and is reached only by
+  entries within `2**-90` of a boundary: none in the suite (55,459 calls), none in 1,500
+  random boundary entries, only the crafted cases [measured].
+
+---
+
+## 2. What is being guaranteed  [revised in r2]
+
+Let `w_i = exp(v_i) / sum_j exp(v_j)` in real arithmetic, and let `Q_i = w_i * 2**1074`
+("quanta"). The function returns `weights` such that:
+
+| classification (by the float weight `fl_i = fl(exp(fl(v_i - peak)) / total)`) | guarantee | status |
+|---|---|---|
+| `fl_i < TINY = 2**-1022` ("deep")  | correctly rounded to nearest-even: `weights[i] == round(Q_i) * 2**-1074`, or the call raises `WeightRoundingUndecided` | [measured on 1,496 random + 15 crafted entries; rigor argued in sections 4-5] |
+| `fl_i >= TINY`                       | bitwise identical to the branch (`exp(v - peak) / total`) | [measured: 0/1500 calls differ] |
+
+The classification is by the float weight, so the exact-`Q` reading of the table depends on
+the float weight's relative error at the boundary. That error is `<= 2**-42` [reasoned:
+`fl(v - peak)` `<= 2**-44`, `np.exp` measured `<= 0.75` ULP with a `2**-45` (128 ULP)
+allowance, pairwise sum `<= 2**-48`, division `2**-53`; measured `2**-44.0` on 400 entries
+with `Q` within `2**-40` of `2**52`]. Hence every exact weight below `2**-1022 (1 - 2**-42)`
+is correctly rounded, every exact weight above `2**-1022 (1 + 2**-42)` is branch-identical,
+and in between it is one or the other -- where the float path is off by at most a few
+hundred quanta at `Q ~ 2**52` (measured max 248 quanta = `2**-44` relative on 196
+float-classified entries in that window). **This is the only place `np.exp` still enters
+the argument**, and its failure mode is bounded and cannot lose a particle: a weight of
+`2**-1022` is `2**52` quanta from zero.
+
+Correct rounding "to integer quanta" is correct rounding to nearest double for every `Q <
+2**53`, because doubles in `[2**-1022, 2**-1021)` are still spaced one quantum apart; so a
+deep-classified entry whose exact `Q` is slightly above `2**52` is also correctly rounded
+[reasoned].
+
+Ties (`Q` exactly a half-integer) cannot occur for a non-degenerate input: by
+Lindemann-Weierstrass, `exp(a) = r * sum_j c_j exp(b_j)` with algebraic `a, b_j, r, c_j`
+forces every exponent to coincide, i.e. all finite log weights equal, whose weight `1/N` is
+not subnormal for any `N < 2**52` [reasoned, not measured]. The design does not depend on
+this: the escalation loop is capped and raises.
+
+---
+
+## 3. The algorithm  [revised in r2]
+
+Constants (all module-level, all derived once, 8.7 ms at import for the 179-entry table
+[measured]):
+
+```
+TINY       = 2**-1022      # smallest normal double
+QUANTUM    = 2**-1074      # smallest subnormal double
+EPS_Q      = 2**-90        # certified relative error of the dd estimate q (section 5)
+EXP_DD_EPS = 2**-96        # certified relative error of exp_dd (section 5)
+TAIL_LOG2  = 96            # denominator terms below d_cut contribute < 2**-96 in total
+D_ZERO     = -1100.0       # exp(d) * 2**1074 < 2**-513 below this: certified zero
+LN2_HI/LO/LO2              # ln 2 as a triple-double; LN2_HI has 42 bits so k*LN2_HI is exact
+TABLE      = exp(j/256), j in [-89, 89], as double-doubles (2**-107 each)
+COEF       = 1/i!, i = 0..9, as double-doubles (exact to 2**-108)
+P_START    = 56            # Decimal digits in the first exact round
+P_MAX      = 224           # 56, 112, 224: three rounds, then raise (section 10)
+P_DIFF     = 1500          # digits that make (double - double) exact in Decimal
+```
+
+```
+def _normalize_log_weights(log_weights):
+    values = asarray(log_weights, float64)
+    log_normalizer = float(logsumexp(values))            # UNCHANGED: evidence and loud guard
+    if not isfinite(log_normalizer):                      # empty, all -inf, any +inf, any NaN
+        raise RuntimeError("All particles have zero weight; ...")
+    peak    = max(values)                                 # finite here
+    shifted = values - peak                               # <= 0; -inf stays -inf
+    scaled  = exp(shifted)                                # exp(0) == 1.0 at the peak
+    total   = scaled.sum()                                # >= 1.0
+    weights = scaled / total                              # the branch's arithmetic, kept bitwise
+    deep = weights < TINY                                 # the quotient is subnormal or zero
+    if deep.any():
+        weights[deep] = _deep_weights(values, peak, shifted, deep)
+    return weights, log_normalizer
+
+
+def _deep_weights(values, peak, shifted, deep):
+    d    = shifted[deep]
+    w    = zeros(len(d))
+    live = isfinite(d) & (d >= D_ZERO)                    # else certified zero, no arithmetic
+    if not live.any(): return w                           # dead particles: the common case
+    finite = isfinite(shifted); n = count(finite)
+    s, e = TwoSum(values[finite], -peak)                  # s == shifted (same IEEE op); s + e exact
+    # Denominator (round 0): every term within d_cut of the peak, as a double-double.
+    d_cut = -(TAIL_LOG2 ln2 + ln n + 1)
+    keep  = finite & (shifted >= d_cut)
+    (mh, ml, k) = exp_dd(s[keep], e[keep])                # exp(s+e) = (mh+ml) 2**k, rel err <= EXP_DD_EPS
+    (Th, Tl) = dd_tree_sum(ldexp(mh, k), ldexp(ml, k))   # k >= -110, no underflow
+    tail_rel = (n - count(keep)) * exp(d_cut + 1) * (1 + 2**-40)   # <= 2**-96; a bound, padded
+    # Numerators for the live deep entries.
+    (mh, ml, k) = exp_dd(d[live], e[deep][live])
+    kq = k + 1074                                         # in [-513, ~93]
+    (qh, ql) = dd_div(ldexp(mh, kq), ldexp(ml, kq), Th, Tl)   # q = Q (1 + err), |err| <= EPS_Q + tail_rel
+    # Decision: which side of the nearest half-integer?
+    m  = floor(qh); fh = qh - m                           # exact
+    (a, b) = TwoSum(fh - 0.5, ql)                         # a + b == fh - 0.5 + ql exactly (section 5)
+    err_abs = (EPS_Q + tail_rel) * qh * (1 + 2**-40)
+    near = |a| - |b| <= err_abs * (1 + 2**-50)            # conservative both ways
+    up   = (a > 0) & ~near
+    w[live] = (m + up) * QUANTUM                          # exact: integer < 2**53 times 2**-1074
+    if near.any():
+        w[near] = _decide_exactly(values[deep][near], values, shifted, peak)   # section 10
+    return w
+```
+
+`exp_dd(s, e)` for double arrays `s` in `[-1100, 64]` and `|e| <= 2**-43`, every step an
+IEEE add/subtract/multiply (error analysis in section 5):
+
+```
+k   = rint(s / LN2)                                       # |k| <= 1588
+r   = (s - k LN2_HI) - (k LN2_LO + k LN2_LO2)             # first term exact; TwoProd + dd add
+j   = rint(256 rh);  r'' = r - j/256                      # |r''| <= 1/512
+P   = Horner_dd(COEF, r'')                                # degree 9, dd x dd, no cancellation
+m   = P * TABLE[j] * (1 + e + e^2/2)                      # three dd products
+return (mh, ml, k)
+```
+
+`float(Decimal)` is correctly rounded into the subnormal range, including ties-to-even
+(11 boundary constructions agree with `float(Fraction(...))`) [measured in round 1; the
+Decimal path is unchanged].
+
+---
+
+## 4. The denominator (the crux)  [revised in r2: round 0 is double-double]
+
+The float `total` is never used to decide a deep entry. Two denominators exist:
+
+**Round 0 (double-double, every deep call).**
+`T = sum_{j : shifted_j >= d_cut} exp_dd(s_j + e_j)` where `(s_j, e_j) = TwoSum(v_j, -peak)`
+is the *exact* difference `v_j - peak` as an unevaluated pair (Knuth's TwoSum is exact for
+any two doubles absent overflow; overflow only happens for entries whose `shifted` is
+already `-inf`, which are excluded). Each term has relative error `<= EXP_DD_EPS =
+2**-96` [reasoned, section 5; measured `2**-103.9`], scaling by `2**k` is exact, and the
+pairwise tree sum of positive double-doubles adds `<= 3u^2` per level (`u = 2**-53`),
+i.e. `<= 26 * 2**-104.4 = 2**-99.7` for any `K <= 2**26` [reasoned; measured `2**-104`
+at K = 2000]. Terms with `shifted_j < d_cut` are omitted; each is below `exp(d_cut + 1)`
+(the exact `d_j` is within `2**-43` of the float one) and `T >= 1` (the peak contributes
+`exp(0) = 1` exactly), so `tail = (n - K) exp(d_cut + 1) <= 2**-96` bounds their relative
+contribution, and it is added to the error budget rather than assumed away.
+
+**Rounds 1-3 (Decimal, only for entries the dd round leaves within `EPS_Q` of a boundary).**
+Unchanged from round 1 except `P_START = 56`:
+
+    total_dec = sum_{j : shifted_j >= d_cut(P)} exp_P( v_j - peak )
+
+1. `v_j - peak` is computed in a 1500-digit context with `Inexact` **trapped**: the
+   difference of two doubles is a multiple of `2**-1074` with at most 2099 bits and at
+   most ~1383 significant decimal digits (the reviewer measured 1383 on 144 pairs), so
+   1500 digits are exact and a violation raises instead of silently rounding [reasoned;
+   the trap never fired in any probe -- measured]. **Load-bearing**, in both rounds: with
+   the float `shifted` as the argument instead, the dd round decides `16-heads`,
+   `must-not-invent`, `16-heads x1000`, the reviewer's `[-59.88, -782.14]` and 19 of 300
+   random entries wrongly (mutation m11), and the Decimal round decides the hard case
+   wrongly (m4) [measured].
+2. `exp_P` is `Context.exp`, correctly rounded per the `decimal` specification; `<= u_P =
+   0.5 * 10**(1-P)` per term; summation of `K` positive terms `<= (K-1) u_P`; the tail as
+   above with `d_cut(P) = -((P+3) ln 10 + ln n)`.
+3. The relative error of `w = e / total_dec` is `<= (K+3) u_P + tail` first order; `eps`
+   doubles it for second-order terms and the two roundings in `lo`/`hi` [reasoned]. The
+   Ziv test `float(w(1-eps)) == float(w(1+eps))` certifies the rounding.
+
+Why not the float total with high-precision numerators (ruled-out approach 3): the hard
+case has its exact `Q` at `0.5 + 5.6e-102`; `Decimal(float total)` in the Decimal round
+decides it wrongly at every precision (m2), and a plain float sum in the dd round decides
+the hard case and 3 of 300 random entries wrongly (m8) [measured] -- the float total's
+`~1e-16` error is a fixed offset that no numerator precision removes.
+
+Cost of the dd denominator: `~0.6 us` per kept term at N = 2000, `~0.3 us` at N = 40,000
+(memory-bound; roughly 500 numpy ufunc calls over `K`-element arrays) [measured cost, section 7; reasoned count]. `K`
+is the number of particles within `74.5 + ln n` nats of the peak: in any stage with a
+healthy ESS that is essentially all of them, and **the dd round runs whenever any deep entry
+is live, whether one or a thousand**. That is the cost envelope of the design.
+
+---
+
+## 5. The certified estimate, and its error budget  [revised in r2]
+
+Every operation in the deep path is an IEEE-754 binary64 `+`, `-`, `*` or `/` in
+round-to-nearest-even, `floor`, `rint`, `ldexp` (all exact), and integer indexing. **No
+libm function is used.** The bounds cited are from Joldes, Muller & Popescu, "Tight and
+rigorous error bounds for basic building blocks of double-word arithmetic" (ACM TOMS 2017):
+`AccurateDWPlusDW <= 3u^2 + 13u^3`, `DWTimesDW1 <= 7u^2` (the paper's `2Prod` is an FMA;
+Dekker's split-based `2Prod` is exact too, absent underflow/overflow, so the bound
+transfers). The "sloppy" `DWPlusDW` used in the Horner steps and the positive tree sum has
+absolute error `<= 3u^2 (|a| + |b|)` [reasoned: `fl(al + bl)` `<= u^2(|a|+|b|)`, `fl(sigma +
+v)` `<= 2u^2(|a|+|b|)`, `Fast2Sum` exact because `|fl(ah+bh)| >= |w|` when nothing cancels];
+at both call sites nothing cancels (`|p r''| <= 0.002 c_i` in Horner; positive summands).
+Division is the one-correction quotient, `<= ~6u^2` [reasoned]. Measured on 20,000 random
+double-double pairs against exact `Fraction` arithmetic: add `2**-105.0`, mul `2**-104.5`,
+div `2**-103.4`, positive add `2**-105.5` [measured].
+
+`exp_dd(s, e)`, `s` in `[-1100, 64]`, `|e| <= 2**-43` (true for every entry that reaches it:
+`|e| <= ulp(s)/2 <= 2**-43` for `|s| <= 1100`) [reasoned]:
+
+| step | error (relative to `exp(s+e)` unless stated) | basis |
+|---|---|---|
+| `k = rint(s/LN2)`, `r1 = s - k LN2_HI` | exact: `k LN2_HI` has `<= 11 + 42` bits; the difference is a multiple of `min(ulp(s), 2**-42)` below 0.36, or `k = 0` | [reasoned] |
+| `k LN2_LO` by TwoProd, `+ k LN2_LO2`, one accurate dd subtraction | `|delta r| <= 3u^2 * 0.35 + 2**-143 + 2**11 * 2**-157 <= 2**-105.8` absolute | [reasoned; ln2 triple residual `2**-157.3` measured] |
+| `j = rint(256 rh)`, `r'' = r - j/256`, `|r''| <= 1/512 + 2**-50` | `<= 3u^2 * 0.002 = 2**-113` absolute | [reasoned] |
+| Horner degree 9, dd x dd then sloppy add | per step `<= 7u^2 * 0.002 + 3u^2 * 1.002 <= 2**-104.3`; 9 steps `<= 2**-101.2` absolute on `P` in `[0.998, 1.002]` | [reasoned] |
+| truncation `|r''|^10 / 10! * e^{|r''|}` | `<= 2**-111.8` | [reasoned] |
+| coefficients `1/i!` as dd | `<= 2**-108` | [measured `3.1e-33`] |
+| `TABLE[j] = exp(j/256)` as dd | `<= 2**-105` | [measured `2**-107.1`] |
+| product `P * TABLE[j]` | `<= 7u^2 = 2**-103.2` | [cited] |
+| `(1 + e + e^2/2)`: TwoSum exact, `e^2/2` rounding `<= 2**-140`, accurate add `<= 2**-104.4`, truncation `e^3/6 <= 2**-131.6`, product `<= 2**-103.2` | `<= 2**-102.6` | [reasoned] |
+| **total** | **`<= 2**-100.4`**, budget **`EXP_DD_EPS = 2**-96`** (20x) | [reasoned; **measured worst `2**-103.9`** on 20,000 arguments spanning `[-1100, 64]` with `|e| <= 2**-43`, against Decimal at 60 digits] |
+
+`q`: numerator `<= 2**-96`; denominator `<= 2**-96 + 26 * 2**-104.4 = 2**-95.9` plus the
+explicit `tail_rel <= 2**-96`; division `<= 2**-98`; second order negligible: **`<= 2**-94.0`
+arithmetic + `tail_rel`**, budget **`EPS_Q = 2**-90`** (17x) [reasoned]. The near test uses
+`err_abs = (EPS_Q + tail_rel) qh (1 + 2**-40)`, which covers `q` vs `qh` and the product's
+rounding.
+
+The decision is exact where it has to be [reasoned]: `m = floor(qh)` and `fh = qh - m` are
+exact (Sterbenz for `qh >= 1`; `m = 0` otherwise); `fl(fh - 0.5)` is exact when `fh >= 0.25`
+(Sterbenz) or `qh >= 1` (`fh` is then a multiple of `2**-52` and the result is below 0.5);
+when `qh < 0.25` the result is within `2**-55` of exact but `|a| >= 0.25 >> err_abs`, and
+`Q <= qh (1 + 2**-90) < 0.26`, so the decision "round to 0" is unaffected; `TwoSum(a0, ql)`
+is exact, so `a + b = fh - 0.5 + ql`; "not near" means `|a| - |b| > err_abs (1 + 2**-50)
+>= |Q_frac - 0.5 - (a + b)| (1 + 2**-53)`, so `sign(Q_frac - 0.5) = sign(a + b) = sign(a)`;
+`m + up <= 2**52 + 2**10 + 1 < 2**53` is exact and so is its product with `QUANTUM`. For
+entries with `d < D_ZERO = -1100` or `d = -inf`, `Q <= exp(-1100) 2**1074 < 2**-513 < 0.5`
+and the answer is 0 with no arithmetic at all -- this is also what makes dead particles
+cheap (section 7). A deep entry always has `exp(d) < N * TINY`, so `kq = k + 1074 <= 53 +
+log2 N`; the prototype raises if `kq > 200`, a state the classification makes impossible.
+
+Flag probability: an entry is sent to Decimal iff its exact `Q` is within `~2 * 2**-90 * Q`
+of a half-integer: `2**-89 Q`, at most `2**-37` at the top of the subnormal range, `2**-89`
+at the bottom. Measured: 0 flagged among 10,229 deep entries in the suite, 1,500 random
+boundary-spread entries and 400 entries at the `TINY` edge; only the crafted hard cases flag.
+
+What a violated bound would do -- stated because round 1 understated it: an estimate that
+is wrong by more than the certified error mis-rounds every entry whose true `Q` lies within
+the violation of a boundary; identical entries (the `16-heads x1000` class) all go
+together, and at the `0.5` boundary that means a lost particle class, silently. Mutation
+m9 biases the numerator mantissa by `2**-38`: 1000 of 1000 identical entries lost, plus
+`128-heads`, `hard`, `[-59.88, -782.14]`, the normal-numerator case, and 88 of 300 random
+entries wrong [measured]. That is why the bound is certified from IEEE semantics rather
+than assumed of `np.exp`; the price is section 7.
+
+Why the task's `-745.2` reasoning is right but is not the trigger: unchanged from round 1
+(`w_i <= e_i` because `total >= 1`; a non-zero weight requires `d_i > -1075 ln 2`; that
+bounds *which* entries can be non-zero, not which are ambiguous). It is used as a test
+oracle (section 12).
+
+---
+
+## 6. Why (A) and (B) both hold  [tables re-measured in r2]
+
+**(A) Large shared offset.** `log_normalizer` is computed but never subtracted from
+anything: the weights are `exp(v - peak) / total`, the branch's arithmetic, kept bitwise
+outside the deep set [measured: 0/1500 random inputs differ; the reviewer independently
+measured 1444/1444]. Results: `[1e18, 1e18, 1e18-744.3] -> [0.5, 0.5, 0.0]`, sum exactly
+`1.0`; `peak-3.6e16 -> 0.0`; `large-peak-no-invent -> 0.0`; the branch's four parametrized
+`+-1e6 / +-1e16` offset tests pass with the prototype patched in [measured]. All-equal
+inputs return exactly `fl(1/N)` for `N` in {1, 2, 3, 7, 10, 2000, 40000} and peaks in
+{0, -3.25, 1e6, 1e18, -1e18} [measured].
+
+**(B) Subnormal boundary.** For every exact weight below `2**-1022` the result is the
+correct rounding: the dd estimate is certified (section 5) and the Decimal fallback is a
+certified-interval computation with an exact-argument denominator (section 4). Results on
+the task's inputs, the branch's crafted cases and the reviewer's cases, all matching the
+300-digit reference [measured]:
+
+| input                                              | exact `Q` (quanta) | `main`   | branch   | design (r2) |
+|----------------------------------------------------|--------------------|----------|----------|-------------|
+| `[0, -log 2, -745]`                                | 0.3808             | 0        | 5e-324 x | **0**       |
+| `[0, 0, -744.3]`                                   | 0.5752             | 5e-324   | 0 x      | **5e-324**  |
+| `[1e18, 1e18, 1e18-744.3]`                         | 2.9e-11            | `[1,1,0]` x | `[.5,.5,0]` | **`[.5,.5,0]`** |
+| `16-heads`: `[-log 17]*16 + [-745.1938437237576]`  | 0.5000000000000235 | 5e-324   | 0 x      | **5e-324**  |
+| `16-heads x1000` (1000 identical tail entries)     | 0.5000000000000235 | 5e-324   | 0 x      | **5e-324** (all 1000) |
+| `must-not-invent`: `[50.00000000000005]*2 + [-694.44...]` | 0.4999999999999972 | 0 | 0     | **0**       |
+| `128-heads`                                        | 0.5000000000000042 | 0 x      | 0 x      | **5e-324**  |
+| `peak-3.6e12`                                      | 0.5000652618       | 0 x      | 0 x      | **5e-324**  |
+| `peak-3.6e16`                                      | 0.3298873          | 1e-323 x | 0        | **0**       |
+| `[0,0] + [-745]*1998`                              | 0.2856             | 0        | 0        | **0**       |
+| reviewer `[0, -722.2593621433466]`                 | 4294967296.49996   | correct  | correct  | **correct** |
+| reviewer `[-59.88145743137663, -782.1408195747232]`| 4294967296.500141  | ...296 x | ...296 x | **...297**  |
+| reviewer `[10.834862720180439, -711.4244994229333]`| 4294967297.50008   | ...297 x | ...297 x | **...298**  |
+| reviewer `[0, -2000]`                              | 0 (`5e-546`)       | 0        | 0        | **0**       |
+| hard case (section 10)                             | 0.5 + 5.6e-102     | 0 x      | 5e-324   | **5e-324** (dd -> 56 -> 112) |
+| `hard-neg`, `hard-pos` (section 10)                | 0.5 -/+ ~1e-72     | --       | --       | **0 / 5e-324** (dd -> 56 -> 112) |
+
+Random stress, 1,500 inputs with the last entry's exact weight spread uniformly in `log2`
+over the subnormal range (`Q` from `2**-2` to `2**52`), peaks drawn from `[-5, 5]`,
+`[-3000, 3000]`, `+-[1e12, 1e17]`, `N` in `[2, 40]`, against a 200-digit reference
+[measured]:
+
+| band                     | n    | design misses | branch misses | `main` misses | max error (quanta) design / branch / main |
+|--------------------------|------|---------------|---------------|---------------|-------------------------------------------|
+| `Q < 2**32`              | 927  | **0**         | 136           | 248           | 0 / -- / --                               |
+| `2**32 <= Q < 2**52`     | 569  | **0**         | 170           | 364           | 0 / -- / --                               |
+| `Q >= 2**52` (normal; float path, not guaranteed) | 4 | 2 | 2  | 4             | 40 / 159 / 3.4e17                         |
+
+A further 400 inputs with `Q` within `2**-40` of `2**52`: the 204 classified deep are all
+correctly rounded; the 196 classified normal are branch-identical and off by up to 248
+quanta (`2**-44` relative) [measured] -- the seam described in section 2.
+
+Normal-range accuracy is inherited from the inputs, not the algorithm (unchanged from
+round 1: up to ~435 ULP for all three methods with a small peak, because `v - peak` is
+inexact hundreds of nats below the peak; the hard case's normal-range entries differ from
+the reference by 1-26 ULP for the same reason) [measured].
+
+---
+
+## 7. Cost  [revised in r2]
+
+All at N = 2000 unless stated; `main` is the current `main` implementation; `r1` is the
+round-1 prototype (`proto_r1.py`), for comparison; medians of repeated calls [measured]:
+
+| input                                                  | `main`   | branch   | `r1`     | **design (r2)** |
+|--------------------------------------------------------|----------|----------|----------|-----------------|
+| healthy weights (no subnormal anywhere)                | 0.141 ms | 0.158    | 0.161    | **0.160 ms** (+8-14 % over `main` across three input shapes and 9 x 500 repeats; the reviewer's script read +25 % once) |
+| N = 40,000 healthy                                     | 0.780    | 0.831    | --       | **0.767**       |
+| 1999 healthy + 1 deep (live)                           | 0.149    | 0.159    | 0.187    | **1.25**        |
+| 1000 healthy + 1000 deep (live)                        | 0.267    | 0.292    | 0.357    | **1.48**        |
+| unimodal `normal(0,1) * 300` (log weights span > 745 nats: tails live and subnormal) | 0.158 | 0.178 | -- | **1.09** |
+| `[0,0] + [-745]*1998`                                  | 0.416    | 0.425    | 0.503    | **1.51**        |
+| `16-heads x1000` (N = 1016; r1 flagged 1000)           | 0.255    | 0.278    | 0.516    | **1.14**        |
+| 1999 distinct deep + lone peak                         | 0.405    | 0.432    | 0.664    | **1.46**        |
+| **reviewer's bimodal Gaussian** (1800 at 0 + 200 at 38.6 sigma, `-0.5 x^2`), N = 2000 | 0.152 | 0.167 | **27.8** | **1.32** |
+| same, N = 4000                                         | 0.197    | 0.213    | 60.4     | **1.72**        |
+| same, N = 8000                                         | 0.284    | 0.307    | 111.4    | **2.82**        |
+| 1999 healthy + tail float-tuned to `Q = 0.5`           | 0.145    | 0.155    | 30.4     | **1.21**        |
+| reviewer's `check_physical_cost.py` (36 bimodal draws, 20-45 sigma), worst call | 0.225 | -- | 36.6 (r1, reviewer) | **1.78** (8x) |
+| hard case, N = 8 (dd -> 56 -> 112 digits)              | 0.107    | --       | 1.03     | **1.55**        |
+| N = 40,000: 39,999 healthy + 1 deep (live)             | 0.775    | 0.859    | --       | **13.0**        |
+| reviewer's `1e-236` cap case, N = 18                   | --       | --       | 0 + warn | raise after **5.7 ms** |
+| reviewer's 1975-head `1e-261` cap case (K ~ 1990)      | --       | --       | 618 (warn) | raise after **565 ms** |
+
+The deep-call cost is `O(K)` numpy work with a constant of ~0.6 us per kept term at N =
+2000 and ~0.3 us at N = 40,000 (memory-bound; roughly 500 ufunc calls per `exp_dd`
+[reasoned count], 11-16 tree levels), plus ~0.1 ms fixed [measured]. It does not depend on how many entries are deep,
+and there is no adversarial blow-up: the worst input short of the crafted `1e-70` class
+costs the same 1.2-1.5 ms as the best deep input. The Decimal rounds cost `K x (33 / 59 /
+200) us` at 56 / 112 / 224 digits (Decimal `exp` 29 / 55 / 195 us plus the 2.7 us exact
+difference) [measured]; a decided hard case with K = 3 costs 1.5 ms; the raise path with
+K ~ 1990 costs 565 ms.
+
+**In the SMC loop** [measured with `_next_beta`, target ESS 0.5 N, up to 61 normalizer
+calls per stage, medians of 5]:
+
+| population (N = 2000 / 8000)                                    | `main`        | **design (r2)** | deep calls / live |
+|-----------------------------------------------------------------|---------------|-----------------|-------------------|
+| bimodal, `-0.5 x^2 * 300`: far mode dead (`w = 0` exactly), tempering | 12.5 / 20.3 ms | **16.6 / 28.9** | 61 / 2 |
+| bimodal `x 30`, 10 % particles with base weight 0, tempering    | 12.8 / 23.4   | **15.0 / 27.1** | 61 / 0 |
+| unimodal `x 300`, tempering                                     | 12.4 / 21.8   | **15.7 / 29.1** | 2 / 2 |
+| bimodal `x 1.02`: far mode live and subnormal, no tempering     | 0.22 / 0.43   | **1.30 / 2.65** | 1 / 1 |
+
+Dead particles (weight exactly 0, or `-inf` log weight) take the no-arithmetic shortcut, so
+the common SMC situation -- outliers already flushed to zero, resampled away at the next
+stage -- costs +20-40 % per stage, not 8x. The 8x per call applies to calls in which some
+weight is subnormal *and non-zero*; in a bisection the far mode passes through that window
+in a few of the 61 steps (2 of 61 measured), because `delta * ll` moves it by orders of
+magnitude per step. The ceiling `61 x 1.3 ms = 80 ms` per stage at N = 2000 is reachable
+only if every bisection step has a live subnormal weight, which was not observed
+[reasoned from measured per-call costs].
+
+What I did *not* find: a way to make the certified estimate cheaper than `O(K)` per deep
+call. The precision needed is not knowable before it is computed (Ziv), every term of the
+denominator contributes at the `2**-53` level, and `np.exp` cannot be used as a first
+tier without reintroducing the uncertified assumption. A cheaper *certified* first tier --
+the same Taylor/table evaluation in plain double, ~150 ufunc calls, `~2**-48` certified --
+would cut the cost ~4x for calls whose deep entries all have `Q < ~2**35` and change
+nothing for the reviewer's population (whose `Q` spans the whole range). Not built; listed
+in section 14.
+
+The common path's +8-14 % is `max`, `exp`, `sum`, divide and one comparison on top of the
+retained `logsumexp` call; dropping `logsumexp` would recover most of it at the cost
+discussed in section 9.
+
+---
+
+## 8. Decimal isolation and hostile callers  [revised in r2]
+
+Rules, all of which the prototype follows and the tests in section 12 enforce:
+
+1. **Never use the thread context.** Every arithmetic operation goes through an explicit
+   `Context` method (`ctx.exp`, `ctx.add`, `ctx.subtract`, `ctx.multiply`,
+   `ctx.divide`). No `localcontext()` and no operator on `Decimal` objects.
+2. **Construct the context with every field explicit** (`prec`, `rounding`, `Emin`,
+   `Emax`, `capitals`, `clamp`, `flags=[]`, `traps=[InvalidOperation, DivisionByZero,
+   Overflow]`); unspecified fields are copied from the mutable `decimal.DefaultContext`.
+3. **Build constants context-free**: `Decimal(<int>)` and `Decimal("5e-56")` are exact and
+   context-free. `Decimal(10) ** -27 / 2` is *not*.
+4. **Every float -> Decimal conversion is `Decimal.from_float`** (helper `_dec`), including
+   `peak`, each value, `d_cut`, and `QUANTUM`/`TINY` in the probes. `Decimal(<float>)` is
+   exact but consults the *thread* context's `FloatOperation` signal: it sets the caller's
+   flag and raises if the caller traps it (round-1 finding 4). `from_float` does neither
+   (documented; verified below).
+5. **A fresh `Context` per call**, so concurrent callers cannot share flags.
+6. `float(Decimal)` does not consult any context.
+
+Evidence [measured, all four crafted cases `16-heads`, `must-not-invent`, `hard`,
+`[0,0,-744.3]` correct in every row, and `dict(getcontext().flags)` identical before and
+after]:
+
+| caller's thread context                                                        | result |
+|---|---|
+| clean; `flags[FloatOperation]` cleared first                                   | correct; no flag set (r1 set `FloatOperation`) |
+| `traps[FloatOperation] = True`                                                 | correct; no flag; a plain `Decimal(0.5)` raises here |
+| `prec=3, Emin=-100, Emax=100, ROUND_UP`, traps `Inexact/Rounded/Subnormal/Underflow/FloatOperation` | correct; no flag; a plain `Decimal(1)/Decimal(3)` raises here |
+| `DefaultContext` mutated to `prec=2, Emin=-5, ROUND_DOWN`, `Inexact` and `FloatOperation` trapped; 8 threads spawned *after* the mutation, each asserting it inherited `Emin == -5` and the trap | all 8 correct |
+
+The dd round uses no `decimal` at all, so the common deep call touches no context.
+
+---
+
+## 9. The evidence value `log_normalizer`  [revised in r2]
+
+Per call, unchanged: `float(logsumexp(values))`, exactly as on `main`, and it remains the
+loud guard for empty / all `-inf` / `+inf` / NaN input. **Bitwise equal to the branch and to
+`main` on 2000/2000 random inputs** with offsets up to `1e18` [measured]. The (A) defect
+was never in the value of `log_normalizer`; it was in *subtracting* it to form the weights.
+
+What the unchanged per-call value does **not** establish (round-1 finding 6): the filter
+feeds the returned weights into the next stage as `np.log(weights)` (`_next_beta` and
+`_update` in `inference.py`), so the *accumulated* evidence consumes the stored weights.
+For a weight stored as a subnormal double, `log(stored) - log(exact) = ln(round(Q)/Q)`,
+which is up to `ln 2` at one quantum (`Q` just above 0.5) and `-inf` when the weight rounds
+to zero and that particle later dominates. Reviewer's filter reproduced exactly (3
+particles at `[0, 0, sqrt(1488.6)]`, observations at 0 and `sqrt(2000)`, `ess_target 0.25`
+so no resampling) [measured]:
+
+| | accumulated `log_evidence` | stage-1 weight of particle 3 |
+|---|---|---|
+| branch                                        | `-1002.2433421745177` | `0.0` (rounded away; its later `+1000`-nat dominance is lost) |
+| design (r2)                                   | `-765.5269527500901`  | `5e-324` (exact `2.8418e-324`, correctly rounded) |
+| direct `logsumexp(ll_1 + ll_2) - ln 3`        | `-766.0800280092687`  | -- |
+
+`design - direct = 0.55308 = ln(5e-324 / 2.8418e-324)` to 12 digits: the entire
+discrepancy is the quantization of one stored weight. Correct rounding makes that error as
+small as a stored double allows; it does not make it zero, and the telescoping identity
+`sum of increments == direct` holds only in exact arithmetic. Removing it would require
+carrying log-weights (or the unnormalized `shifted` scale) between stages rather than
+normalized weights, which is a change to `_update`, not to this function, and is out of
+scope here.
+
+If the retained `logsumexp` call were replaced by `peak + log(total)` to save one pass,
+the evidence would differ in the last bit in about 1 of 2000 random calls [measured in
+round 1]. The recommendation is to keep the call.
+
+---
+
+## 10. Escalation and the cap  [revised in r2]
+
+The Ziv loop is: dd round (`2**-90`) -> Decimal 56 -> 112 -> 224 digits -> **raise**
+`WeightRoundingUndecided` (a `RuntimeError` subclass). At each Decimal round the entry is
+decided iff `float(w (1 - eps)) == float(w (1 + eps))`. Three crafted inputs exercise the
+rounds on real data [measured]:
+
+| case | construction | exact `Q - 0.5` | rounds | result |
+|---|---|---|---|---|
+| `hard` (round 1) | peak 0, `d = -744.44`, six particles tuned to the residual | `+5.6054e-102` | dd undecided -> 56 undecided -> **112 decided** | `5e-324` |
+| `hard-neg` | seed 4: peak 0 + 3 heads, tail, 4 tuned helpers, last helper one ulp high | `-6.986e-72` | dd -> 56 -> 112 | `0` |
+| `hard-pos` | seed 0: peak 0 + 3 heads, tail, 4 tuned helpers | `+1.435e-72` | dd -> 56 -> 112 | `5e-324` |
+
+`hard-neg` and `hard-pos` were chosen, out of the first ten constructions, because the *unflagged* dd
+estimate lands on the wrong side of 0.5 for them (its `2**-100` noise dwarfs the `1e-72`
+distance): they are the tests that make the dd error interval (m7) and the flagging (m3)
+observable, deterministically, where the original hard case passed those mutations by luck
+[measured, section 13].
+
+Cap policy: **raise**. Reproduced the reviewer's constructions with the reviewer's
+generator (peak plus tuned helpers, each the nearest double below the log of the remaining
+residual) [measured]:
+
+| residual target | n  | exact `Q - 0.5` | 650-digit reference | design (r2) |
+|---|---|---|---|---|
+| `1e-100` | 9  | `+9.303e-113` | `5e-324` | decided at 224 digits, `5e-324`, 4.1 ms |
+| `1e-230` | 18 | `+7.078e-236` | `5e-324` | **raises** after 56/112/224, 5.7 ms (r1 returned 0 with a warning) |
+| `1e-290` | 23 | `+4.794e-302` | `5e-324` | raises, 5.8 ms |
+| reviewer's 1975 heads, `1e-255` | 1994 | `+1.6e-261` | `5e-324` | raises after 565 ms |
+
+Why raise rather than warn: the guarantee in section 2 is then unconditional -- every
+returned subnormal weight is certified, or the call fails loudly -- and `ParticleFilter.
+update` already restores its checkpoint on any exception (`inference.py`, `update`), so a
+raise cannot corrupt filter state. Why not escalate without a cap: time would be unbounded
+(448 digits already costs 1.1 ms per term, 2.2 s per round at K = 2000). Who reaches it: an
+input whose exact `Q` is within `~1e-220` of a half-integer, which requires about 14
+particles tuned to 16 digits each (each helper cancels one double's worth of residual);
+by chance the probability per entry is `~1e-220`. A physical likelihood does not produce
+it; a test can (the table above).
+
+---
+
+## 11. Edge cases  [re-measured in r2, reviewer's additions included]
+
+All identical to the branch, verified under `warnings.simplefilter("always")` [measured]:
+
+| input                     | result                                     | path                                   |
+|---------------------------|--------------------------------------------|----------------------------------------|
+| `[]`                      | `RuntimeError` (all zero weight)           | `logsumexp([]) = -inf` -> guard        |
+| `[-inf, -inf]`, `[-inf]`  | `RuntimeError`                             | `-inf` -> guard                        |
+| `[3.7]`                   | `[1.0]`, `log_normalizer 3.7`              | `shifted = [0]`, `total = 1`           |
+| `[1e300]`                 | `[1.0]`, `1e300`                           | same                                   |
+| `[0, +inf]`, `[+inf, -inf]` | `RuntimeError`                           | `+inf` -> guard                        |
+| `[nan, 0]`, `[-inf, nan]`, `[nan]` | `RuntimeError`                    | `logsumexp` is NaN -> guard; the deep path is never reached |
+| `[0, -inf, -1]`           | `[0.731..., 0.0, 0.268...]`                | `-inf` -> deep, dead shortcut, weight 0 |
+| `[0, -745, -inf]`         | `[1.0, 5e-324, 0.0]`                       | one live deep entry, one dead          |
+| `[0, -1200]`, `[0, -1e18]`| `[1.0, 0.0]`                               | deep, `d < D_ZERO`: certified zero, no arithmetic |
+| `[1e308, -1e308, 0]`      | `[1.0, 0.0, 0.0]`, `1e308`                 | `values - peak` overflows to `-inf` (numpy warning, same on the branch); dead |
+| `[-1e308, -1e308, -inf]`  | `[0.5, 0.5, 0.0]`                          | dead shortcut                          |
+| `[max, max]`              | `[0.5, 0.5]`                               | common path                            |
+| all equal, any N, any peak | exactly `fl(1/N)`                         | `scaled` all `1.0`, `total = N` exactly |
+
+NaN reaches the loud error before any arithmetic that could read it as zero: `logsumexp`
+returns NaN for any NaN input, `math.isfinite(nan)` is `False`. The deep path has no NaN
+handling because it cannot receive one [measured for all listed inputs].
+
+---
+
+## 12. Tests that pin each decision  [revised in r2]
+
+Each row names the mutation that reddens it, measured against the prototype (section 13
+lists the matrix). Expected values are from the 300-digit reference.
+
+| test                                                                 | expected                              | mutation it catches |
+|----------------------------------------------------------------------|---------------------------------------|---------------------|
+| `[1e18, 1e18, 1e18-744.3]` (existing)                                | `[0.5, 0.5, 0.0]`, `sum == 1.0`       | normalize by `log_normalizer` (main) |
+| `+-1e6`, `+-1e16` offsets (existing, 4 cases)                        | ratios to 1e-15, sum to 1e-15         | same |
+| `[0, -log 2, -745]`                                                  | `weights[2] == 0.0`                   | branch's double rounding |
+| `[0, 0, -744.3]` (existing, un-xfail)                                | `weights[2] == 5e-324`                | same |
+| `16-heads`, `must-not-invent`, `16-heads x1000`, reviewer `[-59.88, -782.14]` | `5e-324`, `0`, all `5e-324`, `...297` quanta | m6 / m11: `fl(v - peak)` or dropped `e` in the dd round; m9 |
+| `128-heads`, `peak-3.6e12`, `peak-3.6e16`, `large-peak-no-invent` (existing) | `5e-324, 5e-324, 0, 0`         | m9; normalize by `log_normalizer` |
+| hard case (section 10)                                               | `5e-324`, **no raise**                | m1 zero Decimal interval, m2 float total in Decimal, m4 float difference in Decimal, m5 no escalation, m8 float sum in dd |
+| `hard-neg`, `hard-pos` (section 10)                                  | `0`, `5e-324`, no raise               | **m3 never flag; m7 no dd interval** (the only tests that catch them); m5 |
+| normal numerator / subnormal quotient (`[0]*5000 + [d]`, `Q ~ 2**51.5 + 0.5`) | correctly rounded             | **m10 classify by `scaled < TINY`** (the only test that catches it) |
+| `[0,0] + [-745]*1998` with `_decide_exactly` monkeypatched to raise   | all-zero tail, no raise               | any trigger that fires on depth rather than ambiguity (ruled-out 5) |
+| reviewer's `1e-236` cap case                                          | **raises `WeightRoundingUndecided`**  | warn-and-return |
+| hostile thread context incl. `traps[FloatOperation]` on the four crafted cases | correct, caller's flags unchanged | any implicit-context operation; any `Decimal(float)` |
+| `DefaultContext` mutated, run in a **new thread**                     | correct                               | rule 2/3 of section 8 |
+| edge-case table, parametrized                                        | as in section 11                      | guard ordering; dead shortcut |
+| all-equal inputs, N in {1, 2, 3, 7, 2000}, peaks {0, 1e18, -1e18}    | exactly `1/N`                         | any rescaling of the common path |
+| random inputs: `weights[~deep] == branch formula` bitwise             | equal                                 | any change to the common path |
+| random inputs: no non-zero weight with `v - peak <= -745.1332191019412` | holds                              | value path producing weight from nothing |
+| random inputs: `log_normalizer == float(logsumexp(values))` bitwise   | equal                                 | any change to the evidence |
+| `exp_dd` vs Decimal-60 on random arguments, `|err| < EXP_DD_EPS`      | holds (measured `2**-103.9`)          | any regression of the dd `exp` |
+| `ParticleState` sum-to-one at N = 40000 (existing validation)        | `< 1e-12`                             | -- |
+
+Suite run with the prototype patched in for `clocks.inference._normalize_log_weights`
+(plugin `patch_proto.py`): **871 passed, 4 XPASS(strict), 1 failed, 2 deselected (slow)**.
+The 4 XPASS(strict) are the branch's `xfail` marks on `keeps_a_weight_that_is_barely_
+representable`, `16-heads`, `128-heads` and `peak-3.6e12`, which the prototype gets right;
+they become ordinary assertions. The 1 failure is `tests/test_physics.py::TestGaussian
+Density::test_density_batch_rejects_extreme_finite_amplitude_without_warning` (message
+"density quadrature did not converge" instead of "density potential"), which **fails
+identically with the prototype not patched in** and is unrelated to this work. Unpatched,
+this checkout fails 10 tests: that one plus 9 normalizer tests in `test_smc_rigorous.py`
+that encode the target behaviour; all 9 pass with the prototype. Path counters: 55,459
+calls, 88 with deep entries, 10,229 deep entries, **0 flagged** [measured].
+
+---
+
+## 13. Measured vs. reasoned, and the mutation matrix  [revised in r2]
+
+Mutation matrix against the prototype (`reddens` = returns a value different from the
+reference, or raises), each mutation a textual edit of `proto.py` executed as a fresh
+module; the random column is 300 boundary-spread inputs [measured]:
+
+| mutation                                                    | reddens (crafted)                                                       | random 300 |
+|-------------------------------------------------------------|-------------------------------------------------------------------------|------------|
+| baseline                                                    | nothing                                                                 | 0 |
+| m1: Decimal `eps = 0`                                       | hard, hard-pos                                                          | 0 |
+| m2: float `total` in the Decimal path (ruled-out 3)         | hard, hard-pos                                                          | 0 |
+| m3: never flag (dd decides everything)                      | **hard-neg, hard-pos**                                                  | 0 |
+| m4: `fl(v - peak)` as the Decimal exponent                  | hard                                                                    | 0 |
+| m5: `P_MAX = 56` (no escalation)                            | hard, hard-neg, hard-pos (all **raise**)                                | 0 |
+| m6: drop the `exp(e)` factor in `exp_dd`                    | 16-heads, must-not-invent, hard, 16-heads x1000, `[-59.88, -782.14]`    | 19 |
+| m7: no dd error interval (`err_abs = 0`)                    | **hard-neg**                                                            | 0 |
+| m8: float sum instead of the dd tree sum                    | hard, hard-pos                                                          | 3 |
+| m9: numerator `exp` biased by `2**-38` (reviewer's fault injection) | 16-heads, 128-heads, hard, 16-heads x1000 (**1000 of 1000 lost**), `[-59.88, -782.14]`, hard-pos, normal-numerator | 88 |
+| m10: classify deep by `scaled < TINY` (numerator only)      | **normal-numerator / subnormal-quotient**                               | 3 |
+| m11: `fl(v - peak)` in the dd round (drop `e`)              | same five as m6                                                         | 19 |
+
+Not caught by any test, and said so: dropping `tail_rel` from `err_abs` (`2**-96`; no
+decidable input can be that close to a boundary without already being flagged by
+`EPS_Q`); the `D_ZERO` and `kq > 200` guards (cost and impossibility guards, not
+correctness); the `(1 + 2**-40)` and `(1 + 2**-50)` paddings.
+
+Measured (probe output in this session): every number in sections 1, 2, 6, 7, 8, 9, 10,
+11, 12 and the tables; the dd primitive errors and `exp_dd` error on 20,000 arguments; the
+table, coefficient and ln2-split constants; bitwise identity with the branch outside the
+deep set; per-call evidence identity; the reviewer's filter; the cap constructions; the
+suite run; the `_next_beta` stage timings.
+
+Reasoned, not measured: the `exp_dd` error budget in section 5 (each line an IEEE or cited
+bound; the sloppy-add sites rest on a no-cancellation argument I made, not the paper's);
+the dd division bound (~`6u^2`; measured `2**-103.4` on 20,000 pairs is consistent); the
+`q` budget and the exactness of the decision arithmetic; the Decimal `eps` bound (as in
+round 1, exercised only in the direction "large enough to refuse a wrong decision", m1);
+exactness of the 1500-digit difference (digit counting, asserted at runtime by the
+`Inexact` trap); the float weight's `2**-42` classification error (its `np.exp` term is
+measured-plus-margin); `total >= 1`; impossibility of ties; the per-stage cost ceiling.
+
+---
+
+## 14. Open questions and what I could not resolve  [revised in r2]
+
+1. **The deep-call cost floor.** ~1.25 ms at N = 2000, ~13 ms at N = 40,000, for any call
+   with a live subnormal weight (section 7). It is the price of certifying the estimate
+   without trusting libm, and I did not find a cheaper certified route within this
+   architecture. A certified plain-double first tier (~4x cheaper, helps only when every
+   deep entry has `Q < ~2**35`) is the one lead; I did not build it. If reviewers judge
+   8-17x per deep call unacceptable, the alternatives are (a) accept `np.exp` as a
+   platform assumption for a cheap first tier, with the class-loss failure mode of section
+   5 named in the code, or (b) not correctly rounding at all -- both are policy calls, not
+   things this design can measure away.
+2. **The `exp_dd` bound is reasoned and measured, not machine-checked.** The cited bounds
+   are proven for the FMA-based `2Prod`; the transfer to Dekker's split is standard but I
+   asserted it. The sloppy-add sites depend on my no-cancellation argument. Worst measured
+   error is 20x inside the budget on 20,000 arguments, and the dd round agrees with
+   Decimal (an independent implementation) to `2**-104`; a mutation that violated the
+   budget by `2**-38` reddened 6 crafted cases and 88/300 random ones.
+3. **Residual `np.exp` dependence** is confined to the classification at `TINY` (section
+   2): failure mode a few hundred quanta at `Q ~ 2**52`, never a lost particle. Making the
+   classification certified too would cost a dd evaluation on every call; not worth it.
+4. **Raise policy.** A raise aborts an `update`; `ParticleFilter.update` restores the
+   checkpoint on any exception (read, not exercised). Reaching it requires ~14 tuned
+   particles. If a filter run would rather continue, the alternative is warn-and-return,
+   which round 1 chose and round 1's reviewer rejected because it contradicts the
+   guarantee; I agree with the reviewer.
+5. **Evidence quantization** (section 9) is inherent to carrying weights between stages
+   and is not fixed by any normalizer. Carrying log-weights is the fix; out of scope.
+6. **Common-path +8-14 %** is mostly the retained `logsumexp` call; dropping it changes the
+   evidence in the last bit in ~1 of 2000 calls (round 1). Recommend keeping it.
+7. **Platform.** Every measurement is on x86_64 macOS with subnormals enabled and numpy's
+   ufuncs being IEEE operations. FTZ/DAZ would break the deep set entirely (loudly: the
+   tests fail). `_two_prod` needs `|a| < 2**996` and products above `2**-969` to be exact:
+   every operand in the dd path is between `2**-200` and `2**100` or exactly zero
+   [reasoned; not instrumented].
+8. **Reference independence.** The reference is Decimal at 200-650 digits; the dd path is
+   an independent implementation, so their agreement to `2**-104` on 20,000 arguments
+   cross-validates both. The Decimal rounds share libmpdec's `exp` with the reference; a
+   shared bug there would fool the crafted hard cases only.
+9. **The Decimal `eps` bound is not tested from below** (as in round 1).
+10. **Ties are argued impossible, not measured**; the cap makes it moot.
+11. **Not re-verified: the `_next_beta` bisection is unaffected by the deep path** beyond
+    the suite passing and the stage timings agreeing on `next_beta` to 3 digits.
+12. **Pre-existing `test_physics` failure** on this checkout, unrelated (section 12).
+13. **Import cost** 8.7 ms for the 179-entry table (Decimal at 80 digits). Could be a
+    literal table instead.
+
+---
+
+## Appendix: probe inventory
+
+All in `/private/tmp/claude-501/-Users-jonathan-projects-clocks/c69dd40d-c0be-43fe-ae13-7280f5717025/scratchpad/`;
+run with `uv run --frozen python <script>` from the worktree (scripts insert the scratchpad
+on `sys.path`):
+
+- `proto.py` -- revision-2 prototype: `normalize_main`, `normalize_branch`,
+  `normalize_proto` (the design; optional `stats` dict reports `n_deep`, `n_live`,
+  `n_flagged`, `kept`, `rounds`), `reference_weights` (Decimal, default 300 digits,
+  exact-argument differences with `Inexact` trapped), the dd primitives and `_exp_dd`.
+  `proto_r1.py` is the round-1 prototype, kept for the cost comparison.
+- `r2_cases.py` -- canonical / reviewer cases vs the reference, edge cases under
+  `warnings=always`, all-equal inputs, 1,500-input random stress by band.
+- `r2_ddacc.py` -- dd primitives vs `Fraction`, `_exp_dd` vs Decimal-60 on 20,000
+  arguments, tree sum, ln2 split, table and coefficient accuracy.
+- `r2_cost.py` -- the cost table (main / branch / r1 / r2) and Decimal `exp` timings.
+- `r2_mutations.py` -- the mutation matrix (textual edits executed as fresh modules).
+- `patch_proto.py` -- pytest plugin that patches the prototype into `clocks.inference`
+  and prints path counters at exit; run `PYTHONPATH=<scratchpad> uv run --frozen pytest -p
+  patch_proto -q`.
+- Issued as stdin scripts in this session (outputs quoted above): per-band stress and
+  hard-case per-entry diff; the reviewer's cap constructions (`n = 9, 18, 23, 1994`);
+  hostile Decimal contexts incl. `FloatOperation`; per-call evidence identity and the
+  reviewer's two-observation filter; `_next_beta` stage timings; the `TINY`-edge
+  classification probe; the `hard-neg` / `hard-pos` construction search.

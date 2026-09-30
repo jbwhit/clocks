@@ -1,5 +1,6 @@
 """Gravitational time dilation simulation and inference library."""
 
+from clocks._weight_normalization import WeightRoundingUndecided
 from clocks.api import (
     build_model_comparison,
     build_particle_filter,
@@ -69,6 +70,7 @@ __all__ = [
     "SimulationResult",
     "UpdateDiagnostics",
     "WEAK_FIELD_LIMIT",
+    "WeightRoundingUndecided",
     "add_clock_noise",
     "build_particle_filter",
     "build_model_comparison",

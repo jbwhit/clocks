@@ -1,0 +1,49 @@
+### Environment & Verification Baseline
+
+- **cwd**: `/Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review`
+- **git rev-parse HEAD**: `ff5d39aa4f4c69dfd752e3a3835cea6dd750ca39`
+- **git status --short**:
+  ```text
+  ?? docs/plans/2026-09-14-normalizer-r3-design.md
+  ?? docs/plans/normalizer-r3/
+  ```
+- **Target-Specific Line**: `R3 full-exact-subnormal coverage; both-midpoint decision; trim=2^-350`
+
+---
+
+### Acknowledgments and Corrections to the Review
+
+#### 1. Strided Slicing in `_dd_sum` ([`prototype.py:125`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L125))
+- **Correction Accepted**: `high[::2]` and `high[1::2]` are basic-strided views created via stride manipulation (`np.shares_memory(high, high[::2]) == True`). They do not allocate underlying buffer data.
+- **Evidence**: The allocation at each tree level originates from the vectorized binary arithmetic inside `_dd_add` (e.g. `high + bh`, `error + ...`), not the slicing expressions. The suggestion that slicing overhead alone justifies Cython or pre-allocation was technically inaccurate and is retracted.
+
+#### 2. Near-Normal Seam Corrections & Narrowed ESS Contribution Scope
+- **Correction Accepted**: The statement that *"all normal weights remain bitwise identical"* was overbroad and incorrect.
+- **Evidence**:
+  - Revision 3 explicitly sets `CORRECTION_LIMIT = float(2**52 + 2**20)` ([`prototype.py:31`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/normalizer-r3/prototype.py#L31)).
+  - $2^{52}$ quanta equals the smallest normal binary64 float $2^{-1022}$. Entries with $qh \in [2^{52}, 2^{52} + 2^{20}]$ quanta are mathematically *normal*, yet fall within the DD candidate correction path.
+  - Because `normalize_branch` evaluates `np.exp` using libm, which is subject to standard 0.5–1 ulp rounding errors, `normalize_proto`'s DD/Decimal-certified values in this narrow near-normal strip can and do differ from `normalize_branch`.
+  - The design document explicitly acknowledges this ([`2026-09-14-normalizer-r3-design.md:18-20`](file:///Users/jonathan/projects/clocks/.worktrees/normalizer/.worktrees/r3-review/docs/plans/2026-09-14-normalizer-r3-design.md#L18-L20)): *"We no longer promise bitwise identity for every entry the old floating calculation classified as normal."*
+- **Narrowed Invariance Statement**:
+  - Any corrected entry satisfies $w_i \le (2^{52} + 2^{20}) \cdot 2^{-1074} < 2^{-1021}$.
+  - In IEEE 754 binary64 arithmetic, $(w_i)^2 < (2^{-1021})^2 = 2^{-2042} \ll 2^{-1075}$.
+  - The floating-point square evaluates to `0.0` identically:
+    $$\text{float}(w_i \times w_i) = 0.0$$
+  - Consequently, corrections up to `CORRECTION_LIMIT` contribute identically zero to $\sum w_i^2$ in binary64. This justifies candidate evaluation in `_next_beta` using `normalize_branch`, but does **not** constitute a theorem of global SMC trajectory invariance (as tiny weights can affect resampling, log-weight updates, support, and evidence in subsequent stages).
+- **SHA-256 Verification Attribution**: Acknowledged that independent SHA-256 verification was performed by the controller, not AGY.
+
+#### 3. Note on Test Isolation Follow-Up
+- Noted that in `test_filter.py`, negative controls reconstruct `FunctionType(inf._next_beta.__code__, inf.__dict__, '_next_beta')` to ensure a clean, unsplit baseline before testing negative controls, then cleanly restore the split.
+
+---
+
+### Reconfirmed Assessment
+
+With these corrections applied:
+- The lattice bounds ($\Lambda_{402} / \Lambda_{804}$) guaranteeing no internal underflow remain mathematically intact.
+- The symmetric two-boundary decision with directed outward rounding remains provably sound.
+- Coverage of every exact subnormal entry up to array length $2^{63}$ is mathematically verified.
+- Directed Decimal fallback strictly encloses dropped tails and respects context isolation.
+- Rollback semantics and cap failure policies are honest and verified.
+
+SOUND ENOUGH TO IMPLEMENT
