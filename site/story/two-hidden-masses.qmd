@@ -12,22 +12,18 @@ problem gets qualitatively harder, not merely bigger.
 
 ![Two masses in 2D: ten randomly placed clocks, six unknowns.](../assets/demo_multi_mass_2d.gif)
 
-Both committed GIFs are current packaged default outputs from the corrected
-SMC implementation. Each depicts one named finite realization, not a
-population recovery rate.
+Each animation is one simulated run, not a success rate.
 
 ## Label switching — an honest limitation
 
 "Mass 1" and "mass 2" are *our* labels; the physics doesn't care. A
 hypothesis with the masses swapped predicts identical clock rates, so the
 true [posterior](../method/notation-and-glossary.qmd#term-posterior) is perfectly bimodal — and the mean of a bimodal cloud lands
-meaninglessly between the modes. The library instead represents the
-normalized ordered version of the exchangeable prior: initial position-mass
-pairs are sorted together by the first spatial coordinate (so $x_1 < x_2$ in
-this notation). During
-[rejuvenation](../method/the-particle-filter.qmd#sec-resampling), a proposal
-that crosses that strict boundary is rejected. Sorting proposals after they
-are drawn would obscure the proposal density and is not used.
+meaninglessly between the modes. The library breaks the tie by naming the
+masses in order of their $x$-coordinate, so that $x_1 < x_2$ always, and the
+filter's
+[moves](../method/the-particle-filter.qmd#sec-resampling) never cross that
+line.
 
 What this does **not** solve: when the two masses nearly share an
 x-coordinate, the sort boundary slices right through the posterior, and

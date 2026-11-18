@@ -78,7 +78,9 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
     echo_story = (ROOT / "site/story/gravitational-echolocation.qmd").read_text()
     model_story = (ROOT / "site/story/how-many-masses.qmd").read_text()
-    normalized_model_story = " ".join(model_story.split())
+    provenance = " ".join(
+        (ROOT / "site/reproduce/reproducibility.qmd").read_text().split()
+    )
     current_asset_pages = [
         ROOT / "README.md",
         ROOT / "site/index.qmd",
@@ -94,20 +96,57 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     assert "a1b016b" in report
     for expected_hash in EXPECTED_VISUAL_HASHES.values():
         assert expected_hash in report
+    # The exact protocol record lives on the Reproducibility page; the story
+    # pages state the results in plain words and link there.
     assert "12, 12, 11, 8, 3, 0" in echo_story
-    assert "12/12" in echo_story
-    assert "66.524" in echo_story
-    assert "12/12 far-range" in echo_story
-    assert "population reliability" in echo_story
-    assert "K=2: 0.3990" in model_story
-    assert "K=3: 0.6010" in model_story
-    assert "K=2: 0.740" in model_story
-    assert "K=3: 0.260" in model_story
-    assert "finite data horizon" in normalized_model_story
-    assert "finite-particle" in model_story
+    assert "12, 12, 11, 8, 3, 0" in provenance
+    assert "46/72" in provenance
+    assert "66.524" in provenance
+    assert "12/12 far-range" in provenance
+    assert "population reliability" in provenance
+    assert "K=2: 0.3990" in provenance
+    assert "K=3: 0.6010" in provenance
+    assert "K=2: 0.740" in provenance
+    assert "K=3: 0.260" in provenance
+    assert "finite data horizon" in provenance
+    assert "finite-particle" in provenance
     assert "as the verdict shows" not in model_story
     for page in current_asset_pages:
         text = page.read_text().casefold()
         assert "pre-remediation" not in text
         assert "pending task 11" not in text
         assert "asset regeneration remains pending" not in text
+
+
+PROVENANCE_VOCABULARY = (
+    "committed gif",
+    "committed png",
+    "packaged default",
+    "one-shot",
+    "certif",
+    "seed-block 400",
+    "400–411",
+    "population reliability",
+)
+
+
+@pytest.mark.parametrize(
+    "page",
+    sorted([ROOT / "site/index.qmd", *(ROOT / "site/story").glob("*.qmd")]),
+    ids=lambda page: page.name,
+)
+def test_story_pages_leave_provenance_to_the_reproducibility_page(
+    page: Path,
+) -> None:
+    text = " ".join(page.read_text().casefold().split())
+
+    for phrase in PROVENANCE_VOCABULARY:
+        assert phrase not in text, f"{page.name} carries provenance text: {phrase!r}"
+
+
+def test_landing_page_links_to_the_figure_provenance_section() -> None:
+    landing = (ROOT / "site/index.qmd").read_text()
+    provenance = (ROOT / "site/reproduce/reproducibility.qmd").read_text()
+
+    assert "reproduce/reproducibility.qmd#sec-figures" in landing
+    assert "{#sec-figures}" in provenance
