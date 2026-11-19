@@ -333,6 +333,55 @@ def test_descending_model_ks_is_rejected() -> None:
     _invalid(meta, arrays, "model_ks")
 
 
+HUGE = 10**400  # an integer too large for a float: math.isfinite overflows
+NAN = float("nan")
+BAD_META = [
+    ("demo_1d", "seed", -1, "meta.seed"),
+    ("demo_1d", "n_observations", 0, "meta.n_observations"),
+    ("demo_1d", "n_particles", 0, "meta.n_particles"),
+    ("demo_1d", "noise_std", NAN, "meta.noise_std"),
+    ("demo_1d", "noise_std", HUGE, "meta.noise_std"),
+    ("demo_1d", "track_offset", float("inf"), "meta.track_offset"),
+    ("demo_1d", "track_offset", HUGE, "meta.track_offset"),
+    ("demo_1d", "param_names", [], "meta.param_names"),
+    ("demo_1d", "param_names", ["x", 1], "meta.param_names"),
+    ("demo_1d", "param_names", "xM", "meta.param_names"),
+    ("demo_1d", "prior_ranges", [[-8.0, 8.0]], "meta.prior_ranges"),
+    ("demo_1d", "prior_ranges", [[-8.0, 8.0], [0.15, 0.005]], "meta.prior_ranges"),
+    ("demo_1d", "prior_ranges", [[-8.0, 8.0], [0.005, 0.005]], "meta.prior_ranges"),
+    ("demo_1d", "prior_ranges", [[-8.0, 8.0], [0.005, NAN]], "meta.prior_ranges"),
+    ("demo_1d", "prior_ranges", [[-8.0, 8.0], [0.005, HUGE]], "meta.prior_ranges"),
+    ("demo_1d", "controls", "systematic", "meta.controls"),
+    ("demo_1d", "created_with", [], "meta.created_with"),
+    ("demo_1d", "kind", ["filter"], "meta.kind"),
+    ("demo_1d", "kind", {"a": 1}, "meta.kind"),
+    ("demo_model_comparison", "true_k", 0, "meta.true_k"),
+    ("demo_model_comparison", "true_k", 2.5, "meta.true_k"),
+    ("demo_model_comparison", "prior_ranges", [[-8.0, 8.0]], "meta.prior_ranges"),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "field", "value", "fragment"),
+    [
+        pytest.param(*case, id=f"{case[0]}-{case[1]}-{i}")
+        for i, case in enumerate(BAD_META)
+    ],
+)
+def test_bad_meta_field_is_rejected(
+    name: str, field: str, value: object, fragment: str
+) -> None:
+    meta, arrays = FIXTURES[name]()
+    meta[field] = value
+    _invalid(meta, arrays, re.escape(fragment))
+
+
+def test_non_positive_model_ks_is_rejected() -> None:
+    meta, arrays = model_fixture()
+    arrays["model_ks"] = np.array([0, 1], I8)
+    _invalid(meta, arrays, "model_ks")
+
+
 def test_cloud_size_must_match_meta() -> None:
     meta, arrays = filter_fixture()
     meta["cloud_size"] = 4
@@ -401,7 +450,9 @@ def test_meta_must_be_one_string(raw: np.ndarray, tmp_path: Path) -> None:
 
 def test_an_npy_payload_is_a_value_error(tmp_path: Path) -> None:
     path = tmp_path / "plain.npz"
-    np.save(path, np.zeros(3))
+    # np.save(path, ...) would append .npy and write elsewhere; a handle does not.
+    with path.open("wb") as handle:
+        np.save(handle, np.zeros(3))
     with pytest.raises(ValueError, match=re.escape(str(path))):
         load_replay(path)
 

@@ -167,7 +167,7 @@ def _fail(source: str, key: str, expected: str, got: object) -> None:
 
 def _check_meta(meta: Mapping[str, object], source: str) -> None:
     kind = meta.get("kind")
-    if kind not in _KIND_META_KEYS:
+    if not isinstance(kind, str) or kind not in _KIND_META_KEYS:
         _fail(source, "meta.kind", "'filter' or 'model_comparison'", repr(kind))
     _check_meta_key_set(meta, _COMMON_META_KEYS | _KIND_META_KEYS[kind], source)
     if meta["format"] != FORMAT:
@@ -241,8 +241,7 @@ def _is_ordered_pair(pair: object) -> bool:
     if not isinstance(pair, (list, tuple)) or len(pair) != 2:
         return False
     low, high = pair
-    numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in pair)
-    return numbers and math.isfinite(low) and math.isfinite(high) and low < high
+    return _is_finite_number(low) and _is_finite_number(high) and low < high
 
 
 def _check_int(value: object, key: str, source: str, minimum: int) -> None:
@@ -250,12 +249,17 @@ def _check_int(value: object, key: str, source: str, minimum: int) -> None:
         _fail(source, key, f"an integer >= {minimum}", repr(value))
 
 
+def _is_finite_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # an integer too large for a float
+        return False
+
+
 def _check_finite_number(value: object, key: str, source: str) -> None:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-    ):
+    if not _is_finite_number(value):
         _fail(source, key, "a finite number", repr(value))
 
 
