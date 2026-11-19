@@ -114,15 +114,18 @@ If any differs, stop and report; do not commit the files.
 
 - [ ] **Step 2: Write the failing tests**, added to `tests/test_style.py`:
 
-- `test_style_applies_theme_and_restores` (each theme): set `plt.rcParams` to sentinel values first (`figure.facecolor="#123456"`, `axes.edgecolor="#654321"`, `text.color="#abcdef"`, `font.family=["monospace"]`). Inside `with style(theme) as colors:` assert `colors == palette(theme)`, `rcParams["figure.facecolor"] == colors.background`, `rcParams["axes.edgecolor"] == colors.rule`, `rcParams["text.color"] == colors.ink`, `rcParams["font.family"] == ["Source Sans 3"]`, `rcParams["figure.figsize"] == [7.5, 4.2]`, `rcParams["figure.autolayout"] is False`, and the colour cycle is exactly `[colors.ink]`. After the block all four sentinels are back.
+Every test in this step that changes rcParams runs inside its own `with matplotlib.rc_context():` block, so a test that fails cannot leak settings into the next. The colour cycle is read with `plt.rcParams["axes.prop_cycle"].by_key()["color"]`.
+
+- `test_style_applies_theme_and_restores` (each theme): set `plt.rcParams` to sentinel values first (`figure.facecolor="#123456"`, `axes.edgecolor="#654321"`, `text.color="#abcdef"`, `font.family=["monospace"]`, and a colour cycle of `["#010203"]`). Inside `with style(theme) as colors:` assert `colors == palette(theme)`, `rcParams["figure.facecolor"] == colors.background`, `rcParams["axes.edgecolor"] == colors.rule`, `rcParams["text.color"] == colors.ink`, `rcParams["font.family"] == ["Source Sans 3"]`, `rcParams["figure.figsize"] == [7.5, 4.2]`, `rcParams["figure.autolayout"] is False`, and the colour cycle is exactly `[colors.ink]`. After the block all five sentinels are back.
 - `test_style_restores_when_the_block_raises` (each theme): same sentinels, raise `RuntimeError` inside the block, catch it outside, assert the sentinels are back.
 - `test_nested_style_restores_the_outer_theme`: inside `style("light")` enter `style("dark")`; after the inner block `rcParams["figure.facecolor"] == palette("light").background`.
 - `test_style_rejects_unknown_theme`: parametrized over `"sepia"` and `"Light"`; `ValueError` whose message contains the bad value, `"light"` and `"dark"`; and rcParams are unchanged afterwards.
 - `test_bundled_fonts_are_registered_once`: after `with style("light"): pass`, collect `font_manager.fontManager.ttflist` entries whose `fname` lies under `Path(clocks._style.__file__).parent / "_fonts"`. Assert there are exactly two, both `name == "Source Sans 3"`, with weights `{400, 600}`. Enter `style("dark")` and assert the count is still two. Assert `font_manager.findfont(FontProperties(family="Source Sans 3", weight=w), fallback_to_default=False)` succeeds for `w` in `(400, 600)`.
 - `test_missing_font_file_is_reported`: monkeypatch the module's font directory constant to an empty `tmp_path` and reset its registered flag; entering `style("light")` raises `FileNotFoundError` whose message contains `SourceSans3-Regular.ttf`.
+- `test_a_partly_missing_font_set_registers_nothing`: point the font directory at a `tmp_path` holding a copy of the Regular file only, reset the flag, and record `len(font_manager.fontManager.ttflist)`. Entering `style("light")` raises `FileNotFoundError` naming `SourceSans3-Semibold.ttf`, and the list length is unchanged.
 - `test_show_emits_the_authored_canvas`: replace `IPython.display.display` with a recorder (monkeypatch). With `plt.rcParams["savefig.bbox"] = "tight"` set, inside `style("light")` create `fig, ax = plt.subplots()`, plot one line, call `show(fig)`. Assert one recorded call; its argument is an `IPython.display.Image` with `retina` true whose PNG bytes decode (use `matplotlib.image.imread(io.BytesIO(...))`) to shape `(840, 1500, 4)` or `(840, 1500, 3)`, with no pixel whose alpha is below 1 when an alpha channel exists; `image.width == 750` and `image.height == 420`; and `plt.fignum_exists(fig.number)` is false.
 - `test_show_scales_with_figure_size_and_dpi`: a `plt.figure(figsize=(5, 3), dpi=120)` figure gives a 1200 by 720 PNG declared 600 by 360.
-- `test_show_explains_a_missing_ipython`: monkeypatch `sys.modules["IPython.display"]` to `None` (which makes the import raise); `show(fig)` raises `ImportError` whose message contains `"IPython"`.
+- `test_show_explains_a_missing_ipython`: monkeypatch `sys.modules["IPython.display"]` to `None` (which makes the import raise); `show(fig)` raises `ImportError` matching `clocks\.viz\.show needs IPython`. (The raw import error already contains the word "IPython", so matching less would pass without the translation.)
 
 - [ ] **Step 3: Run them and confirm they fail** on the missing names.
 
@@ -131,7 +134,7 @@ Run: `uv run pytest tests/test_style.py -q`
 - [ ] **Step 4: Implement in `src/clocks/_style.py`:**
 
 - `_FONT_DIR: Path` (the `_fonts` directory beside the module) and `_FONT_FILES = ("SourceSans3-Regular.ttf", "SourceSans3-Semibold.ttf")`.
-- `_register_fonts() -> None`: on first call, add each file with `font_manager.fontManager.addfont`; raise `FileNotFoundError(f"bundled font missing: {path}")` if a file does not exist; do nothing on later calls. Keep the "already registered" state in a module-level flag the test can reset.
+- `_register_fonts() -> None`: on first call, check that every file exists, raising `FileNotFoundError(f"bundled font missing: {path}")` for the first that does not, before adding any; then add each with `font_manager.fontManager.addfont`; do nothing on later calls. Keep the "already registered" state in a module-level flag the test can reset.
 - `style(theme)`: validate the theme through `palette(theme)` before touching anything, call `_register_fonts()`, then `with matplotlib.rc_context(rc): yield colors`, where `rc` is the spec's `BASE` block plus the per-theme keys listed under it. The colour cycle is `cycler(color=[colors.ink])`.
 - `show(fig)`: import `Image` and `display` from `IPython.display` inside the function, converting `ImportError` to `ImportError("clocks.viz.show needs IPython; it is meant for Jupyter and Quarto cells")`. Save to a `BytesIO` inside `rc_context({"savefig.bbox": None})` with `format="png"`, `dpi=2 * fig.dpi`, `bbox_inches=None`, `transparent=False`, `facecolor=fig.get_facecolor()`. Close the figure with `plt.close(fig)`. Display `Image(data=..., retina=True)`.
 
@@ -139,12 +142,12 @@ Nothing in the module calls `matplotlib.use`.
 
 - [ ] **Step 5: Re-export** the five names from `src/clocks/viz.py` and add them to `__all__`.
 
-- [ ] **Step 6: Packaging.** In `pyproject.toml` set `license = "MIT AND OFL-1.1-RFN"` and `license-files = ["LICENSE", "src/clocks/_fonts/LICENSE.md"]`. Extend `scripts/check_wheel_entrypoints.py` so that, for the wheel it is given, it also fails unless the archive contains `clocks/_fonts/SourceSans3-Regular.ttf`, `clocks/_fonts/SourceSans3-Semibold.ttf` and `clocks/_fonts/LICENSE.md`, and unless running `python -c "from clocks.viz import style; cm = style('light'); cm.__enter__(); cm.__exit__(None, None, None)"` in the installed environment exits 0. Read the script first and follow its existing structure and error style.
+- [ ] **Step 6: Packaging.** In `pyproject.toml` set `license = "MIT AND OFL-1.1-RFN"` and `license-files = ["LICENSE", "src/clocks/_fonts/LICENSE.md"]`. Extend `scripts/check_wheel_entrypoints.py` so that, for the wheel it is given, it also fails unless the archive contains `clocks/_fonts/SourceSans3-Regular.ttf`, `clocks/_fonts/SourceSans3-Semibold.ttf` and `clocks/_fonts/LICENSE.md`, and unless running `python -c "from clocks.viz import style; cm = style('light'); cm.__enter__(); cm.__exit__(None, None, None)"` in the installed environment exits 0. It also fails unless the wheel's `.dist-info/licenses/` holds both `LICENSE` and `src/clocks/_fonts/LICENSE.md`, and unless `METADATA` carries `License-Expression: MIT AND OFL-1.1-RFN` and a `License-File:` line for each of the two. Read the script first and follow its existing structure and error style: it already builds a temporary environment and has a `_run` helper and a `scripts_directory / python_name` path, which the new command uses. CI already calls the script and needs no change.
 
 - [ ] **Step 7: Verify.**
 
 Run: `uv run pytest tests/test_style.py -q` — all pass.
-Run: `uv lock --check` — the lockfile is still current (a licence change does not alter resolution; if it reports stale, run `uv lock` and include the lockfile).
+Run: `uv lock --check` — the lockfile is still current. A licence change alters no dependency input, so if this reports stale, find out why before refreshing anything, and report it.
 Run: `uv build && uv run python scripts/check_wheel_entrypoints.py dist/*.whl python3` — exits 0. Then delete nothing from `dist/`; it is ignored by git.
 Run the full gate.
 
@@ -189,23 +192,38 @@ Tests:
   - `test_cell_draws_through_the_style_and_show`: the cell contains `for theme in THEMES:`, `with style(theme) as`, and `show(fig)`.
   - `test_cell_has_no_unstyled_colour_or_display`: none of these regular expressions match the cell: `plt\.show\(`, `\bcmap\s*=`, `["']tab:\w+["']`, `["'](steelblue|lightcoral|red|black|gray|grey)["']`.
 
-- [ ] **Step 2: Run it.** `test_plot_pages_are_exactly_the_known_nine` passes already; the per-page tests fail for all nine pages.
+- [ ] **Step 2: Run it.** `test_plot_pages_are_exactly_the_known_nine` passes already. The rendering, caption and style-and-show tests fail for all nine pages. The forbidden-pattern test fails for seven; `clocks-as-gravimeters` and `how-many-masses` use no named colours today and pass it from the start.
 
 - [ ] **Step 3: Convert each cell**, following the spec's "Two renderings per plot" pattern, its "Per-plot colour assignments" table, and its four "Declared changes". For every cell:
 
 - Add `THEMES, style, show` to the cell's imports via `from clocks.viz import THEMES, show, style`.
 - Replace `#| fig-cap: "..."` with the two-entry list form.
-- Keep all simulation, inference and `print` calls above the theme loop, unchanged.
+- Keep all simulation, inference and `print` calls above the theme loop, unchanged. Several cells also compute what they plot while drawing it (the `clock_rates` calls on the gravimeter, one-clock and two-mass pages, the Gaussian rates on `beyond-point-masses`, the per-observation series on `how-many-masses`). Move that computation above the loop into plain arrays, so the loop only draws.
 - Draw inside `for theme in THEMES:` / `with style(theme) as colors:`, give every data artist an explicit colour from `colors`, and end the block with `show(fig)`. Remove `plt.close(fig)` and the trailing bare `fig`.
 - Heights other than the default: `the-search-in-one-dimension` and `the-particle-filter` (two stacked panels) use `figsize=(7.5, 5.4)`; `into-the-plane` (equal aspect) uses `figsize=(7.5, 5.4)`. All others use the default.
 - End labels are placed with `ax.annotate` at the last data point, offset 6 points right, vertically centred, in the series colour; widen the x-limit enough that the label is not clipped.
 
+Per-page details:
+
+| Page | Detail |
+|---|---|
+| `clocks-as-gravimeters` | Read the lower y-limit after drawing the three curves and before adding the reference line. The upper limit is `1 + 0.05 * (max_rate - min_rate)` across all three curves. The line at 1 is solid, in `colors.rule`. |
+| `one-clock-is-not-enough` | The page's first cell only prints and stays as it is. In the plotting cell the two series keep their joining lines, with circle and square markers, and the legend shows those markers. |
+| `the-search-in-one-dimension` | Each panel's truth label is anchored at `steps[-1]` in data coordinates; `axhline` spans axes fractions, so its own x-data cannot be used. |
+| `into-the-plane` | The weights are no longer passed to the scatter. The ring and the crosshair are one legend entry. Remove the existing `fontsize=8` on the legend so the style's size applies. |
+| `two-hidden-masses` | The legend entries show the circle and square markers. Today the labels belong to the dense, markerless curves. |
+| `how-many-masses` | The legend is replaced by three end labels; the K = 2 label reads `K = 2 (true model)`. |
+| `beyond-point-masses` | Keeps its legend. Widths 0.5 and 2.0 take `ordered[0]` and `ordered[2]`. |
+| `gravitational-echolocation` | Both lines are labelled directly. Read the log y-limits after drawing the signal and the noise line, shade from the lower limit to the noise level in `colors.threshold` at alpha 0.12, then set the limits back. |
+| `the-particle-filter` | The ESS axis runs from 0 to `pf.n_particles`. The target is labelled on its line. The stage plot keeps `where="mid"` and gets integer ticks. |
+
 Caption wording that must change (both list entries, identically):
 
 - `into-the-plane`: "The surviving hypotheses after 25 observations. Dots are particles; the ring and crosshair mark the true mass position."
-- `two-hidden-masses`: replace "(dots)" with "(marked)" in the existing caption; nothing else.
+- `two-hidden-masses`: replace "at the five clock positions (dots)" with "at the five marked clock positions" in the existing caption; nothing else.
+- `the-search-in-one-dimension`: replace "Dashed lines mark the truth" with "Solid lines mark the truth"; nothing else.
 - `gravitational-echolocation`: "The differential signal an exterior mass leaves on the head, vs range. The dashed line is the noise of a single observation, and the shaded region lies below it; the sense must work in the shrinking gap above."
-- `how-many-masses`, `the-search-in-one-dimension`, `clocks-as-gravimeters`, `one-clock-is-not-enough`, `beyond-point-masses`, `the-particle-filter`: wording unchanged.
+- `how-many-masses`, `clocks-as-gravimeters`, `one-clock-is-not-enough`, `beyond-point-masses`, `the-particle-filter`: wording unchanged.
 
 - [ ] **Step 4: Run the tests** and confirm all pass. `uv run pytest tests/test_site_figure_style.py tests/test_generated_assets.py tests/test_site_prose_contract.py -q`
 
@@ -231,17 +249,22 @@ For each of the nine pages, open the two PNGs Quarto wrote under `site/_output/<
 
 - [ ] **Step 1: Write the failing tests** `tests/test_check_site_figures.py`, building small HTML files under `tmp_path` in the shape Quarto emits (a `div` with class `cell-output cell-output-display light-content` containing a `figure` with an `img` carrying `width`, `height` and `src`, and a `figcaption`; the same with `dark-content`). Import the script the way `tests/test_site_prose_contract.py` imports `check_site_links`.
 
-- `test_a_well_formed_page_passes`: one light and one dark image, 750 by 420, different `src`, equal captions: `figure_failures` reports nothing for that page.
-- One test per defect, each asserting exactly one failure message that names the page: the dark image missing; two light images; a width of 597; a height other than the page's expected height; identical `src` in both wrappers; a caption missing from the dark wrapper; captions that differ.
-- `test_a_missing_page_is_a_failure`: an expected page absent from the output directory is reported, not skipped.
+Each test monkeypatches the script's expected-pages constant down to the one page it builds, so the other eight being absent from `tmp_path` is not what it measures. Each defect fixture differs from the well-formed page in exactly one respect; in particular the image-count fixtures keep both captions. The image files the fixture references are created as small distinct files.
+
+- `test_a_well_formed_page_passes`: one light and one dark image, 750 by 420, different existing `src` files, equal captions (include inline `<code>` inside the caption, as the two-mass caption has): `figure_failures` returns an empty list.
+- One test per defect, each asserting exactly one failure whose message names the page and states the reason: the dark image missing; two light images; a width of 597; a height other than the page's expected height; the same `src` in both wrappers; a `src` that does not exist on disk; no `figcaption` in the dark wrapper; two `figcaption`s in one wrapper; captions whose text differs.
+- `test_a_missing_page_is_a_failure`: with the constant left at one expected page and no file written, the page is reported as missing.
 
 - [ ] **Step 2: Run them and confirm they fail.**
 
-- [ ] **Step 3: Implement** with the standard library's `html.parser`, as `scripts/check_site_links.py` does. The expected pages and heights are a module constant: the nine pages, height 420 except `story/the-search-in-one-dimension.html`, `story/into-the-plane.html` and `method/the-particle-filter.html` at 540. Count only images inside a `light-content` or `dark-content` wrapper, so the committed GIFs and PNGs on the same pages are ignored.
+- [ ] **Step 3: Implement** with the standard library's `html.parser`, as `scripts/check_site_links.py` does. The expected pages and heights are a module constant: the nine pages, height 420 except `story/the-search-in-one-dimension.html`, `story/into-the-plane.html` and `method/the-particle-filter.html` at 540. Count only images inside a `light-content` or `dark-content` wrapper, so the committed GIFs and PNGs on the same pages are ignored. A caption's text is everything inside its `figcaption`, including text within nested tags, with whitespace collapsed. Each `src` is resolved relative to the page and must exist; the two must be different files.
 
-- [ ] **Step 4: Run the tests** and confirm they pass. Then run the script on the real render from Task 3:
+- [ ] **Step 4: Run the tests** and confirm they pass. Then render the site in this worktree (`site/_output` is ignored by git, so no earlier render is present) and run both checks from the repository root:
 
+Run: `cd site && uv run --frozen quarto render && cd ..` — exits 0.
+Run: `uv run python scripts/check_site_links.py` — both contracts OK.
 Run: `uv run python scripts/check_site_figures.py` — prints `Figure contract OK: 9 pages checked.`
+Run: `quarto --version` and note the version in the commit message.
 
 - [ ] **Step 5: Gate the deployment.** In `.github/workflows/site.yml`, after the "Render site" step and before the upload, add a step named "Check rendered site" that runs `uv run --frozen python scripts/check_site_links.py` and then `uv run --frozen python scripts/check_site_figures.py` from the repository root.
 
@@ -249,9 +272,10 @@ Run: `uv run python scripts/check_site_figures.py` — prints `Figure contract O
 
 - [ ] **Step 7: Phone and contact-sheet checks.** These produce evidence for the pull request, not test code.
 
-- Put every output under the scratch directory the coordinator names in the dispatch, and commit none of them.
+- Put every output under the scratch directory the coordinator names in the dispatch (if none is named, a new directory under the system temporary directory), and commit none of them.
 - Load each of the nine pages in a 390-pixel-wide iframe served from `site/_output` (headless Chrome will not lay out a window narrower than about 500 pixels, so a `--window-size=390` screenshot crops instead of reflowing). For each page record `document.documentElement.scrollWidth` and whether any image is wider than its container. All must be 390 and none.
-- Build one contact sheet image per theme containing the nine plots at full size, and one at 390 pixels wide, with ImageMagick (`magick montage`).
+- Build four contact sheets with ImageMagick (`magick montage`): the nine plots at full size in the light theme, the same in the dark theme, and each of those again with every plot resized to 390 pixels wide.
+- Return to the coordinator the four sheet paths and the per-page phone measurements. The coordinator inspects the sheets against each cell's source and attaches them to the pull request.
 
 - [ ] **Step 8: Run the full gate, re-render, re-run both site checks, then commit and push** with message `Check the rendered figures and gate the deployment on the site checks`.
 
@@ -259,14 +283,14 @@ Run: `uv run python scripts/check_site_figures.py` — prints `Figure contract O
 
 ### Task 5: Mutation checks
 
-No files change. This task proves the new tests can fail. Work in the task's own worktree; set `PYTHONDONTWRITEBYTECODE=1`; delete every `__pycache__` before each mutant; confirm `git status --porcelain` is empty before and after each; run the whole suite (`uv run pytest -q`) for each mutant, in the foreground.
+No files change. This task proves the new tests can fail. Work in the task's own worktree; set `PYTHONDONTWRITEBYTECODE=1`; delete every `__pycache__` before each mutant; confirm `git status --porcelain` is empty before and after each; apply each mutant and restore it in a `try`/`finally`; run the whole suite including the slow tests (`uv run pytest -q -m ''`) for each mutant, in the foreground with a 600000 ms timeout.
 
 | Mutation | Tests that must fail, and no others |
 |---|---|
 | `palette("dark")` returns the light palette | `test_themes_differ_in_every_role` |
 | Light `ordered[0]` changed to `#a9cbe6` | `test_data_colours_clear_three_to_one[light]` |
 | `style()` yields without `rc_context` (sets rcParams directly, never restores) | `test_style_applies_theme_and_restores[light]`, `[dark]`, `test_style_restores_when_the_block_raises[light]`, `[dark]`, `test_nested_style_restores_the_outer_theme` |
-| Unknown-theme message drops `THEMES` | `test_palette_rejects_unknown_theme[sepia]`, `[Light]`, `test_style_rejects_unknown_theme[sepia]`, `[Light]` |
+| Unknown-theme message names only `'light'`, not both themes | `test_palette_rejects_unknown_theme[sepia]`, `[Light]`, `test_style_rejects_unknown_theme[sepia]`, `[Light]` |
 | `show()` passes `bbox_inches="tight"` | `test_show_emits_the_authored_canvas`, `test_show_scales_with_figure_size_and_dpi` |
 | `_register_fonts()` registers on every call | `test_bundled_fonts_are_registered_once` |
 | Remove `#| renderings: [light, dark]` from `story/one-clock-is-not-enough.qmd` | `test_cell_declares_both_renderings[story/one-clock-is-not-enough.qmd]` |
