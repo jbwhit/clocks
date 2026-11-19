@@ -120,8 +120,9 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
         assert expected_hash in report
     # The exact protocol record lives on the Reproducibility page; the story
     # pages state the results in plain words and link there. Each result is
-    # matched as a whole sentence, with its numbers computed from the
-    # certification artifact, so an edit inside the sentence cannot pass.
+    # matched as a whole sentence, so an edit inside the sentence cannot pass.
+    # The pass counts, the overall total and the std ratio are computed from
+    # the certification artifact; the 12/12 figures and factor 20 are literals.
     pass_counts, total, std_ratio = _certified_range_summary()
     assert pass_counts == "12, 12, 11, 8, 3, 0"
     assert (

@@ -31,7 +31,7 @@ masses; $c$ indexes clocks ($r_c$).
 
 | Symbol | Meaning | Where introduced |
 |---|---|---|
-| $\sigma_{\text{obs}}$ | Observation noise standard deviation (0.005 in the demos); written plain $\sigma$ on the inference pages | [One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd) |
+| $\sigma_{\text{obs}}$ | Observation noise standard deviation (0.005 in the demos, 0.001 on the echolocation page); written plain $\sigma$ on the inference pages | [One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd) |
 | $N$ | Number of particles in the filter's cloud | [The Particle Filter](the-particle-filter.qmd) |
 | $w_i$ | Weight of particle $i$ (weights sum to one) | [The Particle Filter](the-particle-filter.qmd) |
 | $\theta_i$ | Particle $i$'s full parameter hypothesis, e.g. $(x, M)$ | [The Particle Filter](the-particle-filter.qmd) |

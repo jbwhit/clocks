@@ -100,9 +100,13 @@ result = infer(
     ),
 )
 
-print(result.best_model)
-print(result.posterior_by_model)
+print(f"best model: K = {result.best_model}")
+print(f"posterior over K: {result.posterior_by_model}")
 ```
+
+At this budget the choice between two and three masses is sensitive to the
+inference seed, so read `best_model` as one run's answer; see
+[How Many Masses?](../story/how-many-masses.qmd).
 
 For fixed-K inference, pass an integer to `n_masses`; to drive the filter
 observation-by-observation (e.g. for animation), use

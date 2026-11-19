@@ -40,7 +40,7 @@ the clocks only see the tick rates the summed potential produces:
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them. At the five clock positions (dots), the curves nearly agree — the filter must live off the small residuals."
+#| fig-cap: "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The curves look alike, but at the five clock positions (dots) they differ by up to about three times the observation noise."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
@@ -71,12 +71,14 @@ plt.close(fig)
 fig
 ```
 
-The five clocks each expose a small rate-profile disagreement between these
-configurations, and repeated independent observations can compound that
-information. No single reading need be decisive.
+The curves are close by eye, yet the clocks separate them quickly: at
+$x = 0$ the two configurations differ by nearly three noise standard
+deviations in a single reading, and repeated independent observations
+compound that information.
 
 ::: {.callout-note title="The question behind the question"}
-If two masses can imitate one this well, how would you ever know *how many*
-masses are out there? Fixing the number in advance was quietly cheating.
+One mass turns out to be a poor impostor for two. But could three pose as
+two? How would you ever know *how many* masses are out there? Fixing the
+number in advance was quietly cheating.
 The [next page](how-many-masses.qmd) stops cheating.
 :::

@@ -4,10 +4,12 @@ title: "Beyond Point Masses"
 
 ## From particles to fields
 
-Real gravitational anomalies are rarely points — ore bodies, voids,
-aquifers, anything extended. The same machinery handles them: replace the
+Real gravitational anomalies are rarely points — ore bodies, dense
+intrusions, anything extended. The same machinery handles them: replace the
 point-mass forward model with one that integrates the potential over a
-continuous profile. Here, a Gaussian density with three parameters —
+continuous profile. Here that profile is a Gaussian *line* density, mass per
+unit length spread along the hidden track, never negative, with three
+parameters —
 center $\mu$, width $\sigma$ (the profile's own width here, not the
 [observation noise](../method/notation-and-glossary.qmd#term-sigma-obs) from earlier pages), and peak amplitude $A$ — and the
 identical particle filter on top.

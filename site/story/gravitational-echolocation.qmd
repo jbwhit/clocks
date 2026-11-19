@@ -198,11 +198,13 @@ Markdown("\n".join(lines))
 Earth passes immediately. The vertical gradient across her own head is
 $1.1\times10^{-17}$. Laboratory clocks have resolved the same
 gravitational-redshift effect across a single millimeter, about
-$1.1\times10^{-19}$ — so a minute or two of stillness gives her *down*,
-permanently and unambiguously.
+$1.1\times10^{-19}$. The table's sitting time is how long she must average
+before the signal equals her clocks' noise, so a confident detection takes
+about ten times longer: a minute or two of stillness brings *down* level with
+the noise, and a quarter of an hour makes it unmistakable.
 
 The Sun is stranger. Hovering motionless at 1 AU the signal exists, and
-seven patient years would statistically resolve it — but it sits two
+seven patient years would bring it level with the noise — but it sits two
 orders of magnitude beneath today's systematic floor, so that sense waits
 on the next generation of clocks. And from a chair on Earth the problem
 changes in kind, not just degree: the Earth free-falls around the Sun,

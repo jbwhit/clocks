@@ -49,7 +49,7 @@ result = infer(sim.observations, InferenceConfig(
 x, m = result.posterior_mean
 sx, sm = result.posterior_std
 print(f"Hidden mass: x = {x:.2f} ± {sx:.2f} (true 2.5)")
-print(f"             M = {m:.2f} ± {sm:.2f} (true 0.10)")
+print(f"             M = {m:.3f} ± {sm:.3f} (true 0.100)")
 ```
 
 ## Read the idea in eight pages
