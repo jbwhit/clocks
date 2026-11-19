@@ -405,12 +405,12 @@ check ran anywhere automatically.
 ### Mutation checks
 
 Each mutation is applied in turn with bytecode caching off and the tree
-confirmed clean between mutants, and the whole suite is run. The plan names,
-for each mutation, the test IDs expected to fail; the result must be exactly
-that set, no more and no fewer. Most mutations have one expected test. Two
-legitimately have two: breaking rcParams restoration fails both the
-normal-exit and the exception-exit test, and a shared error message fails the
-invalid-theme test for both `palette()` and `style()`.
+confirmed clean between mutants, and the whole suite is run. The plan's
+mutation task names, for each mutation, the exact test IDs expected to fail;
+the result must be exactly that set, no more and no fewer. Several mutations
+legitimately fail more than one test, because the same behaviour is checked
+per theme or on both exit paths; the plan's table is the authority on the
+expected sets.
 
 - return the light palette for both themes;
 - lighten `ordered[0]` in one theme to fail 3:1;
