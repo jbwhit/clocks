@@ -199,6 +199,18 @@ def test_an_absolute_image_path_is_outside_the_site(tmp_path: Path) -> None:
     assert target.is_file()
 
 
+def test_a_percent_encoded_absolute_path_is_outside_the_site(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    target = site / "story" / "demo_files" / "dark.png"
+    encoded = "%2F" + target.as_posix().removeprefix("/")
+    _single_failure(_build(site, dark=[(encoded, 750)]), "image is outside the site")
+    assert target.is_file()
+
+
+def test_a_malformed_image_url_is_a_failure(tmp_path: Path) -> None:
+    _single_failure(_build(tmp_path, dark=[("//[bad", 750)]), "image URL is malformed")
+
+
 def test_an_image_path_escaping_the_site_is_outside_it(tmp_path: Path) -> None:
     site = tmp_path / "site"
     (tmp_path / "outside.png").write_bytes(b"outside")

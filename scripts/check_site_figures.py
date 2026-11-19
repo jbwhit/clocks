@@ -195,13 +195,18 @@ def _resolve_source(
     percent-escapes are decoded. The file must be referenced relative to the
     page and lie inside the site, so the deployed page can load it.
     """
-    url = urlsplit(src)
-    if url.scheme or url.netloc or url.path.startswith("/"):
+    try:
+        url = urlsplit(src)
+    except ValueError:
+        return None, f"image URL is malformed: {src!r}"
+    path = unquote(url.path)
+    # The decoded path is checked too: %2F decodes to a leading slash.
+    if url.scheme or url.netloc or path.startswith("/"):
         return None, f"image is outside the site: {src!r}"
-    resolved = (page_path.parent / unquote(url.path)).resolve()
+    resolved = (page_path.parent / path).resolve()
     if not resolved.is_relative_to(output_dir.resolve()):
         return None, f"image is outside the site: {src!r}"
-    if not url.path or not resolved.is_file():
+    if not path or not resolved.is_file():
         return None, f"image {src!r} does not exist"
     return resolved, ""
 
