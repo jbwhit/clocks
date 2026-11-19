@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+, NumPy, SciPy, pytest, uv, ruff, GitHub Actions.
 
-**Status:** Draft, in review. Revised after plan review round 1 (Codex xhigh on `0312f71`: "NOT SOUND ENOUGH TO IMPLEMENT", seven findings, all folded in).
+**Status:** Approved for implementation. Codex xhigh round 2, on `dd818c2`: "SOUND ENOUGH TO IMPLEMENT", with small notes that this revision folds in (the empty-file case, the scripted double's literals, the scale test's form, three echolocation artists, and the hand-over list). Round 1, on `0312f71`, returned "NOT SOUND ENOUGH TO IMPLEMENT" with seven findings, all folded in.
 
 **Spec:** `docs/plans/2026-11-19-replay-and-animation-design.md`, sections 1 to 3 and item 1 of section 11. Read them before any task. Where this plan and the spec disagree, the spec wins and the disagreement is a plan bug to report. This plan covers pull request 1 only; nothing here draws a figure that is merged.
 
@@ -171,7 +171,7 @@ Rejected arrays: each of the next twelve raises `ValueError`, and where a test n
 - `test_meta_must_decode_to_an_object` (IDs `null`, `list`, `number`): the filter fixture written plainly with `meta=np.array("null")`, `np.array("[1]")`, `np.array("3")` raises `ValueError` naming `meta`. (`json.loads("null")` succeeds and returns `None`: measured.)
 - `test_meta_must_be_one_string` (IDs `integers`, `two_strings`): `meta=np.array([1, 2])` and `meta=np.array(["a", "b"])` raise naming `meta`.
 - `test_an_npy_payload_is_a_value_error`: a file written with `np.save` raises `ValueError` containing its path. (`np.load` returns a bare ndarray there, which a `with` statement turns into `TypeError`: measured.)
-- `test_an_unreadable_file_is_a_value_error`: a file holding `b"not a zip"` raises `ValueError` containing its path.
+- `test_an_unreadable_file_is_a_value_error` (IDs `not_a_zip`, `empty`): a file holding `b"not a zip"`, and a zero-byte file, each raise `ValueError` containing the path. (`np.load` raises `EOFError` on a zero-byte file: measured in review.)
 - `test_an_unreadable_member_is_a_value_error`: the filter fixture written plainly with `mean` replaced by `np.array([{"a": 1}], dtype=object)` raises `ValueError` containing the path and `mean`. (Reading that member raises only when it is accessed: measured.)
 - `test_save_requires_an_npz_path`: `save_replay(tmp_path / "x", ...)` raises `ValueError` and `list(tmp_path.iterdir()) == []`.
 - `test_save_refuses_an_invalid_replay`: a fixture with `mean` removed raises before any file exists.
@@ -181,7 +181,7 @@ Rejected arrays: each of the next twelve raises `ValueError`, and where a test n
 - [ ] **Step 3: Implement.** Decisions the tests do not settle:
 
 - `meta` is serialized with `json.dumps(meta, ensure_ascii=False, sort_keys=True)` into `np.array(text)` under the key `meta`.
-- `load_replay` calls `np.load(path, allow_pickle=False)`, requires the result to be an `NpzFile`, requires a `meta` member that is a 0-d array of kind `U` decoding to a `dict`, reads every member into memory and closes the file before returning. Failures to open (`ValueError`, `OSError`, `zipfile.BadZipFile`) become `ValueError(f"{path}: not a replay archive: {error}")`; a failure reading one member becomes `ValueError(f"{path}: {key}: unreadable: {error}")`.
+- `load_replay` calls `np.load(path, allow_pickle=False)`, requires the result to be an `NpzFile`, requires a `meta` member that is a 0-d array of kind `U` decoding to a `dict`, reads every member into memory and closes the file before returning. Failures to open (`ValueError`, `OSError`, `EOFError`, `zipfile.BadZipFile`) become `ValueError(f"{path}: not a replay archive: {error}")`; a failure reading one member becomes `ValueError(f"{path}: {key}: unreadable: {error}")`.
 - Every validation message has the form `f"{source}: {key}: expected {expected}, got {got}"`, where `key` is an array key or `meta.<field>`.
 - Required `meta` keys, exactly: `format`, `version`, `demo`, `kind`, `seed`, `n_observations`, `n_particles`, `noise_std`, `track_offset`, `param_names`, `prior_ranges`, `controls`, `created_with`; plus `cloud_size` for kind `filter` and `true_k` for kind `model_comparison`. `kind` is `model_comparison` for `demo_model_comparison` and `filter` for the other six.
 - Sizes: `C, D = clock_positions.shape` with `D == SPATIAL_DIMENSIONS[demo]`, checked before anything is derived from it; `T = n_observations`; `P = len(param_names)`; `m = cloud_size`, which must equal `cloud.shape[1]` and be at most `min(500, n_particles)`; `K = len(model_ks)`. `prior_ranges` has `P` pairs for kind `filter` and two (positions, masses) for `model_comparison`, each with `lo < hi`.
@@ -230,14 +230,14 @@ Rejected arrays: each of the next twelve raises `ValueError`, and where a test n
 
 The moment tests use a double, `ScriptedFilter(states, diagnostics, log_evidence)`, with exactly the surface `record_filter` may read: `n_particles` (the length of the first state's weights); `history`, a list that starts as `[states[0]]`; `state`, a property returning `history[-1]`; `diagnostics_history` and `log_evidence_history`, lists that start empty; and `update(observation)`, which appends the next prepared state, diagnostics entry and log evidence and returns the new state. It has no `rng`.
 
-The scripted history has N = 5 particles, P = 2 and three states: the prior with uniform weights, then weights `[0.1, 0.2, 0.3, 0.25, 0.15]` and `[0.05, 0.4, 0.05, 0.3, 0.2]`. Particles are literals whose second column is correlated with the first, different in each state. Diagnostics are `UpdateDiagnostics(3, 24, 6)` and `UpdateDiagnostics(1, 8, 3)`; log evidence `[5.0, 11.0]`; two `Observation`s with two clocks. "The real run" below is two filters from `build_particle_filter` with the `demo_1d` constants at 64 particles, both seeded 42, and three observations from `simulate`; one goes through `record_filter` with `predict=pf.forward_model_batch`, the other is updated in a plain loop.
+The scripted history has N = 5 particles, P = 2 and three `ParticleState`s with `observations_seen` 0, 1 and 2: the prior with uniform weights, then weights `[0.1, 0.2, 0.3, 0.25, 0.15]` and `[0.05, 0.4, 0.05, 0.3, 0.2]`. Their particles, in order, are `[[-4.0, 0.02], [-2.0, 0.05], [0.0, 0.08], [2.0, 0.11], [4.0, 0.14]]`, `[[0.1, 0.050], [0.2, 0.055], [0.4, 0.060], [0.5, 0.066], [0.7, 0.070]]` and `[[0.42, 0.0480], [0.47, 0.0495], [0.50, 0.0500], [0.53, 0.0512], [0.58, 0.0520]]`. Diagnostics are `UpdateDiagnostics(3, 24, 6)` and `UpdateDiagnostics(1, 8, 3)`; log evidence `[5.0, 11.0]`; two `Observation`s with two clocks. "The real run" below is two filters from `build_particle_filter` with the `demo_1d` constants at 64 particles, both seeded 42, and three observations from `simulate`; one goes through `record_filter` with `predict=pf.forward_model_batch`, the other is updated in a plain loop.
 
 - `test_thin_picks` (IDs `unequal`, `uniform_7_3`, `uniform_4_4`, `tie`), with `particles = np.arange(N, dtype=float)[:, None]` so a row's value is its index. Each result is float32 with shape `(len(expected), 1)`. All four measured.
   - weights `[0.1, 0.2, 0.0, 0.3, 0.4]`, `size=5` → `[1, 3, 3, 4, 4]` (offset 0.5 gives `[0, 1, 3, 4, 4]`);
   - seven uniform weights, `size=3` → `[1, 3, 6]` (offset 0.5 gives `[1, 3, 5]`);
   - four uniform weights, `size=4` → `[0, 1, 2, 3]`;
   - weights `[φ/2, 0.0, 1 − φ/2]`, `size=2` → `[0, 2]`: the first target equals the first step exactly, and `side="right"` gives `[2, 2]`.
-- `test_thin_ignores_the_scale_of_the_weights`: the first case with weights multiplied by 0.5 gives the same picks. (Without the division, indexing raises: measured.)
+- `test_thin_ignores_the_scale_of_the_weights`: for the first case's weights `w`, `thin(particles, 0.5 * w, 5)` is `np.array_equal` to `thin(particles, w, 5)`. The test compares the two calls and states no expected picks, so a wrong offset does not fail it. (Without the division, indexing raises: measured.)
 - `test_thin_is_capped_by_the_particle_count`: four particles, `size=500` → four rows.
 - `test_thin_rejects_unusable_weights` (IDs `negative`, `all_zero`): `ValueError` for `[0.5, -0.1, 0.6]` and `[0.0, 0.0, 0.0]`.
 - `test_moments_match_an_independent_calculation`: for every row, `mean` and the whole of `cov` equal values the test computes with explicit sums (`m = Σ wᵢxᵢ / Σ wᵢ`; `cov = Σ wᵢ (xᵢ−m)(xᵢ−m)ᵀ / Σ wᵢ`), `rtol=1e-12`; and `abs(cov[1][0, 1]) > 0`.
@@ -415,7 +415,7 @@ No tracked file changes. This task finds out, before any archive is committed, w
 |---|---|---|
 | `demo_1d` | cloud in (x, M) | dots `cloud[k]`; truth mark `true_params`; ellipse `mean[k]`, `cov[k]`; axes `prior_ranges`; zoom inset window `true_params`, `mean[-1]`, `cov[-1]` |
 | | clock strip | squares `clock_positions` |
-| | slowing at each clock | true tick `1 − true_rates`; predicted bar `predicted_mean[k]`, `predicted_std[k]`; running mean of `observations[:k]` with bar `meta.noise_std / √k` |
+| | slowing at each clock | all three marks are slowings, `1 − rate`: true tick `1 − true_rates`; predicted bar `1 − predicted_mean[k]` with `predicted_std[k]`; `1 −` the running mean of `observations[:k]` with bar `meta.noise_std / √k` |
 | | traces x, M | line and band `mean`, `cov` diagonal; truth line `true_params`; header numbers from the same |
 | `demo_2d` | map | dots; truth; ellipse; inset; clock squares `clock_positions` filled by the running mean of `1 − observations[:k]` |
 | | traces x, y, M | as above |
@@ -425,11 +425,11 @@ No tracked file changes. This task finds out, before any archive is committed, w
 | `demo_multi_mass_2d` | map, both masses | two dot sets; two truth marks; **both** ellipses; ten filled clocks |
 | | six traces | as above |
 | `demo_model_comparison` | posterior lines | one line per `model_ks` entry from `model_posterior[:k+1]`, starting at row 0; a label gutter with a connector from each line's head to its label; "(true model)" on the `meta.true_k` line |
-| `demo_echolocation_3d` | close view | clocks `clock_positions`; dots of `cloud[k]` inside `view_bounds`; truth ring `true_params` |
+| `demo_echolocation_3d` | close view | cube wireframe from `view_bounds`; clocks `clock_positions`; dots of `cloud[k]` inside `view_bounds`; truth ring `true_params` with its drop-line to the cube floor (`view_bounds[0]`) |
 | | whole prior box | all dots of `cloud[k]` on x and z over `prior_ranges`; square `view_bounds` |
 | | weight in view | text from `weight_in_view[k]` |
 | | traces x, y, z, M | as above |
-| | observed against fitted | 27 points: running mean of `observations[:k]` against `predicted_mean[k]`; empty at k = 0 |
+| | observed against fitted | 27 points: running mean of `observations[:k]` against `predicted_mean[k]`; the equal-values diagonal, with limits from those two arrays; empty of points at k = 0 |
 | `demo_density` | profile | true curve from `true_params`; pointwise median and 68% band of A·exp(−(x−μ)²/2σ²) over `cloud[-1]`; clock squares `clock_positions` |
 | | traces μ, σ, A | as above |
 
@@ -658,7 +658,7 @@ jobs:
 
 - [ ] **Step 4: Tests pass; full gate; commit and push** as `Report on every push whether the runner reproduces the replays, without gating`.
 
-- [ ] **Step 5: Hand over to the coordinator.** The coordinator opens the pull request, marks it ready, and for one attempt of the run on the reviewed head verifies three artifacts, each a non-empty report whose `head:` line is that head, and no warning annotation. The three reports and the macOS comparison (`uv run python scripts/record_replays.py --out <scratch> --compare assets/replays`) go into the pull request's description.
+- [ ] **Step 5: Hand over to the coordinator.** The coordinator opens the pull request, marks it ready, and for one attempt of the run on the reviewed head verifies three artifacts, each a non-empty report whose `head:` line is that head, and no warning annotation. The three reports, the macOS comparison (`uv run python scripts/record_replays.py --out <scratch> --compare assets/replays`), Task 7's contact sheets with its pass-or-fail table, and the 0.10 probe's numbers go into the pull request's description, as the spec's sequencing section requires.
 
 ---
 
