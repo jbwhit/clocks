@@ -13,6 +13,8 @@ on:
       - "scripts/check_site_*.py"
       - "pyproject.toml"
       - "uv.lock"
+      # check_site_links.py reads README.md for its link contract.
+      - "README.md"
       - ".github/workflows/site.yml"
       - ".github/workflows/site-check.yml"
 
