@@ -20,7 +20,10 @@ conditioned on every actual support rule:
 - every candidate satisfies the project's $|2\Phi| \le 0.1$ weak-field
   policy at every clock.
 
-Initialization rejection-samples from that normalized conditional prior.
+Initialization rejection-samples from that normalized conditional prior. For
+several masses it draws exchangeable position–mass pairs and sorts the pairs
+by first spatial coordinate, so each mass stays attached to its
+position.
 Proposals outside it have log density $-\infty$; they are rejected rather
 than clipped, reflected, sorted, or repaired. A directly constructed
 `ParticleFilter` likewise requires a `prior_sampler` and

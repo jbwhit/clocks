@@ -12,22 +12,18 @@ problem gets qualitatively harder, not merely bigger.
 
 ![Two masses in 2D: ten randomly placed clocks, six unknowns.](../assets/demo_multi_mass_2d.gif)
 
-Both committed GIFs are current packaged default outputs from the corrected
-SMC implementation. Each depicts one named finite realization, not a
-population recovery rate.
+Each animation is one simulated run, not a success rate.
 
 ## Label switching — an honest limitation
 
 "Mass 1" and "mass 2" are *our* labels; the physics doesn't care. A
 hypothesis with the masses swapped predicts identical clock rates, so the
 true [posterior](../method/notation-and-glossary.qmd#term-posterior) is perfectly bimodal — and the mean of a bimodal cloud lands
-meaninglessly between the modes. The library instead represents the
-normalized ordered version of the exchangeable prior: initial position-mass
-pairs are sorted together by the first spatial coordinate (so $x_1 < x_2$ in
-this notation). During
-[rejuvenation](../method/the-particle-filter.qmd#sec-resampling), a proposal
-that crosses that strict boundary is rejected. Sorting proposals after they
-are drawn would obscure the proposal density and is not used.
+meaninglessly between the modes. The library breaks the tie by naming the
+masses in order of their $x$-coordinate, so that $x_1 < x_2$ always, and the
+filter's
+[moves](../method/the-particle-filter.qmd#sec-resampling) never cross that
+line.
 
 What this does **not** solve: when the two masses nearly share an
 x-coordinate, the sort boundary slices right through the posterior, and
@@ -44,7 +40,7 @@ the clocks only see the tick rates the summed potential produces:
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them. At the five clock positions (dots), the curves nearly agree — the filter must live off the small residuals."
+#| fig-cap: "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The curves look alike, but at the five clock positions (dots) they differ by up to about three times the observation noise."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
@@ -75,12 +71,16 @@ plt.close(fig)
 fig
 ```
 
-The five clocks each expose a small rate-profile disagreement between these
-configurations, and repeated independent observations can compound that
-information. No single reading need be decisive.
+The curves are close by eye, yet at $x = 0$ this pair and this combined
+mass differ by nearly three noise standard deviations in a single reading. A
+better-placed single mass comes closer across the array, so one noisy
+observation need not settle the question. Repeated independent observations
+from all five clocks make the remaining difference easier to resolve.
 
 ::: {.callout-note title="The question behind the question"}
-If two masses can imitate one this well, how would you ever know *how many*
-masses are out there? Fixing the number in advance was quietly cheating.
+This combined mass is a poor impostor for this pair. A better-chosen one
+would be harder to catch, and so would three masses posing as two. How would
+you ever know *how many* masses are out there? Fixing the number in advance
+was quietly cheating.
 The [next page](how-many-masses.qmd) stops cheating.
 :::

@@ -21,13 +21,7 @@ summed Newtonian potentials and a pedagogical weak-field rate map, a
 [inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
 and a series of increasingly hard detection puzzles.
 
-![Current 2D inference demo showing the physical setup, particle cloud, parameter traces, and observed tick rates.](assets/demo_2d.gif)
-
-::: {.callout-note title="Generated-evidence status"}
-The committed GIFs and PNGs were regenerated from the corrected physics and
-SMC implementation after one-shot certification. They show named finite runs;
-they do not establish population reliability or universal recovery rates.
-:::
+![One simulated run: a particle filter localizing a hidden mass on a plane from clock rates alone. Clockwise from top left: the physical setup, the cloud of surviving hypotheses, the convergence of the estimates, and the observed tick rates.](assets/demo_2d.gif)
 
 Here is the whole round trip — simulate noisy clock readings near a hidden
 mass, then recover it:
@@ -55,7 +49,7 @@ result = infer(sim.observations, InferenceConfig(
 x, m = result.posterior_mean
 sx, sm = result.posterior_std
 print(f"Hidden mass: x = {x:.2f} ± {sx:.2f} (true 2.5)")
-print(f"             M = {m:.2f} ± {sm:.2f} (true 0.10)")
+print(f"             M = {m:.3f} ± {sm:.3f} (true 0.100)")
 ```
 
 ## Read the idea in eight pages
@@ -79,4 +73,6 @@ print(f"             M = {m:.2f} ± {sm:.2f} (true 0.10)")
    reaches.
 
 Or jump to [Getting Started](reproduce/getting-started.qmd) to run
-everything yourself.
+everything yourself. Every animation here is a single simulated run;
+[Reproducibility](reproduce/reproducibility.qmd#sec-figures) records where
+each figure came from and what it does and does not establish.

@@ -33,13 +33,14 @@ independent measurements — could split the difference.
 Each additional clock at a different position samples the potential
 somewhere else. One clock pins down $M/r$; several clocks pin down how the
 field *falls off*, and the falloff is what separates distance from mass.
-Triangulation, by time dilation. This time the clocks also sit at a small
-perpendicular offset (`track_offset=1.0`) from the line the mass lives on
-— a geometry the next page makes standard.
+Triangulation, by time dilation. This time the clocks also sit at a
+perpendicular offset (`track_offset=2.0`) from the line the mass lives on,
+which keeps every clock far enough from both candidate masses for the
+weak-field model to apply. Later pages keep an offset of this kind.
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Across a 5-clock array the two configurations are no longer twins: the nearby light mass produces a sharper, more localized dip in tick rates than the distant heavy one."
+#| fig-cap: "Across a 5-clock array the two configurations are no longer twins. The heavy mass's dip is deeper and extends farther to the right, so the five readings differ."
 import matplotlib.pyplot as plt
 
 positions = np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]])
@@ -61,12 +62,13 @@ fig
 ```
 
 With the clocks lifted off the track, even the $x = 0$ reading is no
-longer shared — and the other four clocks disagree more strongly. The
+longer shared — and the clocks at $x = 3$ and $x = 6$, on the side where
+the masses sit, disagree about five times more strongly. The
 disagreement carries the information.
 
 ::: {.callout-note title="The noise floor"}
-With [observation noise $\sigma$](../method/notation-and-glossary.qmd#term-sigma-obs), the array can only distinguish
-configurations whose rate profiles differ by more than roughly $\sigma$.
+With [observation noise $\sigma$](../method/notation-and-glossary.qmd#term-sigma-obs), rate differences smaller than $\sigma$ are hard to see in a single
+reading.
 That is why every demo on this site feeds the filter *many* noisy
 observations rather than one perfect one: each new reading shrinks the set
 of worlds consistent with the data. How to do that shrinking honestly is
