@@ -41,8 +41,10 @@ Two workflows run on GitHub Actions:
 ## Where the committed figures come from {#sec-figures}
 
 The story pages show these figures without commentary on their origin. This
-section is the single record of where each came from and what it does and
-does not establish.
+section summarizes where each came from and what it does and does not
+establish; the
+[development calibration report](https://github.com/jbwhit/clocks/blob/main/docs/2026-08-16-development-calibration.md)
+records the generating commit and the asset hashes.
 
 **Demo animations and the density figure.** Each committed GIF, and the
 density PNG, is the packaged default output of its `uv run demo-*` command,
@@ -63,8 +65,9 @@ from the corrected contrast-space SMC release, not a re-render of the current
 code. Its differential-rates panel draws the forward model evaluated at the
 posterior mean; the code now plots the posterior mean of the particles' own
 predictions, so that panel will change when the assets are next regenerated.
-It is one fixed-seed visualization at the closest, most favorable range, not
-a reliability measurement.
+It places the mass at two circumradii along a fixed off-axis direction, and
+is one fixed-seed visualization at the closest, most favorable range, not a
+reliability measurement.
 
 **Model-comparison runs.** The committed GIF on
 [How Many Masses?](../story/how-many-masses.qmd) is the packaged default run:
@@ -76,11 +79,14 @@ evidence supplied by the noisy realization, and a different finite-particle
 budget changes the Monte Carlo estimate of that evidence. The split between
 two and three masses also moves substantially with the inference seed at
 these budgets, so neither number is a claim about which model generated the
-data.
+data. Comparing models responsibly means examining data horizon,
+particle-count, and seed sensitivity rather than reading one run's extra
+decimal places as certainty.
 
 **Echolocation range study.** The range harness behind the figure on the
 [echolocation page](../story/gravitational-echolocation.qmd) sweeps the
-declared circumradius grid and records position error, mass error, posterior
+declared circumradius grid along the same fixed off-axis direction as the
+animation, at one fixed mass, and records position error, mass error, posterior
 standard deviations, coverage, residuals, SMC controls, and forward-model
 evaluation counts. Development seeds 0–11 selected the controls by the
 declared ranking
@@ -100,7 +106,9 @@ as a diagnostic rather than promoted after inspection into a new gate.
 The completed protocol guards against tuning directly to the reported holdout,
 but its fixed seeds provide regression and calibration evidence only for those
 simulated cases. It does not estimate population reliability or justify a
-universal pass probability.
+universal pass probability. Any claimed sensing horizon must therefore be
+attached to a stated noise model, prior, particle budget, SMC controls, pass
+rule, and finite seed set, not promoted to a property of the population.
 
 The protected fixed-seed results establish deterministic regression cases,
 not a population reliability estimate. SMC evidence is similarly a

@@ -14,10 +14,12 @@ by-product of running, and that estimate carries sampling noise of its own.
 
 ![One simulated run: posterior probability over K=1, 2, 3 as 80 observations accumulate. Truth is K=2.](../assets/demo_model_comparison.gif)
 
-One mass is ruled out by the first observation. Between two and three the
-run never settles, and it ends at about 40% for two masses and 60% for three:
-leaning the wrong way. That is one run's answer from finite data and a finite
-particle cloud, not evidence that there are three masses.
+One mass is all but ruled out by the first observation. Three masses lead at
+first, two take over around the tenth observation, and from about the
+twentieth three stay narrowly ahead: the run ends at about 40% for two masses
+and 60% for three, leaning toward the wrong answer. That is one run's
+estimate from finite data and a finite particle cloud, a weak preference
+rather than a verdict.
 
 ## Occam's razor, automatic
 
@@ -81,7 +83,7 @@ fig
 ::: {.callout-note title="Two runs, two answers"}
 This smaller run ends near 74% for two masses; the animation at the top of
 the page ends near 40%. They differ in how much data they saw and in how many
-particles estimated the evidence, and rerunning either with a different
-random seed moves the split between two and three by a similar amount. Read
-both as "at least two, possibly three", not as a verdict.
+particles estimated the evidence, and changing only the inference seed can
+move the split between two and three by tens of percentage points. Among the
+three counts compared, read both runs as "not one; two or three unresolved".
 :::

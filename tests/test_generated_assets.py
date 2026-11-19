@@ -3,6 +3,7 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+from statistics import median
 
 import pytest
 
@@ -74,6 +75,25 @@ def test_certified_range_json_matches_raw_hash_and_tracked_records() -> None:
     }
 
 
+def _certified_range_summary() -> tuple[str, str, str]:
+    """Pass counts by range, overall total, and far/close median std ratio."""
+    study = json.loads(
+        (ROOT / "docs/calibration/echolocation_range_certification.json").read_text()
+    )
+    runs_by_range = [
+        [run for run in study["results"] if run["range_r"] == range_r]
+        for range_r in study["ranges"]
+    ]
+    counts = [sum(run["passed"] for run in runs) for runs in runs_by_range]
+    close_std = median(run["pos_std"] for run in runs_by_range[0])
+    far_std = median(run["pos_std"] for run in runs_by_range[-1])
+    return (
+        ", ".join(str(count) for count in counts),
+        f"{sum(counts)}/{len(study['results'])}",
+        f"{far_std / close_std:.3f}",
+    )
+
+
 def test_current_prose_identifies_corrected_assets_and_honest_model_results() -> None:
     report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
     echo_story = (ROOT / "site/story/gravitational-echolocation.qmd").read_text()
@@ -97,11 +117,14 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     for expected_hash in EXPECTED_VISUAL_HASHES.values():
         assert expected_hash in report
     # The exact protocol record lives on the Reproducibility page; the story
-    # pages state the results in plain words and link there.
-    assert "12, 12, 11, 8, 3, 0" in echo_story
-    assert "12, 12, 11, 8, 3, 0" in provenance
-    assert "46/72" in provenance
-    assert "66.524" in provenance
+    # pages state the results in plain words and link there. The numbers are
+    # computed from the certification artifact, so prose cannot drift from it.
+    pass_counts, total, std_ratio = _certified_range_summary()
+    assert pass_counts == "12, 12, 11, 8, 3, 0"
+    assert pass_counts in echo_story
+    assert pass_counts in provenance
+    assert total in provenance
+    assert std_ratio in provenance
     assert "12/12 far-range" in provenance
     assert "population reliability" in provenance
     assert "K=2: 0.3990" in provenance

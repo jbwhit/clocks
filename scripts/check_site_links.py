@@ -258,6 +258,14 @@ CONTRACT: list[tuple[str, str, str, str | None]] = [
         "method/notation-and-glossary.html",
         "term-prior",
     ),
+    # Provenance lives on the Reproducibility page; the story links to it
+    ("content", "index.html", "reproduce/reproducibility.html", "sec-figures"),
+    (
+        "content",
+        "story/gravitational-echolocation.html",
+        "reproduce/reproducibility.html",
+        "sec-figures",
+    ),
 ]
 
 _VOID = {

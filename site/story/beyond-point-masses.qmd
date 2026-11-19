@@ -12,7 +12,7 @@ center $\mu$, width $\sigma$ (the profile's own width here, not the
 [observation noise](../method/notation-and-glossary.qmd#term-sigma-obs) from earlier pages), and peak amplitude $A$ — and the
 identical particle filter on top.
 
-![The density demo. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
+![The density demo, one simulated run. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
 
 ## What spreading the mass does to clocks
 

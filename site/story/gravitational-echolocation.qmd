@@ -97,11 +97,13 @@ different random seeds. A run passes if it recovers the position to within
 ![Resolution against range. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, and dashed lines are the filter's own uncertainty (posterior standard deviation).](../assets/echolocation_range_study.png)
 
 Pass counts out of twelve, from closest to farthest: 12, 12, 11, 8, 3, 0.
-Close in, the sense is sharp; by eight circumradii it has gone. Over the same
-span the filter's own position uncertainty grows about 66-fold, and at the
-farthest range the truth still lies within three posterior standard
-deviations in all twelve runs. The head loses the mass, and its error bars
-say so.
+Close in, the sense is sharp; at eight circumradii none of the twelve runs
+places the mass within one clock spacing, though all twelve still recover its
+mass within tolerance. Over the same span the filter's median position
+uncertainty grows about 66-fold, and at the farthest range the truth still
+lies within three posterior standard deviations, coordinate by coordinate and
+in mass, in all twelve runs. The head loses track of where the mass is, and
+its error bars say so.
 
 These are 72 simulated runs under one noise level, one prior and one particle
 budget, not a general success rate;
