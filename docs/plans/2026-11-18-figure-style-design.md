@@ -430,7 +430,8 @@ invalid-theme test for both `palette()` and `style()`.
 
 ## Risks
 
-- **Font files in the wheel** add roughly 0.6 MB and a second licence. The
+- **Font files in the wheel** add about 0.9 MB (431 kB and 426 kB) and a
+  second licence. The
   alternative, registering the font only if present, leaves the site's CI
   build needing the files anyway.
 - **The two-rendering behaviour depends on the Quarto version.** An older local
