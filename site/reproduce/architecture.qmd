@@ -29,6 +29,7 @@ flowchart TB
         animate["_animate"]
         panels["_panels"]
         panels3d["_panels3d"]
+        figstyle["_style, _fonts/"]
     end
     subgraph scenarios["Scenario tooling"]
         scenario["_scenarios"]
@@ -61,6 +62,7 @@ flowchart TB
     viz --> animate
     viz --> panels
     viz --> panels3d
+    viz --> figstyle
     animate --> inference
     animate --> physics
     animate --> panels
@@ -84,7 +86,8 @@ weak-field forward models; `_support` defines the conditional prior support
 used before those strict models are called. `inference` implements adaptive
 tempered resample-move SMC, and `api` connects it to configuration, simulation,
 physics, noise, and result objects. `viz` is the public facade over private
-animation and panel modules. `_scenarios` and `_echo_study` provide shared
+animation and panel modules and the shared figure style (`_style`, with its
+bundled fonts). `_scenarios` and `_echo_study` provide shared
 builders and reporting for demos, scans, and tests.
 
 The seven `[project.scripts]` entries in `pyproject.toml` point directly to

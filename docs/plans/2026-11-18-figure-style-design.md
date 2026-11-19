@@ -100,8 +100,10 @@ def show(fig: Figure) -> None: ...
   `style()` is entered, not at import, so importing `clocks.viz` does not
   change the process's font registry for existing callers. Registration is
   idempotent. Nothing in the module selects a matplotlib backend.
-- `show(fig)` renders the figure to PNG at twice its logical dpi (the figure's dpi divided by the canvas's device pixel ratio, which is 1 except under interactive HiDPI backends), closes it, and
-  displays it with `IPython.display.Image(..., retina=True)`. The save is made
+- `show(fig)` renders the figure to PNG at twice its logical dpi (the figure's
+  dpi divided by the canvas's device pixel ratio, which is 1 except under
+  interactive HiDPI backends), closes it, and displays it with
+  `IPython.display.Image(..., retina=True)`. The save is made
   inside `rc_context({"savefig.bbox": None})` with `bbox_inches=None`,
   `transparent=False` and the figure's own face colour, so an inherited
   `savefig.bbox: tight` cannot crop it. IPython is imported inside the
@@ -225,6 +227,7 @@ BASE = {
     "axes.spines.right": False,
     "axes.linewidth": 0.8,
     "axes.grid": True,
+    "axes.axisbelow": True,
     "grid.linewidth": 0.8,
     "xtick.major.size": 3,
     "ytick.major.size": 3,
@@ -295,7 +298,7 @@ deployment and fails if a later Quarto changes the behaviour.
 | `two-hidden-masses` | tick rates predicted by the true pair: dense curve, circles at the clocks | `truth` | legend showing the markers |
 | | tick rates predicted by the single combined mass, a candidate: dense curve, squares at the clocks | `belief` | |
 | `how-many-masses` | K = 1, 2, 3 | `ordered[0..2]` lines | a label at each line's right end; K = 2 reads "K = 2 (true model)" |
-| `beyond-point-masses` | point mass | `ink` line | legend |
+| `beyond-point-masses` | point mass | `ink` line | a label at the point mass's minimum; legend for the two Gaussians |
 | | Gaussians, narrow then wide | `ordered[0]`, `ordered[2]` lines | |
 | `gravitational-echolocation` | differential signal, a forward-model curve | `ink` line | a label on each line |
 | | noise of one observation | dashed `threshold` line | |

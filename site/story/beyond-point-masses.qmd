@@ -46,7 +46,17 @@ for sigma in sigmas:
 for theme in THEMES:
     with style(theme) as colors:
         fig, ax = plt.subplots()
-        ax.plot(xs[:, 0], point_rates, label="point mass", color=colors.ink)
+        ax.plot(xs[:, 0], point_rates, color=colors.ink)
+        lowest = np.argmin(point_rates)
+        ax.annotate(
+            "point mass",
+            xy=(xs[lowest, 0], point_rates[lowest]),
+            xytext=(12, 0),
+            textcoords="offset points",
+            ha="left",
+            va="center",
+            color=colors.ink,
+        )
         for sigma, rates, color in zip(
             sigmas, gaussian_rates, (colors.ordered[0], colors.ordered[2])
         ):

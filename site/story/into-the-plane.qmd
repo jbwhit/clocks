@@ -64,7 +64,6 @@ true_x, true_y = truth.positions[0]
 for theme in THEMES:
     with style(theme) as colors:
         fig, ax = plt.subplots(figsize=(7.5, 5.4))
-        ax.set_axisbelow(True)
         cloud = ax.scatter(
             particles[:, 0], particles[:, 1],
             s=10, alpha=0.35, linewidths=0, color=colors.belief,
