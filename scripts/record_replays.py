@@ -21,6 +21,7 @@ import argparse
 import importlib
 import os
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -159,8 +160,31 @@ def _emit(text: str, report: Path | None) -> None:
     """Print the report, then write it; printed first, a failed write loses nothing."""
     print(text, end="")
     if report is not None:
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(text, encoding="utf-8")
+        _write_atomically(report, text)
+
+
+def _write_atomically(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` whole or not at all.
+
+    The text goes to a temporary file beside ``path`` that is then renamed over
+    it, so a reader never sees a partial report.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            handle.write(text)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)  # gone already once it has replaced path
 
 
 if __name__ == "__main__":

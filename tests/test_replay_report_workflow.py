@@ -140,15 +140,16 @@ def _last_script() -> str:
 
 
 def _run_last_step(
-    tmp_path: Path, report: str | None, upload_outcome: str
+    tmp_path: Path, report: str | None, upload_outcome: str, summary_name: str
 ) -> tuple[str, str]:
     if report is not None:
         (tmp_path / "replay-report.md").write_text(report, encoding="utf-8")
-    summary = tmp_path / "summary.md"
+    summary = tmp_path / summary_name
     bash = shutil.which("bash")
     assert bash is not None
     result = subprocess.run(
-        [bash, "-c", _last_script()],
+        # -e, as GitHub runs a step that names no shell: a failed command ends it.
+        [bash, "-e", "-c", _last_script()],
         cwd=tmp_path,
         env={
             "PATH": "/usr/bin:/bin",
@@ -164,26 +165,47 @@ def _run_last_step(
     return result.stdout, written
 
 
+_SUMMARY = "summary.md"
+_UNWRITABLE_SUMMARY = "no-such-directory/summary.md"
+
+
 @pytest.mark.parametrize(
-    ("report", "outcome", "in_stdout", "summary_has_report"),
+    ("report", "outcome", "summary_name", "in_stdout", "summary_has_report"),
     [
-        pytest.param("# report\nhead: abc\n", "success", None, True, id="shown"),
+        pytest.param(
+            "# report\nhead: abc\n", "success", _SUMMARY, None, True, id="shown"
+        ),
         pytest.param(
             "",
             "success",
+            _SUMMARY,
             "no report was written for sample 2",
             False,
             id="empty_report",
         ),
         pytest.param(
-            None, "success", "no report was written for sample 2", False, id="no_report"
+            None,
+            "success",
+            _SUMMARY,
+            "no report was written for sample 2",
+            False,
+            id="no_report",
         ),
         pytest.param(
             "# report\n",
             "failure",
+            _SUMMARY,
             "was not uploaded (failure)",
             True,
             id="upload_failed",
+        ),
+        pytest.param(
+            "# report\n",
+            "success",
+            _UNWRITABLE_SUMMARY,
+            "the report for sample 2 could not be added to the summary",
+            False,
+            id="summary_unwritable",
         ),
     ],
 )
@@ -191,10 +213,11 @@ def test_the_last_step_shows_or_warns(
     tmp_path: Path,
     report: str | None,
     outcome: str,
+    summary_name: str,
     in_stdout: str | None,
     summary_has_report: bool,
 ) -> None:
-    stdout, summary = _run_last_step(tmp_path, report, outcome)
+    stdout, summary = _run_last_step(tmp_path, report, outcome, summary_name)
     if in_stdout is None:
         assert "::warning" not in stdout
     else:

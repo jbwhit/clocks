@@ -1,7 +1,8 @@
 name: Replay report
 
 # Reports whether the runner reproduces each committed replay value for value.
-# Nothing here can fail a check; the tests that gate a merge are in ci.yml.
+# No step's failure fails the check; a job that hits its ten-minute timeout is
+# cancelled and shows as such. The tests that gate a merge are in ci.yml.
 on:
   push:
     branches: [main]
@@ -67,7 +68,7 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           if [ -s replay-report.md ]; then
-            cat replay-report.md >> "$GITHUB_STEP_SUMMARY"
+            cat replay-report.md >> "$GITHUB_STEP_SUMMARY" || echo "::warning title=Replay report::the report for sample $SAMPLE could not be added to the summary"
           else
             echo "::warning title=Replay report::no report was written for sample $SAMPLE"
           fi

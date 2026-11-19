@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import platform
 import subprocess
 import sys
@@ -329,6 +330,40 @@ def test_the_report_is_printed_before_it_is_written(
         )
 
     assert "run: " in capsys.readouterr().out
+
+
+def test_the_report_is_written_whole_and_leaves_nothing_beside_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = tmp_path / "reports" / "report.md"
+
+    record_replays.main(
+        ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+    )
+
+    assert [p.name for p in report.parent.iterdir()] == ["report.md"]
+    assert report.read_text(encoding="utf-8") == capsys.readouterr().out
+
+
+def test_a_failed_write_leaves_the_previous_report_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = tmp_path / "reports" / "report.md"
+    report.parent.mkdir()
+    report.write_text("the previous report\n", encoding="utf-8")
+
+    def interrupted(source: object, target: object) -> None:
+        raise OSError("interrupted before the rename")
+
+    monkeypatch.setattr(os, "replace", interrupted)
+
+    with pytest.raises(OSError, match="interrupted"):
+        record_replays.main(
+            ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+        )
+
+    assert report.read_text(encoding="utf-8") == "the previous report\n"
+    assert [p.name for p in report.parent.iterdir()] == ["report.md"]
 
 
 def test_a_numpy_without_build_config_gives_unknown_blas(
