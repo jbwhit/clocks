@@ -32,3 +32,24 @@ div.description {
 .mermaid-js .cluster rect {
   fill: transparent !important;
 }
+
+/* Phone widths. Plots drawn by executed cells carry a fixed pixel width and
+   no fluid class, so without this a narrow screen shows only their left part. */
+.cell-output-display img,
+.quarto-figure img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Long inline code (commands, dotted names) and display equations otherwise
+   push the whole page wider than the screen. Code wraps; equations scroll
+   inside their own box. */
+p code,
+li code {
+  overflow-wrap: anywhere;
+}
+mjx-container[display="true"] {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
