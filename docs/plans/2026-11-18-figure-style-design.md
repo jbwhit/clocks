@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-18
 
-**Status:** Draft, in review (revised after Codex round 1)
+**Status:** Draft, in review (revised after Codex rounds 1 and 2)
 
 **Source:** findings V2 and V4 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), and the visual reviewer's proposed system
@@ -74,9 +74,10 @@ class Palette:
     muted: str        # axis labels, tick labels, secondary text
     rule: str         # axis lines
     grid: str
-    truth: str        # the true value, wherever one is drawn
-    belief: str       # the filter's estimate: posterior line, band or cloud
-    belief_alt: str   # the second of two rival hypotheses
+    truth: str        # the true configuration, or what it predicts
+    belief: str       # an estimate or a candidate: the filter's posterior, or
+                      # a configuration proposed as an explanation of the data
+    belief_alt: str   # the second of two candidates
     threshold: str    # noise levels, targets, limits; always dashed
     ordered: tuple[str, str, str]   # an ordered family, least to most contrast
 
@@ -97,9 +98,11 @@ def show(fig: Figure) -> None: ...
   `style()` is entered, not at import, so importing `clocks.viz` does not
   change the process's font registry for existing callers. Registration is
   idempotent. Nothing in the module selects a matplotlib backend.
-- `show(fig)` renders the figure to PNG at twice its dpi with the figure's own
-  face colour and no bounding-box cropping, closes it, and displays it with
-  `IPython.display.Image(..., retina=True)`. IPython is imported inside the
+- `show(fig)` renders the figure to PNG at twice its dpi, closes it, and
+  displays it with `IPython.display.Image(..., retina=True)`. The save is made
+  inside `rc_context({"savefig.bbox": None})` with `bbox_inches=None`,
+  `transparent=False` and the figure's own face colour, so an inherited
+  `savefig.bbox: tight` cannot crop it. IPython is imported inside the
   function, because it is present only where notebooks run. One call makes
   exactly one display output. `plt.show()` is not used in page cells, because
   it displays every open figure and crops to a tight bounding box.
@@ -131,11 +134,16 @@ Measured WCAG contrast of each remaining swatch against its page:
 | Role | Light | Dark |
 |---|---:|---:|
 | ink | 13.39 | 14.45 |
-| muted, threshold | 5.91 | 7.53 |
+| muted, threshold | 5.92 | 7.53 |
 | truth | 4.54 | 5.08 |
 | belief | 4.96 | 5.04 |
-| belief_alt | 6.07 | 4.45 |
+| belief_alt | 6.07 | 4.44 |
 | ordered | 3.56, 4.96, 9.17 | 3.28, 5.04, 8.56 |
+| rule | 1.56 | 1.86 |
+| grid | 1.18 | 1.21 |
+
+`rule` and `grid` are furniture, not data, and are meant to be faint; the 3:1
+requirement does not apply to them.
 
 `ordered` runs from least to most contrast against the page in both themes, so
 index 0 is always the quietest line. A three-member family uses indices 0, 1,
@@ -147,14 +155,22 @@ Rules:
 - **Every data artist is given an explicit role colour.** The default colour
   cycle is the single colour `ink`, so a series that is left unstyled comes out
   neutral instead of borrowing a role.
-- **`truth` is used only for a true value**, drawn as a solid line or a
-  ring-and-crosshair marker.
-- **`belief` is what the filter estimates**: posterior lines, bands (the same
-  hue at low alpha) and particle clouds.
+- **`truth` is used only for the true configuration**: its value as a solid
+  line, its position as a ring-and-crosshair marker, or the tick rates it
+  predicts.
+- **`belief` is an estimate or a candidate**: the filter's posterior lines,
+  bands (the same hue at low alpha) and particle clouds, and equally a
+  configuration put forward as a possible explanation of the data. Where two
+  candidates are compared and neither is the truth, the second is
+  `belief_alt`.
+- **Filter diagnostics** (effective sample size, stage counts) and
+  forward-model curves that are neither a candidate nor a truth are `ink`.
 - **Thresholds are the only dashed lines**, in `threshold`.
 - **Hue is never the only distinction.** `truth`, `belief` and `belief_alt`
-  have similar luminance, so wherever two of them share an axes each series
-  also carries a direct text label, and point series use different markers.
+  have similar luminance, so wherever two of them share an axes the series are
+  also told apart by a direct text label or by different markers shown in a
+  legend. The per-plot table says which. Members of an `ordered` family differ
+  strongly in luminance, so a legend or end labels are enough for them.
 - No matplotlib named colour, `tab:` colour or colour map appears in a page's
   plotting cell.
 
@@ -162,7 +178,11 @@ Rules:
 
 - Figures use Source Sans 3. The site's body text requests "Source Sans Pro",
   the earlier name of the same family, so the two match closely; aligning the
-  web font is not part of this work. Two static TrueType files, Regular
+  web font is not part of this work. Bundling guarantees the family is
+  available wherever the library runs, including the site's build runner. It
+  does not guarantee which copy is used: on a machine that already has Source
+  Sans 3 installed, matplotlib may pick the installed copy, which is the same
+  design. Two static TrueType files, Regular
   (weight 400) and Semibold (weight 600), from the `3.052R` release of
   `adobe-fonts/source-sans`, are committed under `src/clocks/_fonts/` with the
   font's licence text beside them. The commit that adds them records each
@@ -236,8 +256,8 @@ for theme in THEMES:
         show(fig)
 ```
 
-Quarto (1.7 or later) wraps the two outputs in `light-content` and
-`dark-content` and shows the one matching the active theme. The caption must
+Quarto wraps the two outputs in `light-content` and `dark-content` and shows
+the one matching the active theme. The caption must
 be a two-entry list with identical entries. Tested with Quarto 1.9.32: a
 single `fig-cap` string is attached to the first output only, so it sits inside
 `light-content` and disappears in the dark theme; a two-entry list puts one
@@ -248,31 +268,34 @@ wrappers and is unaffected.
 Any computation a cell does (simulation, inference) and anything it prints
 stay outside the loop, so they happen once.
 
-The Getting Started page's prerequisites gain a line: rendering the site needs
-Quarto 1.7 or later. The deploy workflow installs Quarto's current release,
-which satisfies this.
+`renderings` arrived in Quarto 1.7, but the caption-list behaviour this design
+relies on was verified only on 1.9.32, so that is the stated minimum: the
+Getting Started page's prerequisites gain a line saying the site is rendered
+with Quarto 1.9 or later. The deploy workflow installs Quarto's current
+release, which is newer; the rendered-site check below runs there on every
+deployment and fails if a later Quarto changes the behaviour.
 
 ### Per-plot colour assignments
 
-| Page | Series | Colour and mark |
-|---|---|---|
-| `clocks-as-gravimeters` | three masses, smallest first | `ordered[0..2]`, each labelled at its right end |
-| `one-clock-is-not-enough` | near-light and far-heavy configurations (rival hypotheses) | `belief` with circles, `belief_alt` with squares; direct labels |
-| `the-search-in-one-dimension` | posterior mean and band, both panels | `belief` |
-| | truth, both panels | solid `truth` line |
-| `into-the-plane` | particle cloud | translucent `belief` dots |
-| | true position | `truth` ring and crosshair |
-| | clocks | `ink` squares, labelled once |
-| `two-hidden-masses` | the two true masses | `truth`, circles at the clocks |
-| | the single combined mass (a rival hypothesis) | `belief`, squares at the clocks |
-| `how-many-masses` | K = 1, 2, 3 | `ordered[0..2]`, labelled at the right end; K = 2 labelled "K = 2 (true model)" |
-| `beyond-point-masses` | point mass | `ink` |
-| | Gaussians, narrow then wide | `ordered[0]`, `ordered[2]` |
-| `gravitational-echolocation` | differential signal (a forward-model curve, neither estimate nor truth) | `ink` |
-| | observation noise level | dashed `threshold` |
-| `the-particle-filter` | final ESS | `belief` |
-| | ESS target | dashed `threshold` |
-| | tempering stages | `ink` step |
+| Page | Series | Colour and mark | Told apart by |
+|---|---|---|---|
+| `clocks-as-gravimeters` | three masses, smallest first | `ordered[0..2]` lines | a label at each line's right end |
+| `one-clock-is-not-enough` | near-light and far-heavy configurations, two candidates | `belief` line with circles, `belief_alt` line with squares, joined as now | legend showing the markers |
+| `the-search-in-one-dimension` | posterior mean and band, both panels | `belief` | |
+| | true value, both panels | solid `truth` line | a "truth" label at the line's right end in each panel |
+| `into-the-plane` | particle cloud | translucent `belief` dots | legend showing the three markers |
+| | true position | `truth` ring and crosshair | |
+| | clocks | `ink` squares | |
+| `two-hidden-masses` | tick rates predicted by the true pair: dense curve, circles at the clocks | `truth` | legend showing the markers |
+| | tick rates predicted by the single combined mass, a candidate: dense curve, squares at the clocks | `belief` | |
+| `how-many-masses` | K = 1, 2, 3 | `ordered[0..2]` lines | a label at each line's right end; K = 2 reads "K = 2 (true model)" |
+| `beyond-point-masses` | point mass | `ink` line | legend |
+| | Gaussians, narrow then wide | `ordered[0]`, `ordered[2]` lines | |
+| `gravitational-echolocation` | differential signal, a forward-model curve | `ink` line | a label on each line |
+| | noise of one observation | dashed `threshold` line | |
+| `the-particle-filter` | final ESS | `ink` line with points | axis label |
+| | ESS target | dashed `threshold` line | a label on the line |
+| | tempering stages | `ink` step | axis label |
 
 K = 2 is the model that generated the data; its curve is a posterior
 probability, not a true value, so it takes its place in the ordered family and
@@ -287,13 +310,17 @@ deliberate:
    show where particles are, which is what the plot is for. The caption
    changes from "colored by weight" to describe the surviving hypotheses'
    positions.
-2. **`clocks-as-gravimeters` gains a faint reference line at a rate of 1**, the
-   far-away value every curve approaches. The y-limits are set explicitly so
-   the line does not change how the curves fill the axes.
+2. **`clocks-as-gravimeters` gains a reference line at a rate of 1**, the
+   far-away value every curve approaches. It is a solid line in `rule`, since
+   dashes are reserved for thresholds. The upper y-limit is set to 1 plus 5% of
+   the plotted range, so the line sits visibly inside the frame; the lower
+   limit stays where matplotlib puts it for the curves alone.
 3. **`gravitational-echolocation` shades the region below the per-observation
-   noise level.** The shading is bounded by the axes' lower limit (the axis is
-   logarithmic) and is described in the caption as below the noise of a single
-   observation, not as a detection limit.
+   noise level**, in `threshold` at 12% opacity. The axis is logarithmic: the
+   y-limits the plot has before the shading is added are recorded and restored
+   after it, and the shading runs from the lower limit to the noise level. The
+   caption describes it as below the noise of a single observation, not as a
+   detection limit.
 4. **`the-particle-filter` runs its ESS axis from 0 to the particle count.** It
    starts near 320 today, which puts the target line on the frame. The stage
    count keeps its existing step drawing and gains integer ticks.
@@ -319,22 +346,26 @@ longer applies.
   to its starting value, both when the block completes and when it raises.
 - `palette()` and `style()` each raise `ValueError` for an unknown theme, and
   the message contains the bad value and both allowed values.
-- After entering `style()` once, the font manager's list contains exactly the
-  two bundled files (paths under the package's `_fonts` directory) for family
-  "Source Sans 3" at weights 400 and 600, and text created inside the block
-  resolves to one of those two files. Checking the bundled paths, not just the
-  family name, keeps a copy installed on the machine from satisfying the test.
-- `show(fig)` on a default figure produces one display call whose PNG is
-  1500 by 840 pixels with declared size 750 by 420, and closes the figure.
-  IPython's `display` is replaced by a recorder for the test.
+- After entering `style()` once, the font manager's list contains both bundled
+  files, identified by their paths under the package's `_fonts` directory, as
+  family "Source Sans 3" at weights 400 and 600; and a lookup of that family at
+  each weight with `fallback_to_default=False` succeeds. The path check is what
+  makes this fail if the files are not shipped or not registered, even on a
+  machine that has the family installed. Entering `style()` a second time adds
+  no further entries.
+- `show(fig)` on a default figure, called with `savefig.bbox` set to `"tight"`
+  in the surrounding rcParams, produces one display call whose PNG is exactly
+  1500 by 840 pixels, opaque, with declared size 750 by 420, and closes the
+  figure. IPython's `display` is replaced by a recorder for the test.
 
 ### Page source contract (`tests/test_site_figure_style.py`)
 
 The nine pages are listed explicitly. The test first asserts that the set of
 `.qmd` files under `site/` whose Python cells call `plt.subplots` or
-`plt.figure` is exactly those nine, so a new plotting page cannot escape it and
-the test cannot pass by collecting nothing. Then, per page, looking only inside
-executable Python cells:
+`plt.figure` is exactly those nine, so the test cannot pass by collecting
+nothing, and a new page that plots through either call is caught. A page that
+reached matplotlib some other way would not be; the rendered-site check is the
+backstop for that. Then, per page, looking only inside executable Python cells:
 
 - the plotting cell has `renderings: [light, dark]`, a two-entry `fig-cap`
   whose entries are identical, a call to `style(` and a call to `show(`;
@@ -352,9 +383,9 @@ A script in the manner of `scripts/check_site_links.py`, run on `site/_output`
 after rendering. For each of the nine pages it parses the HTML and asserts:
 
 - exactly one plot image inside a `light-content` wrapper and exactly one
-  inside a `dark-content` wrapper, each declared 750 pixels wide, and the two
-  image files differ;
-- the caption text appears once inside each wrapper.
+  inside a `dark-content` wrapper, each declared 750 pixels wide and of the
+  same declared height as the other, and the two image files differ;
+- exactly one `<figcaption>` inside each wrapper, with the same text in both.
 
 The deploy workflow runs this script and `scripts/check_site_links.py` after
 `quarto render` and before uploading, so a page that loses a rendering or a
@@ -363,13 +394,19 @@ check ran anywhere automatically.
 
 ### Mutation checks
 
-Each of these is applied in turn and must turn exactly one test red, with
-bytecode caching off and the tree confirmed clean between mutants:
+Each mutation is applied in turn with bytecode caching off and the tree
+confirmed clean between mutants, and the whole suite is run. The plan names,
+for each mutation, the test IDs expected to fail; the result must be exactly
+that set, no more and no fewer. Most mutations have one expected test. Two
+legitimately have two: breaking rcParams restoration fails both the
+normal-exit and the exception-exit test, and a shared error message fails the
+invalid-theme test for both `palette()` and `style()`.
 
 - return the light palette for both themes;
 - lighten `ordered[0]` in one theme to fail 3:1;
 - make `style()` skip restoring rcParams;
 - remove one allowed value from the unknown-theme message;
+- make `show()` pass `bbox_inches="tight"`;
 - remove `renderings` from one cell; make one cell's two captions differ;
   reintroduce `"tab:blue"` in one cell; add `cmap = "viridis"` in one cell.
 
@@ -386,9 +423,10 @@ bytecode caching off and the tree confirmed clean between mutants:
 - **Font files in the wheel** add roughly 0.6 MB and a second licence. The
   alternative, registering the font only if present, leaves the site's CI
   build needing the files anyway.
-- **`renderings` needs Quarto 1.7.** An older local Quarto would show both
-  figures stacked. The requirement is documented, and the rendered-site check
-  would fail on such a build.
+- **The two-rendering behaviour depends on the Quarto version.** An older local
+  Quarto would show both figures stacked or drop a caption. The tested minimum
+  is documented, and the rendered-site check fails on a build that gets it
+  wrong.
 - **Duplicated caption text** in each cell can drift. The source contract
   requires the two entries to be identical.
 - **Committed assets will not match** until the second track lands: for a
