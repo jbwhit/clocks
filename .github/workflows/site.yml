@@ -9,13 +9,17 @@ permissions:
   pages: write
   id-token: write
 
+# Deployments run one at a time. A later push does not cancel a build or
+# deployment already under way, and up to 100 waiting runs are queued rather
+# than replaced.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  queue: max
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: quarto-dev/quarto-actions/setup@v2
@@ -37,6 +41,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # deploy-pages keeps its own 10-minute clock; leave room around it.
+    timeout-minutes: 12
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
