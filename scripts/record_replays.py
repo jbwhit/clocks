@@ -3,8 +3,9 @@
 Writes ``<out>/<demo>.npz`` for each requested demo (all seven by default).
 With ``--compare DIR`` it also compares each fresh recording in full with
 ``DIR/<demo>.npz`` and prints a short report, writing it to ``--report FILE``
-as well when given. A demo whose recording fails gets a ``recording failed``
-line, with or without ``--compare``, and the others still run. The exit status
+as well when given; ``DIR`` must not be the output directory. A demo whose
+recording fails gets a ``recording failed`` line, with or without
+``--compare``, and the others still run. The exit status
 is 0 when every demo was recorded and every compared demo reproduced, and 1
 otherwise; a workflow that only wants the report ignores it.
 
@@ -59,7 +60,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--report", type=Path, help="file to write the report to")
     # No default: Python 3.12 rejects a tuple default as one invalid choice.
     parser.add_argument("demos", nargs="*", choices=DEMOS, metavar="demo")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # Recording saves before comparing, so one directory would compare a fresh
+    # archive with itself and report it reproduced.
+    if args.compare is not None and args.compare.resolve() == args.out.resolve():
+        parser.error(
+            "the comparison directory must differ from the output directory, "
+            f"got --out {args.out} and --compare {args.compare}"
+        )
+    return args
 
 
 # What a recording can raise on a platform it was not made on (a precision cap,

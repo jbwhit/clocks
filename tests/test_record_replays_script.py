@@ -67,6 +67,35 @@ def test_an_unknown_name_is_a_usage_error(tmp_path: Path) -> None:
     assert raised.value.code == 2
 
 
+@pytest.mark.parametrize("spelling", ["same", "relative", "symlink"])
+def test_comparing_with_the_output_directory_is_a_usage_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    spelling: str,
+) -> None:
+    committed = tmp_path / "a"
+    committed.mkdir()
+    save_replay(
+        committed / "demo_1d.npz", demo_1d.record(n_observations=1, n_particles=16)
+    )
+    before = {p.name: p.read_bytes() for p in committed.iterdir()}
+    calls: list[str] = []
+    monkeypatch.setattr(record_replays, "record_demo", calls.append)
+    monkeypatch.chdir(tmp_path)
+    if spelling == "symlink":
+        (tmp_path / "link").symlink_to(committed, target_is_directory=True)
+    out = {"same": str(committed), "relative": "a/", "symlink": "link"}[spelling]
+
+    with pytest.raises(SystemExit) as raised:
+        record_replays.main(["--out", out, "--compare", str(committed), "demo_1d"])
+
+    assert raised.value.code == 2
+    assert "must differ from the output directory" in capsys.readouterr().err
+    assert calls == []
+    assert {p.name: p.read_bytes() for p in committed.iterdir()} == before
+
+
 def test_compare_reports_a_reproduced_demo(tmp_path: Path) -> None:
     a, b, report = tmp_path / "a", tmp_path / "b", tmp_path / "report.md"
     _record_into(a)
