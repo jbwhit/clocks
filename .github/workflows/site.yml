@@ -9,14 +9,17 @@ permissions:
   pages: write
   id-token: write
 
+# Deployments run one at a time, in order. A later push never cancels a
+# build or deployment already under way, and waiting runs are kept rather
+# than replaced, so every push to main is deployed.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  queue: max
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: quarto-dev/quarto-actions/setup@v2

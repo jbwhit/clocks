@@ -20,7 +20,8 @@ jobs:
   test:
     # Draft pull requests are not tested: review rounds push often, and only a
     # head that could merge is worth the minutes. Marking the pull request
-    # ready tests that exact head. A skipped run is not a passing one.
+    # ready starts a run for its current head, tested as every pull-request
+    # run is: merged into main. A skipped run is not a passing one.
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
