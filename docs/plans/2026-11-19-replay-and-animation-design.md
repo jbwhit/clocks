@@ -2,210 +2,184 @@
 
 **Date:** 2026-11-19
 
-**Status:** Draft, in review.
+**Status:** Draft, in review. Revised after review round 1 (Codex xhigh on
+`5edbcb5`: "NOT SOUND ENOUGH TO IMPLEMENT", nine findings). "Changes since
+round 1" at the end lists what moved.
 
 **Source:** findings V1, V5 and C6 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), the visual reviewer's critique
-(`docs/audits/2026-11-17/reviewers/visual.md`, sections 2 and 3) and its
-prototype (`docs/audits/2026-11-17/prototype/`), and the owner's decisions of
-2026-11-18 recorded in the audit's "Decisions" section. Everything an
-implementer needs is restated here; the audit is background, not a second
-source of truth.
+(`docs/audits/2026-11-17/reviewers/visual.md`, sections 2 and 3) and prototype
+(`docs/audits/2026-11-17/prototype/`), and the owner's decisions of 2026-11-18
+in the audit's "Decisions" section. Everything an implementer needs is restated
+here.
 
-Claims in this document are marked. **Measured** means a command was run for
-this spec and its output is quoted in "Measurements" (M1 to M16). **Read**
-means it rests on reading the code or a document. **Believed** means neither.
+Claims are marked. **Measured** means a command was run for this spec and its
+output is in "Measurements" (M1 to M15). **Read** means it rests on reading
+code or a document. **Believed** means neither.
 
 ## Purpose
 
 Six demo GIFs and two PNGs are committed under `assets/`, mirrored under
-`site/assets/` (33 MB in the tree), and pinned by SHA-256 in
-`tests/test_generated_assets.py`. The pin proves only that the files have not
-changed. It does not prove they are what the code produces, and it makes every
-restyle a change to "evidence".
+`site/assets/` (33 MB in the tree), and pinned by SHA-256. The pin proves the
+files have not changed. It does not prove they are what the code produces, and
+it turns every restyle into a change of "evidence".
 
-The animations themselves hide the search. Every one opens after the first
-observation, when the cloud has already collapsed. Axes rescale each frame,
-position and mass share an axis so mass is a flat line, three panels show the
-same plane, and the weight colouring encodes nothing after resampling.
+The animations also hide the search. Each opens after the first observation,
+when the cloud has already collapsed; axes rescale every frame; position and
+mass share an axis, so mass is a flat line; three panels show the same plane;
+the weight colouring encodes nothing after resampling.
 
-This track replaces the pinned media with committed **replay data**: what each
-demo run produced, in numbers. Tests pin that data against the code. The site
-draws its animations and the two static figures from the data when it is built,
-in the figure style already merged for the build-time plots, in both themes.
-The animations are rebuilt around what changes: they start from the prior, keep
-every axis fixed, give each parameter its own small panel, and dwell on the
-first updates.
-
-It is the second of three figure tracks. The first
-(`docs/plans/2026-11-18-figure-style-design.md`) added `src/clocks/_style.py`;
-this track uses its palette, type, sizes and light/dark approach unchanged. The
-third changes what the model-comparison page shows.
+This track commits **replay data** instead: what each demo run produced, in
+numbers. A reference comparison on the CI runner pins the data to the code. The
+site draws its animations and two static figures from the data when it is
+built, in the figure style of the first track
+(`docs/plans/2026-11-18-figure-style-design.md`), in both themes. The
+animations start from the prior, keep every axis fixed, give each parameter its
+own panel and dwell on the first updates.
 
 ## Scope
 
-In scope:
+In scope: a replay archive per demo, its recorder and tests; the six animations
+rebuilt and rendered at build time as H.264 video with a poster; the density
+and range-study figures redrawn at build time; the `demo-*` commands, README
+and Getting Started; the 2D demo's true mass, 0.15 to 0.10 (audit C6); the
+provenance prose and its tests; the rendered-site check and source guard, with
+two small fixes already owed; removal of the committed GIFs and PNGs.
 
-- a replay file per demo, the code that records it, and the tests that pin it;
-- rebuilt animations for the six animated demos, rendered at site build time as
-  H.264 video with a poster, in both themes;
-- `demo_density.png` and `echolocation_range_study.png` redrawn at build time
-  from committed data in the shared style;
-- the `uv run demo-*` entry points, the README and Getting Started;
-- the 2D demo's true mass, 0.15 to 0.10 (audit finding C6);
-- the provenance section of `site/reproduce/reproducibility.qmd` and the tests
-  that pin its sentences;
-- `scripts/check_site_figures.py` and `tests/test_site_figure_style.py`,
-  including two small follow-ups already owed (a NUL in an image path; `data=`
-  calls judged by argument position);
-- removal of the committed GIFs and PNGs, their mirror, and the code and tests
-  that only they needed.
-
-Out of scope, and why:
-
-- **What the model-comparison page shows** (a spread over inference seeds, a
-  one-mass case). That is the third track. This track keeps the page's one
-  packaged run and changes only how it is drawn.
-- **The population-reliability study, the story rewrite, page order, titles and
-  URLs.** Each is its own track. On story pages this track changes only the
-  media embeds, their captions, and sentences that describe an animation's
-  layout.
-- **Any interactive or scroll-driven component.** The replay format must not
-  preclude a later in-browser replay with a scrubber; "Replay format" says why
-  it does not. Nothing here builds one.
-- **Page CSS beyond what video needs** (callouts, code blocks, caption colour in
-  the dark theme, the unused `.figure-light` rules). Those belong to the CSS
-  track.
-- **The distinct-particle diagnostic** (audit C3) and audit findings T1 to T4.
-  T5 (no evidence file records the versions that produced it) is addressed for
-  the new replay files only.
+Out of scope, each its own track: what the model-comparison page shows (a seed
+spread, a one-mass case); the population-reliability study; the story rewrite,
+page order, titles and URLs; any interactive or scroll-driven component; page
+CSS beyond what video needs; audit findings C3 and T1 to T4. On story pages
+this track changes only media embeds, their captions and text equivalents, and
+sentences that describe an animation's layout or, on one page, the 2D result.
 
 ## Design
 
 ### 1. Replay format
 
 **One compressed NumPy archive per demo**, `assets/replays/<demo>.npz`, written
-with `numpy.savez_compressed` and read with `numpy.load(path,
-allow_pickle=False)`. The seven names are the demo module names: `demo_1d`,
-`demo_2d`, `demo_multi_mass`, `demo_multi_mass_2d`, `demo_model_comparison`,
-`demo_density`, `demo_echolocation_3d`. The files live beside the existing
-`assets/echolocation_range_study.json`, outside the package, so the wheel does
-not grow. Nothing is mirrored under `site/`: the site reads `assets/` when it is
-built.
+with `numpy.savez_compressed` and read with `allow_pickle=False`. The seven
+names are the demo module names. The files sit beside
+`assets/echolocation_range_study.json`, outside the package, and are not
+mirrored under `site/`.
 
-Each archive holds a `meta` entry, a JSON document stored as a string, and
-numeric arrays. `meta` was confirmed to round-trip without pickle, including
-non-ASCII parameter names (measured, M5).
+Each archive holds `meta`, a JSON document stored as a string (measured to
+round-trip without pickle, M2), and arrays.
 
 ```json
 {
-  "format": "clocks-replay",
-  "version": 1,
-  "demo": "demo_2d",
-  "kind": "filter",
-  "seed": 42,
-  "n_observations": 50,
-  "n_particles": 2000,
-  "noise_std": 0.005,
-  "track_offset": 3.0,
+  "format": "clocks-replay", "version": 1,
+  "demo": "demo_2d", "kind": "filter",
+  "seed": 42, "n_observations": 50, "n_particles": 2000,
+  "noise_std": 0.005, "track_offset": 3.0,
   "param_names": ["x", "y", "M"],
   "prior_ranges": [[-8.0, 8.0], [-8.0, 8.0], [0.005, 0.15]],
   "controls": {"ess_target": 0.8, "rejuvenation_steps": 2,
                "proposal_scale": 2.38, "resampling": "systematic"},
   "cloud_size": 500,
-  "created_with": {"python": "3.14.0", "numpy": "2.4.2", "scipy": "1.17.1",
-                   "platform": "macOS-27.2.1-arm64"}
+  "created_with": {"python": "3.12.16", "numpy": "2.4.2", "scipy": "1.17.1",
+                   "platform": "Linux-...-x86_64", "cpu": "...",
+                   "image": "ubuntu-26.04 20261111.196.1"}
 }
 ```
 
-`kind` is `"filter"` for the six single-filter demos and `"model_comparison"`
-for the seventh. `prior_ranges` is the prior box per parameter; it supplies the
-fixed axis limits. `created_with` is provenance only and no test compares it.
+`kind` is `"filter"` or `"model_comparison"`. The model-comparison `meta` also
+carries `true_k` and `model_prior`. `created_with` is provenance; only its
+platform and Python version are tested (section 3).
 
-Arrays, with T observations, C clocks, P parameters, m displayed particles:
+**The truth lives in the `true_params` array, not in `meta`.** Parameter order,
+which is also the column order of `mean`, `cov` and `cloud`:
+
+| Demo | `param_names` |
+|---|---|
+| `demo_1d` | x, M |
+| `demo_2d` | x, y, M |
+| `demo_multi_mass` | x₁, x₂, M₁, M₂, with x₁ < x₂ |
+| `demo_multi_mass_2d` | x₁, y₁, x₂, y₂, M₁, M₂ |
+| `demo_density` | μ, σ, A |
+| `demo_echolocation_3d` | x, y, z, M |
+| `demo_model_comparison` | `true_params` is x₁, x₂, M₁, M₂ of the K = 2 truth |
+
+Arrays, with T observations, C clocks, P parameters, m displayed particles.
+Every array is consumed by a drawing, by the command's printed output, or by
+the reference comparison.
 
 | Key | Shape, type | Meaning | Demos |
 |---|---|---|---|
 | `clock_positions` | (C, D) float64 | clock coordinates | all |
-| `true_params` | (P,) float64 | the truth, in `param_names` order | all but model comparison |
+| `true_params` | (P,) float64 | the truth | all |
 | `true_rates` | (C,) float64 | noise-free tick rates | all |
-| `observations` | (T, C) float64 | the readings, in display form | all |
+| `observations` | (T, C) float64 | readings; centred for echolocation | all |
 | `filter_observations` | (T, C-1) float64 | the contrasts the likelihood consumed | echolocation |
-| `mean` | (T+1, P) float64 | weighted posterior mean; row 0 is the prior | filter demos |
-| `cov` | (T+1, P, P) float64 | weighted posterior covariance, no bias correction | filter demos |
-| `ess` | (T+1,) float64 | effective sample size, 1 / sum of squared weights | filter demos |
-| `log_evidence` | (T+1,) float64 | running log evidence; row 0 is 0 | filter demos |
-| `tempering_stages`, `mh_proposals`, `mh_acceptances` | (T,) int64 | per-update diagnostics | filter demos |
-| `cloud` | (T+1, m, P) float32 | equal-weight display sample of the particles | filter demos |
-| `predicted_mean` | (T+1, C) float64 | weighted mean of the particles' predicted centred rates | echolocation |
-| `profile_x`, `profile_true` | (G,) float32 | track positions and the true tick rate along the track | `demo_1d`, `demo_multi_mass` |
-| `profile_mean`, `profile_std` | (T+1, G) float32 | weighted mean and s.d. of the particles' predicted tick rate along the track | `demo_1d`, `demo_multi_mass` |
-| `model_ks` | (K,) int64 | candidate mass counts | model comparison |
-| `model_posterior` | (T+1, K) float64 | posterior over counts; row 0 is the model prior | model comparison |
-| `model_log_evidence`, `model_ess` | (T+1, K) float64 | per candidate | model comparison |
+| `mean` | (T+1, P) float64 | weighted posterior mean; row 0 is the prior | filter |
+| `cov` | (T+1, P, P) float64 | weighted covariance, no bias correction | filter |
+| `ess` | (T+1,) float64 | 1 / sum of squared weights; row 0 is N | filter |
+| `log_evidence` | (T+1,) float64 | cumulative; row 0 is 0 | filter |
+| `tempering_stages`, `mh_proposals`, `mh_acceptances` | (T,) int64 | per-update diagnostics | filter |
+| `cloud` | (T+1, m, P) float32 | equal-weight display sample | filter |
+| `predicted_mean`, `predicted_std` | (T+1, C) float64 | weighted mean and s.d., over all particles, of each particle's predicted reading at each clock | `demo_1d`, `demo_multi_mass`, echolocation (centred) |
+| `view_bounds` | (2,) float64 | the close view's cube | echolocation |
+| `weight_in_view` | (T+1,) float64 | posterior weight inside that cube, from all particles | echolocation |
+| `model_ks` | (K,) int64 | candidate counts | model comparison |
+| `model_posterior` | (T+1, K) float64 | row 0 is the model prior | model comparison |
+| `model_log_evidence`, `model_ess` | (T+1, K) float64 | row 0 is 0 and N | model comparison |
+| `final_mean_k<K>`, `final_std_k<K>` | (P_K,) float64 | each candidate's final estimate | model comparison |
 
-Decisions, with reasons:
+Decisions:
 
-- **Row 0 is always the prior.** `ParticleFilter.history[0]` already holds it
-  (read: `inference.py` sets `_history = [self._state]` at construction). Today
-  `_precompute_filter_states` in `_animate.py` discards it, which is why every
-  animation opens after the first observation.
-- **Summaries come from the whole cloud and are stored in float64.** `mean` and
-  `cov` are the weighted moments of all particles; the square root of `cov`'s
-  diagonal equals `ParticleFilter.estimate()["std"]`, which uses the same
-  uncorrected weighted variance (read). `cov` replaces a separate `std` array
-  so the two cannot disagree, and supplies the two-standard-deviation ellipse.
-- **Clouds are thinned to at most 500 particles and stored in float32.** Whole
-  float64 clouds for the six filter demos compress to 30.7 MB, float32 to 13.0
-  MB; thinned to 500 the seven files total 1.80 MB (measured, M2). A whole-cloud
-  file would add tens of megabytes to the repository's history at every
-  regeneration, and a drawing needs neither 6,000 dots nor sixteen digits. A
-  thinned cloud cannot reproduce the summaries, which is why they are stored
-  separately.
-- **The display sample is equal-weight, deterministic, and uses no random
-  numbers.** After an update the weights are generally not uniform: the filter
-  resamples only when the effective sample size falls to the target (read), and
-  the candidate runs end with it between 80% and 97% of the particle count
-  (measured, M2). Since the redesign draws every dot alike, the sample must
-  already be weighted. For m = min(500, N) the indices are
-  `searchsorted(cumsum(weights), (arange(m) + phi) / m)` with
-  phi = (sqrt(5) - 1) / 2 and the last cumulative weight set to exactly 1. The
-  irrational offset matters. With the obvious offset 0.5 and uniform weights,
-  the targets land exactly on steps of the cumulative sum and rounding decides
-  each pick: the strides come out irregular (4 and 5 mixed for N = 2000) where
-  phi gives a regular stride with at least 5% of one weight to spare (measured,
-  M6). Recording must not touch the filter's random generator, so that
-  recording a run cannot change it.
-- **Renderers read only the replay.** No drawing code calls the forward model.
-  That is why the tick-rate profile along the track is stored for the two 1D
-  point-mass demos, and why the echolocation file stores the posterior-mean
-  prediction. It keeps drawing testable on synthetic data and means a browser
-  replay would need no physics.
-- **The echolocation file stores both observation forms.** `observations` holds
-  the centred clock channels that are displayed; `filter_observations` holds the
-  orthonormal contrasts the likelihood used. The invariant
-  `filter_observations = Q @ observations` that `animate_echolocation` checks
-  today (read) becomes a test on the committed file.
-- **The model-comparison file has no clouds.** Nothing drawn from it needs
-  them.
-- **The density file has no tick-rate profile and no predicted rates.** Its
-  forward model is a quadrature; the inference alone takes 33 s (measured, M3),
-  and a 161-point profile for every frame would multiply that. The redrawn
-  figure needs only the cloud and the summaries.
+- **Row 0 is the prior.** `ParticleFilter.history[0]` holds it (read). Today
+  `_precompute_filter_states` drops it, which is why every animation opens
+  after the first observation.
+- **Predictions are recorded at the clocks only.** Round 1 proposed a dense
+  tick-rate profile along the track for the two 1D clips. That cannot be
+  computed: the prior is valid at the clocks, not between them, and on a
+  161-point grid 451 of 1,000 one-mass prior particles and 1,319 of 3,000
+  two-mass ones leave the weak-field domain, so the strict forward model raises
+  `PhysicsDomainError` (measured, M4). The clips draw at the clock positions
+  instead (section 5), and the profile arrays are gone.
+- **Summaries come from the whole cloud, in float64.** The square root of
+  `cov`'s diagonal equals `ParticleFilter.estimate()["std"]` (read: same
+  uncorrected weighted variance).
+- **Clouds are thinned to at most 500 particles, in float32.** Whole clouds
+  compress to 30.7 MB (float64) or 13.0 MB (float32); thinned, the seven files
+  total 1.8 MB (measured, M2). A thinned cloud cannot reproduce the summaries,
+  which is why they are stored.
+- **The model-comparison archive has no clouds** and stores each candidate's
+  final estimate, so the command can print the winning model's estimate from
+  the replay (it prints one today).
+- **The density archive has no predictions.** Its forward model is a
+  quadrature; inference alone takes 33 s (measured, M2).
+- **Renderers never call the clock-rate forward model.** They may evaluate the
+  density parameterisation A·exp(-(x-μ)²/2σ²) for the density figure; that is
+  the definition of the parameters, not the physics.
 
-**One format or two.** A split was considered: a JSON file for configuration and
-summaries, which would show as a readable diff in a pull request, plus a binary
-file for clouds. One archive was chosen because one file per demo cannot fall
-out of step with itself, and because a test that regenerates the run (below)
-verifies the numbers by machine instead of by eye. What would change this: the
-in-browser replay landing, which would want a browser-readable export. That
-export can be produced from the archive by the build without changing what is
-committed, so the choice does not preclude it.
+**The display sample.** For weights w (float64, non-negative, summing to
+about 1) and m = min(500, N):
 
-**Loading validates** (fail fast): the format name and version; the keys
-required for the `kind` and demo; consistent shapes; finite values; `cloud` in
-float32; row counts of T+1 and T. A file that fails raises `ValueError` naming
-the file, the key and what was expected.
+1. c = cumsum(w) / cumsum(w)[-1], so c is non-decreasing and ends at exactly 1;
+2. targets t_j = (j + φ) / m for j = 0..m-1, with φ = (√5 - 1) / 2;
+3. index_j = `searchsorted(c, t_j, side="left")`: the first particle whose
+   cumulative weight reaches the target. A target exactly on a step selects the
+   particle that ends there.
+
+A particle of weight w is selected about m·w times, so heavy particles repeat;
+a particle of zero weight is never selected; N need not divide by m; the result
+depends on particle order, which is the filter's own. The irrational offset
+matters: with offset 0.5 and uniform weights the targets land exactly on steps
+and rounding decides each pick (strides of 4 and 5 mixed for N = 2000), where φ
+gives one stride with at least 5% of a weight to spare (measured, M6). The
+sample uses no random numbers.
+
+**One file or two.** A JSON file of summaries beside a binary file of clouds
+would diff readably. One archive was chosen because it cannot fall out of step
+with itself, and the comparison tool prints a readable summary of any change
+(section 3). A later in-browser replay would want a browser-readable export;
+the build can produce one from the archive, so nothing here precludes it.
+
+**Loading validates**: format and version; the exact key set for the `kind` and
+demo, with no extra keys; each key's dtype and number of dimensions; row counts
+of T+1 and T; inner dimensions against C, P, m and K; finite values. A failure
+raises `ValueError` naming the file, the key and what was expected.
 
 ### 2. Recording
 
@@ -217,900 +191,858 @@ class Replay:
     meta: Mapping[str, object]
     arrays: Mapping[str, NDArray]
 
-def record_filter(pf, observations, *, meta, predict=None, profile=None) -> Replay: ...
-def thin(state: ParticleState, size: int) -> NDArray[np.float32]: ...
+def record_filter(pf, observations: Iterable[Observation], *, meta,
+                  predict=None) -> Replay: ...
+def thin(particles, weights, size: int) -> NDArray[np.float32]: ...
 def save_replay(path: Path, replay: Replay) -> None: ...
 def load_replay(path: Path) -> Replay: ...
+def first_divergence(reference: Replay, other: Replay) -> Divergence | None: ...
+def diff_summary(reference: Replay, other: Replay) -> str: ...
 ```
 
-`record_filter` drives a fresh filter through the observations once, raising if
-the filter has already seen data (the guard `_precompute_filter_states` has
-today), and builds the arrays from `pf.history`, `pf.diagnostics_history` and
-`pf.log_evidence_history`.
-
-Each demo module gains `record(*, n_observations=..., n_particles=...) ->
-Replay`, which runs the simulation and inference and draws nothing. The demo's
-`main`, the tests and a maintainer script all call it.
-
-`scripts/record_replays.py [name ...]` writes `assets/replays/<name>.npz` from
-each demo's packaged defaults. It is the only way the committed files are
-produced, it accepts no overrides, and the regeneration test's failure message
-names it.
+- `record_filter` raises before touching the filter if it has already seen an
+  observation.
+- **Observations are consumed lazily, one per update.** The density demo draws
+  each reading from the same generator the filter uses, between updates.
+  Drawing the readings first changes them: the second reading differs by up to
+  0.018 (measured, M5). The recorder takes an iterator and captures each
+  reading as it is consumed, so the existing draw order is kept.
+- `predict` maps particles to predicted readings; it receives no generator.
+- Each demo module gains `record(*, n_observations=..., n_particles=...) ->
+  Replay`, which draws nothing. The model-comparison demo runs its comparison
+  once (today it runs twice, once to print and once to animate) and records the
+  model prior as row 0.
+- `scripts/record_replays.py --out DIR [--compare DIR2]` records all seven
+  demos at their packaged defaults into `DIR`. With `--compare` it prints, per
+  demo, either "matches" or the first divergence (frame, key, largest
+  difference) and a summary of final estimates before and after, writes the
+  same text to `DIR/replay-diff.md`, and exits non-zero on any divergence.
 
 ### 3. What tests pin
 
-The byte hashes go. Their replacement has three parts.
+The byte hashes go. Their replacement has three layers.
 
-1. **The committed file is what the code produces.** A test calls the demo's
-   `record()` and compares the result with the committed archive.
-2. **The committed file is well formed and matches its demo.** Loading
-   validates it; a test checks that the set of files is exactly the seven names
-   and that `meta` agrees exactly with the demo module's constants (seed,
-   counts, noise, truth, prior ranges).
-3. **The site draws from the file.** The pre-render script reads only
-   `assets/replays/`, and the rendered-site check requires its outputs on the
-   pages.
+**Layer 1: a reference comparison on the CI runner.** The committed archives
+are recorded on the runner, and every pull request's CI run records them again
+and compares:
 
-Video and poster bytes are not pinned anywhere. Two encoders of the same FFmpeg
-major version produced different bytes for the same frames (measured, M9).
+```yaml
+- name: Replay reference
+  run: uv run python scripts/record_replays.py --out recorded --compare assets/replays
+- uses: actions/upload-artifact@v4
+  if: always()
+  with: {name: "replays-${{ github.sha }}", path: recorded, retention-days: 7}
+```
 
-**Exact or toleranced.** The comparison in part 1:
+- **How files get committed.** The step's artifact is the recording. When the
+  comparison fails because the code legitimately changed, the author downloads
+  it (`gh run download <run> -n replays-<sha>`), commits the archives, and
+  pastes `replay-diff.md` into the pull request, where it is reviewed. A lock
+  bump that changes the output goes through the same path, so it cannot land
+  without that summary. Nothing else writes `assets/replays/`.
+- **Why an artifact and not a container.** No container tool is installed on
+  the development machine (measured, M14), and an arm64 host could not match
+  the x86-64 runner anyway. A manually dispatched workflow was the alternative;
+  it cannot be dispatched until it is on `main`, and it would duplicate a job
+  that CI must run regardless.
+- **The environment is declared.** A committed `.python-version` pins Python
+  3.12 for CI, the site build and local work. Today the CI job uses the
+  image's Python 3.14.4 while the site jobs install 3.12.16 (measured, M14). A
+  test requires each committed archive's `created_with` to name Linux and
+  Python 3.12, so a locally recorded file cannot be committed unnoticed, and a
+  text test requires `ci.yml` to contain the step.
+- **What is compared.**
 
-| Compared | How |
-|---|---|
-| keys present, shapes, dtypes; `meta` except `created_with` | exactly |
-| `tempering_stages`, `mh_proposals`, `mh_acceptances`, `model_ks` | exactly |
-| `clock_positions`, `true_params`, `true_rates`, `observations`, `filter_observations` | `rtol=1e-12, atol=1e-12` |
-| `mean`, `cov`, `ess`, `log_evidence`, `predicted_mean`, `model_posterior`, `model_log_evidence`, `model_ess` | `rtol=1e-9, atol=1e-12` |
-| `cloud`, `profile_*` (float32) | `rtol=1e-5, atol=1e-6` |
+  | Compared | How |
+  |---|---|
+  | key set, shapes, dtypes; `meta` except `created_with` | exactly |
+  | integer arrays | exactly |
+  | `clock_positions`, `true_params`, `true_rates`, `observations`, `filter_observations` | `rtol=1e-12, atol=1e-12` |
+  | other float64 arrays | `rtol=1e-9, atol=1e-12` |
+  | `cloud` | `rtol=1e-5, atol=1e-6` |
 
-What this rests on:
+- **Why a tolerance even there.** The runner is not one numerical environment.
+  Five deploy builds on the same image, Python and lock, with no change to
+  numerical code, printed the Getting Started posterior in two variants that
+  differ by 1.1e-13 relative; this Mac prints a third (measured, M1). None of
+  the three diverged. The filter makes discrete decisions (tempering steps,
+  resampling indices, accept or reject), so a last-digit difference could flip
+  one, after which runs differ at about 1e-3. The tolerance sits four orders
+  above the difference observed and six below a divergence. The exact integer
+  diagnostics are the sharpest detector.
 
-- On one machine the recorder is bitwise repeatable: two runs, and a run under
-  Python 3.12 against one under 3.14, gave identical arrays for the six fast
-  demos (measured, M4).
-- Across platforms there is one data point. The deployed Getting Started page,
-  rendered on `ubuntu-latest`, prints a model posterior at full precision; the
-  same cell run here on macOS arm64 agrees in every printed digit for two
-  entries and differs in the last digit of the third, `...5013` against
-  `...5014` (measured, M1). So the platforms are not bitwise identical, and in
-  that run, 40 observations through three filters of 1,500 particles, they did
-  not diverge.
-- The filter makes discrete decisions (resampling indices, Metropolis
-  accept/reject). A last-digit difference can in principle flip one, after
-  which the two runs differ at the level of Monte Carlo noise, about 1e-3
-  relative. The tolerance of 1e-9 sits seven orders above the difference
-  observed and six below a divergence, so the test separates "same trajectory"
-  from "different trajectory" and nothing in between is expected. The integer
-  diagnostics compared exactly are the sharpest detector.
+**Layer 2: portable invariants on the committed archives**, in every
+environment, with no inference:
 
-This is the least certain part of the design; see "Risks" for what happens if
-the runner diverges.
+- the files are exactly the seven names and each loads;
+- scenario: `meta`, `true_params` and `clock_positions` equal the demo module's
+  constants exactly;
+- observations: for the six demos that simulate through `simulate()` or the
+  echolocation helper, `observations` equals a fresh simulation from the seed
+  and `true_rates` equals the forward model at the truth (1e-12); each
+  echolocation reading sums to zero and `filter_observations = Q @
+  observations`;
+- physics: the truth meets the existing 0.08 weak-field margin at the clocks,
+  and x₁ < x₂ where there are two masses;
+- internal: `log_evidence[0] = 0`; `ess[0] = N` and 0 < `ess` ≤ N; every
+  `cloud` row lies inside `prior_ranges`; `cov` is symmetric with no negative
+  eigenvalue; acceptances ≤ proposals; `model_posterior` rows sum to 1 and row
+  0 equals `model_prior`; `weight_in_view` lies in [0, 1].
 
-**Cost.** Inference alone takes 0.2 s (1D), 0.4 s (2D), 0.8 s (two masses 1D),
-1.4 s (model comparison), 2.3 s (two masses 2D), 4.1 s (echolocation) and 33 s
-(density) (measured, M2 and M3). The default suite takes 32 s today for 1,079
-tests (measured, M13). The four cheapest regenerations, about 3 s together, run
-in the default suite; the other three carry the existing `slow` marker. CI runs
-both suites on every pull request (read: `ci.yml`), so all seven are checked
-before a merge either way.
+**Layer 3: explicit bounds on a fresh recording**, in every environment. The
+test calls `record()` and requires the final posterior mean to lie within a
+stated distance of the committed one, and each final standard deviation within
+a factor of 0.75 to 1.33:
 
-**The old hashes.** `docs/2026-08-16-development-calibration.md` keeps its
-"Corrected generated assets" table as the record of the August release, and
-gains one dated paragraph beneath it saying that the GIF and PNG files were
-removed from the tree by this work, that replay data under `assets/replays/`
-superseded them, and that the old files remain in git history. The row for
-`echolocation_range_study.json` is unaffected: that file stays, and stays
-hash-pinned. In `tests/test_generated_assets.py`, `EXPECTED_VISUAL_HASHES`, the
-test that reads the eight files, and the loop asserting each hash appears in the
-report are deleted; `ECHO_CERT_SOURCE_HASH` and its test stay. The assertions in
-`tests/test_calibration.py` that mention the report's assets heading stay true
-and are not changed.
+| Demo | Positions | Other |
+|---|---|---|
+| `demo_1d` | 0.008 | M 0.0003 |
+| `demo_2d` | 0.02 | M 0.0002 |
+| `demo_multi_mass` | 0.008 | M 0.00015 |
+| `demo_multi_mass_2d` | 0.35 | M 0.002 |
+| `demo_density` | μ 0.008, σ 0.025 | A 0.0001 |
+| `demo_echolocation_3d` | 0.006 | M 0.0004 |
+| `demo_model_comparison` | | P(K=1) ≤ 1e-6; P(K=2) and P(K=3) each in [0.05, 0.95] |
+
+Each bound is at least six times the spread of that quantity over inference
+seeds with the data held fixed (measured, M7), so a run that takes a different
+but valid trajectory passes and a changed scenario, noise level or likelihood
+does not. For model comparison the bound is deliberately wide: over 20 seeds
+P(K=2) ran from 0.18 to 0.84 (M7; audit finding C2). The existing acceptance
+gates are untouched.
+
+**On macOS** layers 2 and 3 gate. Layer 1 is run by hand
+(`record_replays.py --compare`), and pull request 1 reports its result per
+demo: whether this machine reproduces the runner's recording and, if not, the
+first divergence.
+
+**Cost.** Inference takes 0.2 s (1D), 0.4 s (2D), 0.8 s (two masses 1D), 1.4 s
+(model comparison), 2.3 s (two masses 2D), 4.1 s (echolocation) and 33 s
+(density) (measured, M2). The four cheapest layer-3 tests run in the default
+suite, which takes 32 s today (M14); the other three are marked `slow`. The CI
+step adds about a minute.
+
+**The old hashes.** The calibration report keeps its asset table as the record
+of the August release and gains a dated note that the files it names were
+removed and can be found in git history. The row for
+`echolocation_range_study.json` is unaffected: that file stays, hash-pinned.
+`EXPECTED_VISUAL_HASHES` loses its two PNG rows in pull request 2 and the rest
+in pull request 3.
 
 ### 4. How and when media is rendered
 
-**A pre-render script, not a cell per page.** Quarto runs
-`site/prerender.py` before it renders any page. The script is three lines over
-a library function; it renders every clip and poster into `site/media/`, which
-is ignored by git and declared in `_quarto.yml`:
+**A pre-render script.** Quarto runs `site/prerender.py`, three lines over a
+library function, before any page. It writes clips and posters to `site/media/`
+(git-ignored), declared in `_quarto.yml`:
 
 ```yaml
 project:
   pre-render: prerender.py
-  resources:
-    - "media/*.mp4"
-    - "media/*.png"
+  resources: ["media/*.mp4", "media/*.png"]
 ```
 
-Reasons, each from an experiment with the installed Quarto 1.9.32 (measured,
-M10):
+Measured with Quarto 1.9.32 (M12): the script runs in the project directory
+under the `uv run` Python and sees `QUARTO_PROJECT_RENDER_ALL=1` on a full
+render; its outputs are copied to the site; on a clean build, files written by
+a cell are not copied even when `resources` names them. A cell with
+`renderings: [light, dark]` does wrap `<video>` outputs in the theme classes,
+but its captions come out as plain paragraphs, and the copying problem rules it
+out.
 
-- On a clean build, files a cell writes during execution are **not** copied to
-  the output directory, even when a `resources` pattern names them. Files
-  written by the pre-render script are. A clean build is what the runner does.
-- The script runs with the working directory at the project root, under the
-  Python of the surrounding `uv run`, and sees `QUARTO_PROJECT_RENDER_ALL=1` on
-  a full render. On a single-page render it still runs, without that variable.
-- A cell with `renderings: [light, dark]` does wrap two HTML outputs in
-  `light-content` and `dark-content`, so the mechanism the plots use would work
-  for `<video>`. Its `fig-cap` list comes out as plain paragraphs, not
-  `<figcaption>`. This route was not taken because of the first point.
+**Rebuild on change.** On a full render every file is rebuilt and anything else
+in `site/media/` is deleted. On a single-page render or preview, a clip is
+rebuilt when its output is missing or older than its archive or than any file
+under `src/clocks/`. The script prints the encoder's path and version.
 
-One script also renders each clip once (the 2D clip appears on two pages) and
-shows as its own line in the build log.
+**Committed, unpinned video files** would need no encoder on the runner, but
+could drift from the data unnoticed, and the decision is to render from data.
 
-On a full render the script rebuilds every expected file and deletes anything
-else in `site/media/`. On a single-page render or a preview it builds only
-files that are missing, so editing a page does not re-encode video each time.
+**Encoder.** H.264 through the `imageio-ffmpeg` package, added to the `dev`
+group in pull request 3.
 
-**Committed video files that are not pinned** were the third option. It needs no
-encoder on the runner, but the decision is that the site renders from data when
-it is built, and unpinned committed media could drift from the data unnoticed.
+- The software lists of the Ubuntu 26.04 and 24.04 runner images do not mention
+  FFmpeg (read, M14). Its absence was not tested on a runner.
+- Version 0.8.1 has a `manylinux_2_28_x86_64` wheel; its macOS arm64 binary is
+  FFmpeg 9.0 with `libx264` (measured, M11). The Linux binary was not run.
+  `uv.lock` fixes the version and hashes.
+- The library looks for `imageio_ffmpeg`, then `ffmpeg` on `PATH`, then raises
+  with instructions. The library does not depend on it.
 
-**Build time.** A full local render takes 38 s today; the same step took 43 s
-and 61 s on the runner in the two most recent runs (measured, M12), so the
-runner is about 1.1 to 1.6 times slower than this machine. Rendering the 2D
-clip takes 2.1 s per theme and the echolocation clip 12.5 s per theme
-(measured, M7). The other four clips were not prototyped; by frame count they
-should take 2 to 3.5 s per theme each. The estimate is about 55 s here and
-about 1.5 minutes on the runner, serially, for a job of roughly 3 minutes
-against the 10-minute limit. The script renders serially. If the runner step
-ever exceeds 4 minutes, the remedy is a process pool over (clip, theme) pairs,
-which are independent.
+`src/clocks/_video.py` pipes raw frames to the encoder. A frame is drawn once
+and written as many times as its dwell requires. Settings: 20 frames per
+second, `libx264`, `yuv420p`, CRF 20, preset `slow`, `+faststart`, no audio.
 
-**Encoder.** H.264 from FFmpeg, obtained through the Python package
-`imageio-ffmpeg`, added to the `dev` dependency group, which the site build and
-CI already install.
+**Build time and size.** A full local render takes 38 s today; the same step
+took 43 s and 61 s on the runner (measured, M14). Prototype clips at 1500
+pixels wide: 2D, 2.1 s per theme and 330 kB; echolocation in the round 1
+layout, 12.5 s per theme and 1.18 MB (measured, M10). By frame count all six
+clips in both themes should take about a minute here and under two on the
+runner, against a 10-minute limit. Rendering is serial. Pull request 3 measures
+the cold runner before anything is tuned.
 
-- The documented software list of the `ubuntu-latest` image (Ubuntu 24.04,
-  image 20261111.370.1) does not mention FFmpeg (read, M11). That it is absent
-  was not tested on a runner.
-- `imageio-ffmpeg` 0.8.1 publishes a `manylinux_2_28_x86_64` wheel; its macOS
-  arm64 wheel carries FFmpeg 9.0 with `libx264` (measured, M8). The Linux
-  binary was not run. The version is fixed by `uv.lock`, so a contributor and
-  the runner use the same encoder.
-- The library finds an encoder in this order: `imageio_ffmpeg` if importable,
-  else `ffmpeg` on `PATH`, else a `RuntimeError` saying how to get one. It is a
-  development dependency only; the library does not depend on it and the wheel
-  does not ship it.
+**Pixel sizes.** `yuv420p` needs even dimensions, and a figure 4.6 inches tall
+at 200 dpi is 919 pixels, not 920 (measured, M10). Canvas heights are chosen
+from those measured to be exact (4.2, 4.5, 5.0, 5.4, 5.5 inches), and a test
+asserts each frame size.
 
-A new private module `src/clocks/_video.py` holds the lookup and a writer that
-pipes raw frames to the encoder. Each distinct frame is drawn once and written
-as many times as its dwell requires, so a paced clip costs one draw per
-observation, not one per video frame. Settings: 20 frames per second, `libx264`,
-`yuv420p`, CRF 20, preset `slow`, `+faststart`, no audio.
-
-**Sizes.** Frames are rendered at twice the display size, 1500 pixels wide.
-Measured: the 2D clip is 330 kB (light) and 309 kB (dark) with a 76 kB poster;
-the echolocation clip is 1.18 MB and 1.10 MB with a 167 kB poster (M7). At
-display size they would be 155 kB and 566 kB, and render time barely changes,
-so the sharper size is kept. Both prototyped clips are within the visual
-reviewer's targets of 0.5 MB and 1.5 MB. Today's GIFs total 16.6 MB.
-
-**Pixel sizes are a requirement, and one of them is a trap.** H.264 with
-`yuv420p` needs even dimensions. A figure 4.6 inches tall at 200 dpi is 919
-pixels, not 920, because the product falls just below the integer (measured,
-M7). The audit prototype used that height at 160 dpi, where it gives 736. Clip
-canvases are therefore chosen from heights that were measured to give exact
-pixels at 200 dpi (4.2, 4.5, 5.0, 5.4, 5.5 inches), and a test asserts each
-clip's frame size.
-
-**Markup.** Each embed is written in the page source as raw HTML:
+**Markup: native controls, no script.** Each embed is raw HTML in the page:
 
 ```html
 <figure class="replay">
-<video class="light-content" src="../media/demo_2d.light.mp4" poster="../media/demo_2d.light.png" width="750" height="450" controls muted loop playsinline preload="none"></video>
-<video class="dark-content" src="../media/demo_2d.dark.mp4" poster="../media/demo_2d.dark.png" width="750" height="450" controls muted loop playsinline preload="none"></video>
+<video class="light-content" aria-label="Animation: the 2D search" src="../media/demo_2d.light.mp4" poster="../media/demo_2d.light.png" width="750" height="450" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="Animation: the 2D search" src="../media/demo_2d.dark.mp4" poster="../media/demo_2d.dark.png" width="750" height="450" controls playsinline preload="none"></video>
 <figcaption>The caption, once.</figcaption>
 </figure>
+
+In the animation: … It ends at x = 1.42 ± 0.11, …
 ```
 
-Measured with Quarto 1.9.32 (M10): the attributes pass through unchanged;
-Markdown inside the `<figcaption>` is processed; and Quarto's theme rule is the
-plain class selector `body.quarto-dark .light-content { display: none
-!important }`, so it hides a `<video>` as it hides a `<div>`. One figure holds
-both videos and a single caption, so the caption is not duplicated as it must
-be for the plots.
-
-Markdown image syntax with an `.mp4` was tried: Quarto emits a `<video>` with a
-caption and copies the file, but offers no poster, `muted`, `loop` or
-`preload`. Raw HTML was chosen over a cell or shortcode that would generate the
-markup because there are seven embeds and the rendered-site check verifies each
-attribute against the files. What would change this: more embeds, or the check
-catching hand-edited attributes drifting more than once.
-
-**Playback, and reduced motion.** The videos carry no `autoplay` attribute. A
-small script, `site/includes/replay.html`, included after the body, plays a clip
-while at least half of it is on screen and pauses it otherwise, and does
-neither when the reader has asked for reduced motion:
-
-```html
-<script>
-(() => {
-  const still = window.matchMedia("(prefers-reduced-motion: reduce)");
-  const watch = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      const video = entry.target;
-      if (entry.isIntersecting && !still.matches) {
-        video.play().catch(() => {});
-      } else {
-        video.pause();
-      }
-    }
-  }, { threshold: 0.5 });
-  document.querySelectorAll("figure.replay video").forEach((video) => watch.observe(video));
-})();
-</script>
-```
-
-Measured in headless Chrome 157 against a page built this way (M14):
-
-- the visible clip starts playing; the clip for the other theme is hidden, never
-  intersects, and its video file is **not requested**;
-- switching the theme pauses the first clip and fetches and plays the second;
-- with reduced motion forced, no video file is requested and nothing plays; the
-  reader sees the poster and the controls;
-- both posters are requested at load, so the hidden theme costs one extra image
-  per clip;
-- the video box is 750 by 450 at `DOMContentLoaded`, before any media loads, so
-  the page does not shift.
-
-Without JavaScript the reader gets the poster and working controls. The poster
-is the clip's final frame, so a reader who never presses play sees the result.
-
-**CSS.** `site/styles.css` gains `figure.replay video { max-width: 100%;
-height: auto; }`. Without it a narrow page scrolls sideways; with it the box
-scales and keeps its aspect ratio before the media loads (measured at a
-500-pixel viewport, M14). The caption is styled to match the plots' captions,
-checked by eye.
+- Nothing plays until the reader presses play. There is no `autoplay`, no
+  `loop` and no script, so reduced motion needs no special case.
+- The theme swap reuses Quarto's classes. Its rule is the plain selector
+  `body.quarto-dark .light-content { display: none !important }` and the static
+  HTML's body class is `quarto-light` (measured, M12, M13).
+- Measured in headless Chrome 157 with this markup (M13): both posters are
+  requested, no video file is requested with JavaScript on or off, the box is
+  750 by 450 before any media loads, and switching theme swaps the visible
+  video.
+- The poster is the final frame, so a reader who never plays sees the result.
+- **Text equivalent.** Each clip is followed by one short paragraph saying what
+  the prior looks like, what changes in the first few readings, and where the
+  run ends, with the final estimates as numbers. A test computes those numbers
+  from the archive and requires the sentence in the page, as the range-study
+  sentences are bound today.
+- Seven embeds are written by hand; the rendered-site check verifies each
+  against the files. Markdown image syntax was tried and offers no poster.
+- `site/styles.css` gains `figure.replay video { max-width: 100%; height:
+  auto; }`. Without it a narrow page scrolls sideways; with it the box scales
+  and keeps its aspect ratio (measured at 500 pixels, M13).
 
 ### 5. The rebuilt animations
 
-Shared conventions, from the visual reviewer's section 3 and the prototype:
+Shared conventions:
 
-- **Canvas.** 750 CSS pixels wide, the text column. Source Sans 3, 10.5 pt
-  labels and 9.5 pt ticks, through `style(theme)`. Constrained layout is turned
-  off for clips: every axes is placed at an explicit rectangle, so nothing is
-  re-solved between frames.
-- **Fixed for the whole clip:** every axes rectangle and every axis limit,
-  computed once from the replay before the first frame.
-- **Status line.** Top left, semibold: "Before any observation", then "After k
-  observations". No other title.
-- **Colour roles.** Particles are `belief` dots of one size and opacity, with no
-  colour map. A second mass is `belief_alt`. The truth is `truth`: a ring and
-  crosshair for a position, a solid line for a value. Clocks and observed data
-  are `ink`. There are no dashed lines, because no clip shows a threshold.
-  Nothing is distinguished by hue alone: truth and belief differ in mark, and
-  two masses carry direct labels.
-- **Direct labels, no legend boxes.**
-- **Parameter traces.** One small panel per parameter: the posterior mean as a
-  line, mean plus or minus one standard deviation as a band, the truth as a
-  solid line. The x-axis runs from 0 to T. Each panel's header gives the name,
-  "true 1.50" in the truth colour and "1.42 ± 0.11" in the belief colour. The
-  y-limits are the smallest interval containing the truth and the mean plus or
-  minus one standard deviation for every k from 1, widened by 8%, and clipped
-  to the prior range; a one-observation replay gets a minimum span. The prior's
-  band overflows and is clipped by the axes.
-- **Zoom inset.** A one-mass cloud collapses to a speck on prior-range axes. The
-  panel carries an inset with a fixed window centred on the truth, whose
-  half-width on each axis is 1.25 times (the final mean's distance from the
-  truth plus two final standard deviations), and a label giving the
-  magnification.
-- **Pacing.** Twenty frames per second. The prior holds 1.2 s; observations 1 to
-  3 hold 0.9 s each; 4 to 8 hold 0.5 s; 9 to 20 hold 0.25 s; later ones 0.1 s;
-  the last holds 2.5 s. A 50-observation clip runs 14.8 s and an 80-observation
-  clip 17.8 s. The clip loops.
-- **Poster.** The final frame, as a PNG at the frame's pixel size.
+- **Canvas** 750 CSS pixels wide, Source Sans 3 through `style(theme)`,
+  constrained layout off, every axes at an explicit rectangle.
+- **Fixed for the clip:** every axes rectangle and limit, computed once from the
+  archive.
+- **Status line** top left: "Before any observation", then "After k
+  observations". Direct labels, no legend boxes.
+- **Colour roles.** Particles are `belief` dots of one size and opacity. A
+  second mass is `belief_alt`, drawn with a different marker and labelled, so
+  overlapping clouds stay apart without relying on hue. The truth is `truth`.
+  Clocks and observed data are `ink`. No clip has a threshold, so none has a
+  dashed line.
+- **Traces.** One panel per parameter: mean, a band of one standard deviation,
+  the truth as a solid line, x from 0 to T. The header gives the name, "true
+  1.50" and "1.42 ± 0.11". The y-limits are the smallest interval holding the
+  truth and the mean ± one standard deviation for k ≥ 1, widened 8% and clipped
+  to the prior range. **The prior row is left out of the limits on purpose**:
+  its band is clipped, its values are in the header, and the cloud panel is
+  where the collapse is seen.
+- **Ellipse.** Drawn from `cov` at two standard deviations and labelled
+  "covariance, 2 s.d.". It is a summary of spread, not a region of stated
+  probability, and the label does not say otherwise.
+- **Zoom inset** for one-mass clouds: a fixed window centred on the truth, with
+  half-width 1.25 × (final offset from the truth + two final standard
+  deviations) per axis, labelled with its magnification.
+- **Pacing** at 20 frames per second: the prior holds 1.2 s; observations 1 to 3
+  hold 0.9 s; 4 to 8, 0.5 s; 9 to 20, 0.25 s; later ones 0.1 s; the last 2.5 s.
+  That is 14.8 s for 50 observations and 17.8 s for 80.
 
-The clips, with their display sizes. "Prototyped" means a scratch renderer was
-run for this spec on real recorded data; the others are specified from the
-reviewer's critique and have not been drawn.
+Only the 2D clip and the echolocation frames have been drawn. Pull request 3
+draws and times every clip on its branch, in both themes at full width and 390
+pixels, before any layout number here is treated as final.
 
-**`demo_1d`, 750 by 450. Not prototyped.**
-Left, upper: the cloud in the (x, M) plane on the prior ranges, with the truth
-marker, the three clocks as `ink` squares on the x-axis, the two-standard-
-deviation ellipse, and the zoom inset. Left, lower, sharing the x-axis: the
-tick-rate deficit (1 minus rate) along the track, with the true curve in
-`truth`, the posterior-predictive mean and band in `belief`, and the running
-mean of the observed deficit at each clock as `ink` dots with bars of the noise
-divided by the square root of k; its y-axis runs from 0 to 1.25 times the
-largest value it will show. Right: traces for x and M. This replaces the
-zero-based rate bars, the separate setup panel and a mass axis of 0 to 2
-against a prior that ends at 0.15.
+**`demo_1d`, 750 by 450.** Left, upper: the cloud in the (x, M) plane on the
+prior ranges, with the truth marker, ellipse and inset. Beneath it, on the same
+x scale, a strip of `ink` squares marks the clocks. Left, lower: at each clock,
+on the same x scale, the slowing (1 - rate, labelled so): the true value as a
+`truth` tick; the posterior-predicted mean with a ± one standard deviation bar
+in `belief`; and the running mean of the readings with a ± σ/√k bar in `ink`,
+the three side by side. Before any observation the `ink` marks are absent and
+the `belief` bars show the prior's prediction. Right: traces for x and M.
 
-**`demo_2d`, 750 by 450. Prototyped (M7); the audit prototype shows the
-target.**
-Left: one square map on the prior position range with the cloud, the eight
-clocks, the truth marker, the ellipse and the zoom inset. Each clock's fill
-runs from `background` to `ink` with the running mean of its observed deficit,
-on a fixed scale from 0 to 1.1 times the largest final value, so the pattern
-sharpens instead of flickering; before any observation the clocks are hollow.
-Right: traces for x, y and M. This merges the three panels that showed the same
-plane and drops the colour bar.
+**`demo_2d`, 750 by 450.** Left: one square map on the prior range with the
+cloud, clocks, truth marker, ellipse and inset. Each clock's fill runs from
+`background` to `ink` with the running mean of its slowing, on a scale from 0
+to the largest running mean in the whole run, with the key "stronger fill =
+slower clock"; clocks are hollow before any observation. Round 1 scaled to 1.1
+times the final maximum, which two early clock-frames exceed (measured, M9).
+Right: traces for x, y and M. The audit prototype filled clocks from an orange
+ramp; the merged palette has none, orange is the truth's hue, and observed data
+are `ink`.
 
-The audit prototype filled the clocks from an orange ramp. Here the fill is a
-blend of two palette colours because the merged palette has no such ramp,
-orange is the truth's hue, and observed data are `ink` by the first track's
-rules.
+**`demo_multi_mass`, 750 by 500.** As `demo_1d`, with both clouds in the
+(x, M) panel, each truth labelled "mass 1" or "mass 2" (the masses are ordered
+by x), one inset per mass, and four stacked traces.
 
-**`demo_multi_mass`, 750 by 500. Not prototyped.**
-As `demo_1d`, with both masses' clouds in the one (x, M) panel, mass 1 in
-`belief` and mass 2 in `belief_alt`, each truth marker labelled "mass 1" or
-"mass 2", and one inset per mass in the upper corners. Right: four stacked
-traces, x₁, x₂, M₁, M₂, each in its mass's colour. This replaces the x₁-against-
-x₂ scatter, an abstract plane that needed explaining.
+**`demo_multi_mass_2d`, 750 by 550.** One map with both clouds, both labelled
+truths, both ellipses and the ten clocks; six traces in three rows and two
+columns, one column per mass. No inset: the final standard deviations are 0.2
+to 0.8 on a 16-wide axis (M2). The cloud passes through a second mode, which an
+ellipse cannot show; the dots do.
 
-**`demo_multi_mass_2d`, 750 by 550. Not prototyped.**
-Left: one map with both clouds, both labelled truths, both ellipses and the ten
-clocks filled as in `demo_2d`. No inset: the final standard deviations are 0.2
-to 0.8 on a 16-wide axis (measured, M2) and stay visible. Right: six traces in
-three rows and two columns, one column per mass. Today only mass 1's cloud is
-drawn.
+**`demo_model_comparison`, 750 by 420.** One panel: posterior probability of
+each count against observations, three lines growing from the model prior at
+k = 0, in `ordered[0..2]`. Labels sit in a fixed gutter to the right, in a
+fixed order, each joined to its line's head by a thin connector, so crossing
+lines cannot stack them. The true count's label reads "(true model)" and comes
+from `true_k`. The reviewer of the audit suggested retiring this animation for
+a static chart; what the page shows is the third track's decision. Meanwhile
+the same run stays an animation and only its form changes, bars to lines.
 
-**`demo_model_comparison`, 750 by 420. Not prototyped.**
-One panel: the posterior probability of each count against observations, as
-three lines that grow from the model prior (one third each) at k = 0. Lines are
-`ordered[0..2]` for K = 1, 2, 3, each labelled at its head with its count and
-current value; the K = 2 label reads "K = 2 (true model)"; labels are kept a
-text line apart where the lines cross. The axes are 0 to T and -0.05 to 1.05.
+**`demo_echolocation_3d`, 750 by 550.** Drawn for this revision at k = 0, 1, 8
+and 80 in both themes, and at 390 pixels (measured, M8).
 
-The visual reviewer suggested a line chart in place of the bars and, better
-still, retiring the animation for a static figure. What that page shows is the
-third track's decision. Meanwhile this track keeps one animation of the same
-packaged run, with the same numbers, and changes only its form from bars to
-lines, the form the page's own executed plot already uses. The zero-based rate
-bars beside it are dropped. A static figure from the same replay would be
-simpler still; it was not chosen because it would remove an animation the
-page's prose refers to, which is a content change. If the third track retires
-the animation, it deletes one clip builder.
-
-**`demo_echolocation_3d`, 750 by 500. Prototyped (M7), crudely.**
-Left: the 3D scene. Its three axes share one fixed cube that contains the head
-and the true mass with a margin of 0.6, here -1.6 to 3.6, about half the width
-of today's box. The panes take the page colour. It shows the head's wireframe
-in `muted`, the 27 clocks in `ink`, the truth as a ring with a thin drop-line
-to the floor, and the cloud in `belief`. Particles outside the cube are not
-drawn (by masking; clipping to 3D limits needs Matplotlib 3.10 and the project
-allows 3.9). Right: four stacked traces, x, y, z, M, and beneath them a scatter
-of the 27 running-mean centred readings against the posterior-mean prediction,
-on fixed symmetric limits with the diagonal drawn. The scatter replaces the 27
-bars; the per-parameter traces replace the shared-axis convergence panel and
-the mass histogram.
-
-The camera turns 60 degrees in azimuth over the clip, eased at both ends, at a
-fixed elevation, and is still during the final hold. It moves on every video
-frame before the hold, so this clip is drawn about 300 times where the others
-are drawn T+1 times. The prototype, whose camera also moved during the hold,
-drew 356 frames in 12.5 s per theme.
-
-One limit is known and accepted. The prior spans plus or minus 16 on each axis
-and the first observation collapses it to a standard deviation of about 0.2
-(measured, M2). In the fixed cube the prior frame is nearly empty: 5 of the 500
-displayed particles fall within even plus or minus 4.5. The collapse is
-therefore carried by the traces, whose first frame shows the prior's band, and
-the prior frame's status line says the prior extends far beyond the view.
+- **Close view**, a 3D scene on one fixed cube: the smallest cube holding the
+  head, the truth, and each coordinate's mean ± four standard deviations for
+  every k ≥ 1, padded by 0.3 and rounded outward to 0.1. For this run that is
+  -1.3 to 4.8. It shows the head wireframe (`muted`), clocks (`ink`), the cloud
+  (`belief`) and the truth as a ring with a drop-line to the floor. The ring is
+  about 22 pixels across and open; the final cloud, about 6 pixels, is visible
+  inside it.
+- **Whole prior box**, a small fixed panel at upper left: the display sample
+  projected on x and z over the prior's ±16, with a square marking the close
+  view. Here the collapse is visible: the box is full at k = 0 and holds one
+  small cluster at k = 1.
+- **Weight in view**, under the status line, from `weight_in_view`: "0.4% of
+  the prior lies inside the close view", then "100.0% of the cloud's weight
+  lies inside the close view". The round 1 cube held 0.25% of the prior and
+  only 78% of the weight after the first observation; this one holds 100.0%
+  from the first observation on (measured, M8).
+- **Traces** for x, y, z and M, stacked at right.
+- **Observed against fitted**, a small square panel on equal scales: for each
+  of the 27 clocks, the running mean of its centred reading against
+  `predicted_mean`, with the diagonal drawn. It is empty at k = 0 and says "no
+  readings yet". Its axes are labelled "observed mean" and "fitted", and the
+  caption calls it agreement with the readings used in the fit, not a test on
+  new data.
+- **Camera.** Azimuth turns 40 degrees, eased, at fixed elevation, and is still
+  during the final hold. Frames were drawn for a 60-degree turn first; its last
+  frame looks nearly along the x-axis and flattens the head.
 
 ### 6. The two static figures
 
-Both become plots drawn by an executed cell from committed data, in the same
-way as the nine existing plots: `renderings: [light, dark]`, a two-entry
-caption, `style(theme)`, `show(fig)`. The drawing lives in the library, because
-a demo and a script draw the same figures; the cell loads the data and calls
-it. A cell's working directory is its page's directory (measured, M10), so the
-data path is `../../assets/...`.
+Both become plots drawn by an executed cell, like the nine existing plots:
+`renderings: [light, dark]`, a two-entry caption, `style(theme)`, `show(fig)`.
+The drawing is in the library because a command and a script draw the same
+figures. A cell's working directory is its page's directory (measured, M12).
 
-**Density** (`story/beyond-point-masses.qmd`), 750 by 540, from
-`assets/replays/demo_density.npz` through a new `density_figure(replay,
-colors)`. Top: the density profile along the track, with the true profile in
-`truth`, and the pointwise median and central 68% band of the profiles of the
-500 displayed particles of the last frame in `belief`; the clocks are `ink`
-squares on the x-axis. Below: three traces, for μ, σ and A. Declared changes
-from today's figure: the inferred curve was the profile at the posterior mean
-and becomes a median with a band; the clock-rate panel is dropped; the three
-parameters no longer share an axis; truth and inference swap to the site-wide
-colours.
+**Density**, 750 by 540, from `assets/replays/demo_density.npz` through
+`density_figure(replay, colors)`. Top: the true profile in `truth`; in
+`belief`, the median and central 68% band of the 500 sampled profiles of the
+last frame, evaluated point by point along the track and labelled "pointwise
+median and 68% band"; clocks as `ink` squares. Below: traces for μ, σ and A.
+Declared changes: a median with a band where there was the profile at the
+posterior mean; no clock-rate panel; one axis per parameter; site-wide colours.
 
-**Range study** (`story/gravitational-echolocation.qmd`), 750 by 540, from the
-existing `assets/echolocation_range_study.json` through
-`range_study_figure(study, colors)`, which replaces `write_summary_figure` in
-`src/clocks/_echo_study.py`. Two stacked log-scale panels, position error above
-mass error, against range. Individual runs are small `muted` dots; the median
-error is an `ink` line with circles; the median posterior standard deviation is
-a solid `belief` line with squares, labelled directly once; the frozen pass
-tolerance, read from the study's `tolerances`, is a dashed `threshold` line in
-each panel; the pass counts per range, computed from the records, run along the
-top. There is no title. `scripts/scan_echolocation_range.py` keeps `--figure-
-only`, writing a light-theme PNG through the same function.
+**Range study**, 750 by 540, from `assets/echolocation_range_study.json`
+through `range_study_figure(study, colors)`. Two stacked log panels, position
+error above mass error. Measured errors are `ink`: each run a faint dot, the
+median a line with circles. The filter's own claim, the median posterior
+standard deviation, is a solid `belief` line with squares, labelled once. Each
+panel's frozen tolerance, read from the study, is a dashed `threshold` line.
+Pass counts computed from the records run along the top, labelled "runs within
+both limits". No title.
 
-### 7. The demo entry points
+`write_summary_figure(study, png_path)` stays as a thin wrapper that enters the
+light style, calls `range_study_figure` and saves. Both scan paths
+(`--figure-only` and after a single-cell scan), `tests/test_echo_study.py` and
+the monkeypatch in `tests/test_scenarios.py` use that name (read), and keeping
+it leaves all four untouched.
 
-After this change each `uv run demo-*` command runs the simulation and
-inference, prints its truth and estimates as it does today, and writes into
-`output/`:
+### 7. The demo commands and public names
+
+Each `uv run demo-*` command records its run, prints its truth and estimates
+from the replay, and writes:
 
 ```bash
 uv run demo-2d            # output/demo_2d.npz and output/demo_2d.png
 uv run demo-2d --video    # also output/demo_2d.mp4
 ```
 
-- `<name>.npz` is the replay, the same format as the committed files.
-- `<name>.png` is the final frame: the clip's poster, or for `demo-density` the
-  density figure. It needs only Matplotlib.
-- `--video` renders the clip as well. It needs an encoder, which `uv sync`
-  provides in a checkout; without one the command stops with a message saying
-  how to get one. `demo-density` has no `--video`.
-- `--output-dir` replaces `--output`; `--theme light|dark` is new and defaults
-  to light; `--observations` and `--particles` stay.
+The PNG is the final frame (for `demo-density`, the density figure) and needs
+only Matplotlib. `--video` needs an encoder, which `uv sync` provides in a
+checkout; without one the command stops and says how to get one.
+`demo-density` has no `--video`. `--output-dir` replaces `--output`; `--theme`
+is new. Video is opt-in so the default works from a bare wheel install.
 
-Video is opt-in so that the default command works from a bare wheel install,
-which has no encoder. An alternative, making `imageio-ffmpeg` a dependency of
-the library so that demos always write video, was rejected: it would put an
-encoder binary of 22 to 67 MB, depending on platform, behind a physics
-library's install.
+**This is a break, and it is documented.** `clocks.viz` calls itself a public
+facade and exports the old names, although none is in `clocks.__all__` and only
+the demos and `tests/test_viz.py` use them (read). Pull request 3 bumps the
+version to 0.2.0 and adds a short "Upgrading from 0.1" note to the README:
 
-The old `animate_*`, `plot_*` and `create_*_dashboard` names leave `clocks.viz`.
-Nothing outside the demos and `tests/test_viz.py` uses them (read), and none is
-in `clocks.__all__`. `clocks.viz` then exports the style names it has today,
-plus `load_replay`, `render_clip`, `density_figure` and `range_study_figure`.
+- removed from `clocks.viz`: the six `animate_*` functions, the ten `plot_*`
+  functions and the two `create_*_dashboard` functions; added: `load_replay`,
+  `render_clip`, `density_figure`, `range_study_figure`;
+- `--output PATH` becomes `--output-dir DIR`;
+- demos write a replay and a PNG where they wrote a GIF; MP4 is opt-in.
 
-**README.** The command list shows the new outputs and the `--video` form. The
-embedded GIF is removed, since a README cannot play a build-time video, and the
-sentence above it links to the site. The paragraph about committed demo media
-and the echolocation panel caveat is replaced by two sentences: replay data for
-each demo is committed under `assets/replays/`, and the site draws its
-animations from it. The project-structure list is updated.
+`scripts/check_wheel_entrypoints.py` gains one run: from the installed wheel,
+with no encoder and outside a checkout, `demo-1d` with two observations writes
+its archive and PNG, and with `--video` exits non-zero naming the encoder.
 
-**Getting Started.** The same command list, and one added sentence: rendering
-the site needs no system FFmpeg, because `uv sync` installs the encoder.
-
-**Architecture page and `docs/someday-maybe.md`.** The module diagram and its
-text equivalent name the new modules; the sentence about the site shipping
-static GIFs is corrected.
+README and Getting Started show the new commands; the README's GIF and its
+paragraph about committed media are replaced by a link to the site and two
+sentences on replay data. The Architecture page's module list and
+`docs/someday-maybe.md`'s remark about static GIFs are corrected.
 
 ### 8. The 2D truth change
 
-`TRUE_M` in `src/clocks/_demos/demo_2d.py` goes from 0.15 to 0.10. What it
-touches:
+`TRUE_M` in `demo_2d.py` goes from 0.15 to 0.10, in pull request 3. It touches:
 
-- `assets/replays/demo_2d.npz`, recorded at the new value.
-- The clip on the landing page and on "Into the Plane", both drawn from that
-  file.
-- The executed cell in `site/story/into-the-plane.qmd`, line 49, which states
-  the truth again and changes with it. Measured (M3): that cell's posterior
-  moves from (1.405, -1.077, 0.149) with standard deviations (0.111, 0.114,
-  0.001) and a largest particle mass of exactly 0.1500, the prior bound, to
-  (1.372, -1.098, 0.100) with (0.172, 0.170, 0.002) and a largest particle mass
-  of 0.1068. The posterior is no longer pressed against the ceiling.
-- `tests/test_shipped_ground_truths.py` reads the module constant and needs no
-  edit; the weak-field strength falls from 0.070 to 0.047 against the 0.08
-  limit (measured, M3).
-- No prose quotes 0.15 as this demo's truth (read: a search of the site and the
-  README finds only the cell). The page's sentence that the cloud collapses "to
-  a tight knot at the truth" is checked against the new figure by eye.
-- The audit's status table marks C6 fixed.
+- `assets/replays/demo_2d.npz`, re-recorded on the runner, and the clip on the
+  landing page and "Into the Plane";
+- the cell at `site/story/into-the-plane.qmd` line 49. Measured (M9): its
+  posterior moves from (1.405, -1.077, 0.149), with a largest particle mass of
+  exactly 0.1500, to (1.372, -1.098, 0.100) ± (0.172, 0.170, 0.002), with a
+  largest particle mass of 0.1068;
+- that page's sentence that the cloud collapses "to a tight knot at the truth".
+  At the new value the cell's mean is 0.16 from the true position with a spread
+  of 0.17, so the sentence is rewritten to say the cloud ends as a small knot
+  beside the true position, offset by about its own width;
+- `tests/test_shipped_ground_truths.py`, which reads the constant; the
+  weak-field strength falls from 0.070 to 0.047;
+- the audit's status table.
 
-A new test guards the finding itself: for every demo, each true parameter lies
-inside its prior range by at least 5% of the range's width.
+No other prose quotes 0.15 as this demo's truth (read). In the 50-observation
+run the final estimate is x = 1.417 ± 0.111, y = -1.222 ± 0.115, M = 0.1000 ±
+0.0012 (M2): y is 1.9 standard deviations from -1.0, as it was at the old value
+by the audit's numbers. That is seed 42's noise, and the text equivalent states
+the numbers.
 
-One thing the sharper figure will show. In the full 50-observation run at the
-new value the final estimate is x = 1.417 ± 0.111, y = -1.222 ± 0.115 and
-M = 0.1000 ± 0.0012 (measured, M2): y sits 1.9 standard deviations from the
-truth of -1.0. It was 1.9 standard deviations off at the old value too, by the
-visual reviewer's numbers, so this is the noise realization of seed 42, not the
-prior bound. The caption says "one simulated run" and claims no more.
+**A box-margin guard**, new: every shipped continuous truth value lies inside
+its prior box by at least 5% of the box's width, including the K = 2 truth of
+the model-comparison demo. It guards finding C6 only. Physical support and
+ordering keep their own tests (section 3, layer 2).
 
 ### 9. Provenance prose
 
-The section keeps its anchor, `#sec-figures`, which the landing page and the
-echolocation page link to, and is retitled "Where the figures come from". It
-becomes:
+`site/reproduce/reproducibility.qmd` keeps the anchor `#sec-figures` and the
+section is retitled "Where the figures come from".
 
-- **Replay data.** Each animation, and the density figure, is drawn when the
-  site is built from a committed file `assets/replays/<name>.npz` written by
-  that demo's recorder: its configuration and seed, the observations, a summary
-  of the particle cloud before any observation and after each one, and a
-  500-particle sample for display. Tests regenerate each run from the code and
-  compare. The video files are products of the build and no claim is made about
-  their bytes. Each file is one named finite realization and none establishes a
-  recovery rate. (Replaces "Demo animations and the density figure".)
-- **The density paragraph** is unchanged.
-- **Echolocation animation.** The sentences about a panel that "will change
-  when the assets are next regenerated" are deleted, because this work
-  regenerates it: the panel now shows the posterior mean of the particles' own
-  predictions. The sentences about the mass at two circumradii and the most
-  favourable range stay.
-- **Model-comparison runs.** Two pinned sentences change; see below.
-- **Echolocation range study.** Unchanged, except that the figure is said to be
-  drawn at build time from the certified records.
-
-The CI paragraph above the section stops calling the GIFs and PNGs exceptions:
-every figure and animation is drawn at deploy time, the animations and two
-figures from committed data described in the next section.
+- The link to the calibration report is labelled as the record of the August
+  2026 release, not of the current figures.
+- **Replay data** (replaces "Demo animations and the density figure"): each
+  animation and the density figure is drawn at build time from
+  `assets/replays/<name>.npz`, recorded on the CI runner: configuration, seed,
+  observations, a summary of the cloud before any observation and after each,
+  and, except for the model-comparison run, a 500-particle sample for display.
+  CI records each run again and compares. Video files are build products. Each
+  archive is one finite realization.
+- **Echolocation animation**: the opening sentences calling the GIF an old
+  release whose panel "will change when the assets are next regenerated" are
+  deleted; the sentences on two circumradii and the most favourable range stay.
+- **Model-comparison runs**: the two sentences below.
+- The CI paragraph stops calling the media exceptions.
+- **"Run exactly once."** The audit's decision is to state this as protocol and
+  disclose earlier blocks. Where the phrase survives (this page, Getting
+  Started, README, `method/the-particle-filter.qmd`) it becomes a statement
+  that the protocol reserves each block for one run and that block 400 to 411
+  was run under the frozen settings. A sentence about blocks 100 to 300 is
+  added only with a citation the implementer has checked; this spec has only
+  the audit's word for it.
 
 Sentences pinned by `tests/test_generated_assets.py`:
 
 | Today | Becomes |
 |---|---|
-| "The committed GIF on [How Many Masses?](../story/how-many-masses.qmd) is the packaged default run: 80 observations, 2,000 particles per candidate, and seed 42. " | "The animation on [How Many Masses?](../story/how-many-masses.qmd) replays the packaged default run: 80 observations, 2,000 particles per candidate, and seed 42. " with the three numbers taken from the replay's `meta` |
-| "With K=2 truth, its final estimate is K=2: 0.3990 and K=3: 0.6010. " | the same sentence, with both numbers computed from the last row of `model_posterior` |
-| the range-study sentences, the 25-observation sentence, the two sentences on horizon and budget | unchanged |
+| "The committed GIF on [How Many Masses?](…) is the packaged default run: 80 observations, 2,000 particles per candidate, and seed 42. " | "The animation on [How Many Masses?](…) replays the packaged default run: …", with the three numbers from `meta` |
+| "With K=2 truth, its final estimate is K=2: 0.3990 and K=3: 0.6010. " | the same words, with the true count from `true_k` and each probability looked up by K in `model_ks` |
+| the range-study, 25-observation and horizon sentences | unchanged |
 
-The recorded run gives 0.39903515 and 0.60096485 (measured, M2), so the
-sentence's text does not change; it stops being a literal. The provenance
-vocabulary the story pages must not use gains "committed replay" and "replay
-file". The test that the report contains every asset hash is removed, as in
-section 3.
+The recorded run gives 0.39903515 and 0.60096485 (M2). The test also requires
+that no other "K=2: …" figure in the section disagrees. The story pages'
+forbidden provenance vocabulary gains "committed replay" and "replay file".
 
 ### 10. The rendered-site check and the source guard
 
-`scripts/check_site_figures.py` today expects exactly one light and one dark
-plot on nine pages. It keeps that strictness and learns two things: a page may
-hold several plots, and a page may hold clips.
+`scripts/check_site_figures.py` keeps every check it has (one image per
+wrapper, declared size, files inside the site, no nesting, no element with both
+theme classes, equal captions) and learns an ordered manifest:
 
 ```python
-@dataclass(frozen=True)
-class PageFigures:
-    plots: tuple[int, ...] = ()               # declared heights, in page order
-    clips: tuple[tuple[str, int], ...] = ()   # (clip name, declared height)
+class Fig(NamedTuple):
+    kind: str             # "plot" or "clip"
+    height: int
+    clip: str | None = None
 
-EXPECTED_PAGES = {
-    "index.html": PageFigures(clips=(("demo_2d", 450),)),
-    "story/clocks-as-gravimeters.html": PageFigures(plots=(420,)),
-    "story/one-clock-is-not-enough.html": PageFigures(plots=(420,)),
+EXPECTED_PAGES: dict[str, tuple[Fig, ...]] = {
+    "index.html": (Fig("clip", 450, "demo_2d"),),
     "story/the-search-in-one-dimension.html":
-        PageFigures(plots=(540,), clips=(("demo_1d", 450),)),
-    "story/into-the-plane.html":
-        PageFigures(plots=(540,), clips=(("demo_2d", 450),)),
-    "story/two-hidden-masses.html": PageFigures(
-        plots=(420,),
-        clips=(("demo_multi_mass", 500), ("demo_multi_mass_2d", 550)),
+        (Fig("clip", 450, "demo_1d"), Fig("plot", 540)),
+    "story/two-hidden-masses.html": (
+        Fig("clip", 500, "demo_multi_mass"),
+        Fig("clip", 550, "demo_multi_mass_2d"),
+        Fig("plot", 420),
     ),
-    "story/how-many-masses.html":
-        PageFigures(plots=(420,), clips=(("demo_model_comparison", 420),)),
-    "story/beyond-point-masses.html": PageFigures(plots=(540, 420)),
-    "story/gravitational-echolocation.html":
-        PageFigures(plots=(420, 540), clips=(("demo_echolocation_3d", 500),)),
-    "method/the-particle-filter.html": PageFigures(plots=(540,)),
+    "story/beyond-point-masses.html": (Fig("plot", 540), Fig("plot", 420)),
+    "story/gravitational-echolocation.html": (
+        Fig("plot", 420), Fig("clip", 550, "demo_echolocation_3d"),
+        Fig("plot", 540),
+    ),
+    # ... the other five pages likewise
 }
 ```
 
-- **Themed elements are classified.** An element carrying a theme class is a
-  clip rendering if it is a `<video>` inside `<figure class="replay">`, and a
-  plot wrapper otherwise. A themed `<video>` anywhere else is a failure.
-- **Counts are exact.** A page must have exactly the listed number of plot
-  wrappers per theme and exactly the listed clips, in order. A page that gains
-  another themed element still fails.
-- **Plots.** Wrappers must alternate light, dark in document order; each
-  consecutive pair is checked as today (one image each, declared 750 by the
-  listed height, files existing inside the site and different, one caption
-  each, the same text).
-- **Clips.** Each replay figure must hold exactly one video per theme and one
-  non-empty `<figcaption>`. Each video must be declared 750 by the listed
-  height; carry `controls`, `muted`, `loop`, `playsinline` and
-  `preload="none"`, and no `autoplay`; and have a `src` and a `poster` that
-  resolve inside the site to existing files named `<clip>.<theme>.mp4` and
-  `.png`. The poster's pixel size, read from its PNG header, must be twice the
-  declared size, and the video file must begin with an MP4 `ftyp` box.
-- **Every other page** in the output must contain no theme class and no replay
-  figure, so a themed element on an unlisted page is caught.
+A `NamedTuple` is used because the tests import the script by path without
+registering it, and a dataclass with postponed annotations then fails at import
+(measured, M15).
 
-Folded in: `_resolve_source` raises `ValueError` on a path whose percent-escapes
-decode to a NUL character, from `Path.resolve()` (measured, M15). It will
-return a failure message instead, like every other bad path.
+- A page's themed elements, in document order, must be exactly its manifest. A
+  themed `<video>` inside `<figure class="replay">` is a clip rendering;
+  anything else is a plot wrapper. A page that gains a themed element fails, as
+  now. Every unlisted page must have none (today the six unlisted pages have
+  none; M15).
+- **Plots:** wrappers alternate light, dark; each pair is checked as today, and
+  the two image files must now differ in content, not only in name.
+- **Clips:** one video per theme and one non-empty `<figcaption>`; declared 750
+  by the listed height; `controls`, `playsinline`, `preload="none"` and a
+  non-empty `aria-label`; no `autoplay`; `src` and `poster` resolving inside
+  the site to `<clip>.<theme>.mp4` and `.png`; the two themes' files differing
+  in content; the poster's pixel size, from its PNG header, twice the declared
+  size. The rendered stylesheet must contain the responsive rule.
+- **The video stream is decoded.** Using the encoder, the check requires H.264,
+  `yuv420p`, the frame's pixel size, 20 frames per second and the frame count
+  the dwell schedule gives, and that `moov` precedes `mdat`. A file cut in half
+  keeps its `ftyp` box and box order but decodes to 97 of 296 frames
+  (measured, M11), so the count is what catches truncation.
+- **Folded in:** a path whose escapes decode to a NUL makes `_resolve_source`
+  raise (measured, M15); it will return a failure message.
 
 `tests/test_site_figure_style.py`:
 
-- **`data=` by position.** `_style_violations` counts string arguments and
-  allows two when `data=` is passed, wherever they sit, so
-  `ax.plot(x, "rate", "r-", data=frame)` passes although its third argument is
-  a format string (measured, M15). The rule becomes: with `data=`, only the
-  first two positional arguments may be strings; without it, none may.
-- **Plot cells are found by their `renderings` option**, not by a call to
-  `plt.subplots`, since the two new cells draw through library functions. The
-  expected number of plot cells is listed per page, and the test that the set
-  of plotting pages is exactly the known one stays.
-- **Library drawing code obeys the same colour rules.** The syntax-tree check
-  runs over the modules that draw clips and figures: no colour keyword holds a
-  string literal other than `"none"`, and no `cmap` is passed.
-- **Replay figures in page source.** Each `<figure class="replay">` block holds
-  a light and a dark video for one known clip, with matching `src` and `poster`
-  names. No page or README references a `.gif` or a file under `assets/`.
+- **`data=` by position.** `ax.plot(x, "rate", "r-", data=frame)` passes today
+  although its third argument is a format string (measured, M15). With `data=`
+  only the first two positional arguments may be strings; without it, none.
+- **Plot cells** are cells that declare `renderings` *or* call a plot producer:
+  `plt.subplots`, `plt.figure`, `show`, or a `clocks.viz` function named
+  `*_figure`. Every such cell must meet the cell contract, so an unthemed plot
+  cannot slip past by omitting `renderings`.
+- **The manifest matches the source.** For each listed page, the order of plot
+  cells and replay figures in the `.qmd` equals the manifest's order and clip
+  names.
+- **Library drawing code** passes the same syntax-tree colour check as page
+  cells. A colour passed through a variable escapes that check; the artist
+  tests in "Testing" cover it.
+- **Retired names.** No page or README mentions any of the eight retired file
+  names. References to `assets/replays/` and the study JSON are allowed.
 
-The site-check workflow's path filter gains `assets/replays/**` and
-`assets/echolocation_range_study.json`, since the site now reads them.
+The site-check workflow's path filter gains `assets/replays/**` and the study
+JSON.
 
 ### 11. Sequencing
 
-Three pull requests. The first two change nothing the site shows or says; the
-third is the switch and cannot usefully be split, because pages, checks, prose
-and the removal of the old files have to agree.
+Three pull requests. Each leaves the site correct, and none merges a renderer
+that nothing calls.
 
-1. **Replay data.** `_replay.py`, `record()` in each demo,
-   `scripts/record_replays.py`, the seven committed files at today's truths, the
-   format, recorder, contract and regeneration tests, and the two owed
-   follow-ups. Demos still write GIFs. This goes first because it puts the
-   cross-platform comparison in front of the runner before anything depends on
-   it.
-2. **Renderers.** `_video.py`, the clip builders, `density_figure`,
-   `range_study_figure`, the encoder dependency, and their tests, beside the
-   old code and unused by the demos or the site. Contact sheets of every clip
-   at four frames, in both themes, accompany the pull request, because four of
-   the six clips have not been drawn yet.
-3. **The switch.** The 2D truth, its re-recorded file and the guard that every
-   truth lies inside its prior (which the 2D file fails until then); the demo
-   commands; the
-   pre-render script, `_quarto.yml`, the playback script and CSS; the page
-   embeds, captions and two plot cells; the rendered-site check and source
-   guard; the provenance prose and its tests; README, Getting Started,
-   Architecture; the calibration report's note; the audit's status table (C6,
-   V1 and V5); deletion of the GIFs, PNGs, their mirror, `_animate.py`, the old
-   panel functions and their tests.
+1. **Replay data.** `_replay.py`; `record()` in each demo;
+   `scripts/record_replays.py`; `.python-version`; the CI step and artifact; the
+   seven archives, recorded on the runner at today's truths; layers 2 and 3; the
+   two guard fixes (NUL, `data=`), each with its own test. Demos still write
+   GIFs and the site is unchanged. The pull request reports, per demo, whether
+   macOS reproduces the runner's recording.
+2. **The two static figures.** `density_figure` and `range_study_figure` with
+   their page cells and captions; `demo-density` drawing through the new
+   function; the check and guard learning several plots per page; removal of
+   the two PNGs, their mirror and their hash rows; the provenance sentences
+   about those two files.
+3. **The clips and the switch.** First on the branch: every clip drawn and
+   timed, with contact sheets and runner timings in the pull request. Then
+   `_video.py`, the clip builders and the encoder dependency; the demo commands
+   and migration note; the 2D truth, its archive and the box-margin guard; the
+   pre-render script, page embeds and text equivalents; clip support in the
+   check and guard; the rest of the provenance prose; removal of the GIFs,
+   `_animate.py`, the old panel functions and their tests.
+
+If drawing in pull request 3 shows the archive lacks something, the format
+version is raised and the archives re-recorded there.
 
 ## Testing
 
-### Replay format and recorder (`tests/test_replay.py`)
+Each negative case asserts the specific message, so a checker that rejects
+everything, or nothing, fails.
 
-- Save then load returns equal `meta` and arrays with the declared dtypes.
-- `load_replay` raises `ValueError` for a wrong format name, an unknown
-  version, a missing key, a row count that is not T+1, a non-finite value, and
-  a float64 `cloud`; each message names the key.
-- On a hand-built filter history with unequal weights, `mean`, `cov` and `ess`
-  equal moments computed independently in the test; row 0 equals the prior
-  state; the square root of the last `cov` diagonal equals
-  `pf.estimate()["std"]`.
-- `thin`: with uniform weights the picks are a regular stride; with all weight
-  on one particle every pick is that particle; the result is float32 with
-  `min(size, N)` rows.
-- Recording leaves the filter's random generator state unchanged, and raises on
-  a filter that has already seen an observation.
+**Format** (`tests/test_replay.py`)
 
-### Committed data (`tests/test_replays.py`)
+- An archive written by the test with plain NumPy, from literal values, loads
+  to those values; an archive written by `save_replay` is read back with plain
+  NumPy and equals the literals. A value serialized wrongly but consistently
+  fails one of the two.
+- For every key: a wrong dtype, a wrong number of dimensions and a wrong inner
+  dimension each raise, as do a missing key, an extra key, a wrong version and
+  a non-finite value.
 
-- The files under `assets/replays/` are exactly the seven names, and each
-  loads.
-- Each file's `meta` equals its demo module's constants.
-- The echolocation file satisfies `filter_observations = Q @ observations`.
-- Every true parameter is inside its prior range by 5% of the width. This test
-  arrives with the 2D truth change, in the third pull request.
-- Regeneration: `record()` against the committed file, as in section 3's
-  table. Four demos in the default suite, three marked `slow`.
+**Recorder**
 
-### Clips and figures (`tests/test_viz.py`, rewritten)
+- On a hand-built history with correlated parameters and unequal weights in
+  every row, `mean`, the whole of `cov` including off-diagonals, and `ess`
+  equal moments computed independently in the test, row by row.
+- With a non-linear `predict`, `predicted_mean` and `predicted_std` equal the
+  independently computed weighted moments of the predictions, and differ from
+  the prediction at the mean particle.
+- A recorded run and the same run without the recorder, on a filter whose
+  updates demonstrably resample and accept moves, give the same observations,
+  the same particles and weights in every history row, and the same final
+  generator state. Run for the shared-generator density arrangement and with
+  `predict` supplied.
+- A filter that has seen an observation raises, and its state is unchanged
+  afterwards.
+- `thin`: weights (0.1, 0.2, 0, 0.3, 0.4) with m = 5 give indices 1, 3, 3, 4,
+  4; seven uniform weights with m = 3 give 1, 3, 6; four uniform weights with
+  m = 4 give 0, 1, 2, 3 (each measured, M6). Offset 0.5 gives 0, 1, 3, 4, 4 and
+  1, 3, 5 on the first two, and a plain stride gives neither.
+- `first_divergence` returns nothing for equal replays and the earliest frame
+  and key for a perturbed one, at each tolerance class.
 
-Drawn from small synthetic replays (three observations, 40 particles) and, for
-limits, from the committed files:
+**Committed data** (`tests/test_replays.py`): layers 2 and 3 of section 3, the
+`created_with` requirement, and the box-margin guard from pull request 3.
 
-- every axes has the same rectangle and the same limits on the first and last
-  frame;
-- the frame is exactly 1500 pixels wide and twice the declared height, both
-  even;
-- the first frame's status line reads "Before any observation" and its cloud
-  holds the prior row;
-- the dwell schedule starts at 1.2 s, ends at 2.5 s, has every entry a multiple
-  of one twentieth of a second, and the number of frames written equals its
-  sum times 20;
-- the truth marker's colour is the palette's `truth` and the cloud's is
-  `belief`, in both themes;
-- the echolocation camera's azimuth is non-decreasing, spans 60 degrees and
-  does not move during the final hold;
-- a one-observation replay renders without error;
-- encoding a three-observation clip produces a file that begins with an `ftyp`
-  box and a poster of the frame's pixel size. This test fails, and is not
-  skipped, when no encoder is found.
-- `range_study_figure` on a synthetic study draws its tolerance lines at that
-  study's tolerances and its pass counts as computed from that study's records.
+**Figures** (pull request 2)
 
-### Site
+- `density_figure` and `range_study_figure` on synthetic inputs: the plotted
+  median error and posterior-spread lines equal the values from `summarize`;
+  tolerance lines sit at the study's tolerances; pass counts equal those
+  computed from the records; the density band's edges equal independently
+  computed percentiles.
+- Changing one value in the input moves the corresponding artist.
+- Every visible artist's colour is a palette colour for the theme.
 
-- `tests/test_check_site_figures.py` gains cases for: a page with two plots; a
-  page with a clip; a clip missing its dark video; a poster that does not
-  exist; a wrong clip name; a wrong height; an `autoplay` attribute; a themed
-  element on an unlisted page; a path with an encoded NUL.
-- `tests/test_site_figure_style.py` as in section 10.
-- `tests/test_cli.py`: the default outputs, `--output-dir`, the fast overrides,
-  and `--video` on a one-observation run.
-- `tests/test_generated_assets.py`: the pinned sentences as in section 9.
+**Clips** (pull request 3), on small synthetic replays and the committed ones
+
+- Every axes has the same rectangle and limits on every frame.
+- On sampled frames including middle ones, the cloud artist's coordinates equal
+  the archive's row, x on x and y on y; the artist is visible, has non-zero
+  size and opacity, and is not covered by an opaque artist. Frame 0 shows row
+  0.
+- The dwell schedule equals the literal list for 50 and for 80 observations,
+  and the encoded frame count equals its total times 20.
+- Truth, belief and clock artists carry their role colours in both themes, and
+  every visible artist's colour is a palette colour or a `background`-to-`ink`
+  blend.
+- The echolocation azimuth equals the eased function at sampled frames, with a
+  smaller first step than middle step, and is constant during the hold.
+- A one-observation replay renders a frame with more than a set number of
+  distinct colours.
+- The frame is 1500 by twice the declared height.
+- Changing `mean[-1]` or a `cloud` row in a copy of a committed archive changes
+  the trace's last point, the header text and the dots; rendering the site
+  media from that copy changes the poster's pixels. This is the test that the
+  site draws from the committed data.
+- The encode test decodes its output as section 10 describes, and fails when no
+  encoder is found.
+
+**Site**
+
+- `tests/test_check_site_figures.py`: positive fixtures for two plots and for a
+  clip; negative fixtures, each with its message, for a missing dark video, a
+  missing poster, a wrong clip name, a wrong height, `autoplay`, a missing
+  `aria-label`, identical light and dark content, a themed element out of order
+  and on an unlisted page, a truncated video, and an encoded NUL.
+- `tests/test_cli.py`: default outputs; the archive written has the requested
+  demo name and observation count; `--video` on a short run.
+- The pinned sentences and the text equivalents.
 
 ### Mutation checks
 
-The protocol is the first track's: each mutation applied in turn with bytecode
-caching off and the tree confirmed clean between mutants, the whole suite run,
-and the plan naming the exact test IDs expected to fail. For each kind of test,
-one mutation it must catch and one it will not:
+The protocol is the first track's: each mutation in turn, bytecode caching off,
+tree confirmed clean between mutants, the whole suite run, the plan naming the
+exact tests expected to fail.
 
 | Test | Catches | Does not catch |
 |---|---|---|
-| format validation | the writer omitting `cov`; saving `cloud` as float64 | wrong values in arrays of the right shape |
-| recorder moments | an unweighted mean; taking history from index 1, so row 0 is not the prior | an error made identically in the test's own arithmetic |
-| `thin` | the offset 0.5 (irregular strides); a plain stride on a weighted state | another valid equal-weight scheme |
-| generator untouched | thinning with the filter's own generator | a recorder that reads state without advancing it |
-| `meta` against the module | changing `TRUE_M` without re-recording | a stale file whose `meta` still matches (regeneration catches it) |
-| regeneration | a changed default control; a changed seed; a change to the sampler that alters the trajectory; a stale file | any change to drawing; a formula wrong in the recorder, since both sides share it (the moments test covers that); a change below 1e-9 |
-| truth inside the prior | `TRUE_M = 0.15` | a truth 6% from the bound |
-| fixed axes | autoscaling a trace panel; turning constrained layout back on | a limit that is fixed but badly chosen |
-| frame size | a canvas 4.6 inches tall | a size that is even but not the declared one, which the declared-size assertion catches separately |
-| prior frame, pacing | dropping row 0; uniform dwell | a dwell schedule that is plausible but different from the spec's, unless its ends or total change |
-| role colours | swapping truth and belief | a wrong but distinct shade |
-| encode smoke | the encoder missing; an odd frame size reaching the encoder | whether a browser can play the file |
-| rendered-site check | a page losing a theme's video; a missing poster; `autoplay`; a third themed element; the wrong clip on a page | whether the clip looks right or plays in Safari |
-| `data=` by position | `ax.plot(x, "rate", "r-", data=frame)` | a colour passed through a variable |
-| prose | "committed GIF" left in the sentence; a number differing from the replay | a sentence that is well formed and misleading |
+| format, both directions | a writer that scales an array; a loader accepting float32 `mean` | a value wrong before it reaches the writer |
+| recorder moments | an unweighted mean; a diagonal-only `cov`; history from index 1; prediction at the mean particle | an error shared with the test's arithmetic |
+| recorded against unrecorded | the recorder drawing readings early; thinning with the filter's generator | a recorder that only reads state |
+| `thin` cases | offset 0.5; a plain stride; special-casing uniform weights | another valid equal-weight scheme with the same picks on these cases |
+| layer 2 | a constant offset on the echolocation channels; a truth outside physical support; stale `meta`; a locally recorded file | wrong summaries in a well-formed archive |
+| layer 3 | a changed noise level, truth or likelihood | a changed seed or control, which the reference comparison catches |
+| reference comparison (CI) | a changed seed, control or sampler step; a stale archive; changed array content under current names | a recorder formula wrong on both sides, which the moments tests cover; drawing |
+| box margin | `TRUE_M = 0.15` | a truth 6% inside the box |
+| clip frames | autoscaling in a middle frame; x and y swapped; an invisible cloud on frame 0; two middle dwells swapped; constant camera speed | a fixed limit badly chosen; labels that collide |
+| replay-to-artist | a renderer reading a stale or different archive | a panel the test does not perturb |
+| decode check | truncation; another codec or pixel format; a wrong frame count | whether Safari plays it |
+| rendered-site check | each negative fixture above | whether a clip looks right |
+| source guard | `ax.plot(x, "rate", "r-", data=frame)`; an unthemed plot cell; a retired file name | a literal colour passed through a variable (the artist tests catch its effect) |
+| prose | a stale sentence; a number differing from the archive; a second, contradicting "K=2" figure | a well-formed sentence that misleads |
 
 ### Checks by eye
 
-- Contact sheets of every clip (prior, first, eighth and last frame) and both
-  static figures, in both themes, at full width and at 390 pixels, committed
-  under `docs/plans/2026-11-19-replay-and-animation/` with the second pull
-  request.
-- Each clip played through in both themes in Chrome, Firefox and Safari on the
-  deployed preview or a local server: it starts, loops, pauses off screen, and
-  stays still under reduced motion.
-- The phone harness from PR #21 at 390 pixels: no page wider than the viewport.
-- The 2D page's "tight knot at the truth" sentence, and each new caption,
-  against its figure.
+- Contact sheets of every clip (k = 0, 1, 8, last) and both figures, both
+  themes, full width and 390 pixels, committed under
+  `docs/plans/2026-11-19-replay-and-animation/`. All six trace headers of the
+  two-mass 2D clip are read at 390 pixels.
+- Each clip in Chrome, Firefox and Safari: poster and controls with JavaScript
+  off; play, pause and seek from the keyboard; the theme switch.
+- The phone harness from PR #21 at 390 pixels.
+- Each caption and text equivalent against its clip.
 
 ## Measurements
 
-All run on 2026-11-18 in the worktree at `7d40c92`, on macOS arm64 (Apple M1
-Max), Python 3.14.0, NumPy 2.4.2, SciPy 1.17.1, Matplotlib 3.10.8, Quarto
-1.9.32, through `uv run --frozen`. The probe scripts were in a session scratch
-directory and are not kept; each entry says what was run.
+Run on 2026-11-18 and 19 in the worktree, on macOS arm64 (Apple M1 Max),
+NumPy 2.4.2, SciPy 1.17.1, Matplotlib 3.10.8, Quarto 1.9.32, through
+`uv run --frozen`. Probe scripts were in a session scratch directory and are
+not kept.
 
-- **M1. Cross-platform agreement.** The Getting Started cell (two masses, 40
-  observations, 1,500 particles, K = 1, 2, 3, seed 42) run locally printed
-  `{1: 2.7885139471082757e-205, 2: 0.6086294618644883, 3:
-  0.3913705381355014}`. The deployed page, fetched with `curl`, shows the same
-  with `0.3913705381355013`. The deploy workflow installs Python 3.12 (read);
-  the local run used 3.14.
-- **M2. Candidate replay files.** A scratch recorder ran each demo's default
-  inference and wrote a candidate archive with 500 displayed particles. Sizes
-  in kB: 73.5, 169.3, 392.3, 366.1, 9.7, 193.9, 548.4 in the order of section
-  1's list; 1.80 MB in all. Whole clouds compressed: 30.7 MB in float64, 13.0
-  MB in float32. Inference times in seconds: 0.2, 0.4, 0.8, 2.3, 1.4, 40.1
-  (density, including its summaries), 4.1. Final effective sample sizes were
-  1630 of 2000 to 970 of 1000. The 2D run at M = 0.10 ended at (1.4169,
-  -1.2223, 0.1000) with standard deviations (0.1111, 0.1148, 0.0012). The
-  model comparison ended at 0.39903515 and 0.60096485. The echolocation prior
-  has standard deviation 9.2 to 9.3 per axis; after one observation 0.16 to
-  0.26; at the end 0.017 to 0.030; 5 of 500 displayed prior particles lie
-  within plus or minus 4.5. The candidates used the offset 0.5 and lacked the
-  profile arrays, so the final files will differ slightly in size.
-- **M3. Density time and the 2D cell.** Density inference alone: 33.0 s. The
-  "Into the Plane" cell at 0.15 and at 0.10: the numbers in section 8, with
-  weak-field strengths 0.0702 and 0.0468.
-- **M4. Repeatability.** The six fast demos recorded twice, and once more in a
-  separate Python 3.12 environment from the same lock: every array bitwise
-  equal in all three.
-- **M5. `meta` round trip.** A JSON string holding "μ σ" saved with
-  `savez_compressed` and read with `allow_pickle=False` came back equal.
-- **M6. Thinning offsets.** For uniform weights and N of 1000 to 6000 with m =
-  500: offset 0.5 gave strides such as [4, 5] and [11, 12, 13] with a target
-  exactly on a cumulative step; offset 0.618 gave one stride each, the nearest
-  target 0.056 to 0.47 of a weight from a step.
-- **M7. Rendering.** A scratch renderer using `clocks.viz.style`, explicit
-  axes rectangles, artists updated in place and raw frames piped to FFmpeg
-  9.0.2. 2D clip: 1500 by 900, 14.8 s, 51 draws at 23 ms, 2.0 to 2.1 s per
-  theme in all, 330 and 309 kB, posters 76 and 75 kB; at 750 by 450, 1.4 s and
-  155 and 145 kB. Echolocation clip: 1500 by 1000, 17.8 s, 356 draws at 33 ms,
-  12.2 to 12.8 s per theme, 1177 and 1095 kB, posters 167 and 152 kB; at 750
-  by 500, 10.6 to 10.8 s and 566 and 534 kB. A first attempt at 7.5 by 4.6
-  inches failed with a frame of 1500 by 919. Canvas heights 4.2, 4.5, 4.75,
-  5.0, 5.4 and 5.5 inches gave exact pixels at 100 and 200 dpi; 4.6 inches
-  gave 459 and 919, and 736 at 160 dpi.
-- **M8. Packaged encoder.** `uv run --with imageio-ffmpeg` installed 0.8.1
-  without touching `uv.lock`; its binary reports FFmpeg 9.0 configured with
-  `--enable-libx264`. PyPI lists wheels for `manylinux_2_28_x86_64` (67 MB),
-  `manylinux_2_28_aarch64`, macOS and Windows, uploaded 2026-11-03.
-- **M9. Encoder bytes.** The same clip encoded by the system FFmpeg 9.0.2 and
-  by the packaged 9.0 had equal sizes to the kilobyte and different SHA-256.
-  `ffprobe` on the latter: H.264 High, `yuv420p`, 1500 by 900, 20 fps, 296
-  frames.
-- **M10. Quarto 1.9.32.** A scratch website project with the site's theme
-  files. A pre-render `.py` script ran in the project directory under the
-  `uv run` Python with `QUARTO_PROJECT_RENDER_ALL=1`; on a single-file render
-  it ran without that variable. Its `media/` files matched by `resources`
-  patterns were copied to the output; files written by a cell and matched by a
-  pattern were not. Raw `<video>` markup passed through with all attributes; a
-  `<figure>` gained the class `figure`; Markdown in `<figcaption>` rendered.
-  `![caption](x.mp4){width= height=}` produced `<video src width height
-  controls>` inside a captioned figure and copied the file. A cell with
-  `renderings: [light, dark]` and two HTML outputs produced `cell-output-
-  display light-content` and `dark-content` wrappers, with `fig-cap` entries as
-  `<p>`. A cell printed its working directory as the page's directory. The
-  compiled CSS contains `body.quarto-dark .light-content{display:none
-  !important}` and its counterpart.
-- **M11. Runner image.** `Ubuntu2404-Readme.md` in `actions/runner-images`,
-  image version 20261111.370.1, fetched 2026-11-18: no occurrence of "ffmpeg".
-  The repository README maps `ubuntu-latest` to Ubuntu 24.04.
-- **M12. Site render time.** Local `quarto render` of the current site: 38.1 s.
-  `gh run view` step times for "Render site": 43 s (site-check run
-  44471577791) and 61 s (deploy run 44473013998).
-- **M13. Test suite.** `uv run pytest -q`: 1079 passed, 2 deselected in 32.1 s.
-- **M14. Browser.** A page built by the M10 project with the section 4 markup,
-  script and real clips, served locally with request logging, opened in
-  headless Chrome 157. Default: both posters requested, then the light video;
-  the light clip playing at 2.5 s; after `quartoToggleColorScheme()`, the dark
-  video requested, the light paused, the dark playing. With `--force-prefers-
-  reduced-motion`: no video requested, both paused. Box 750 by 450 at
-  `DOMContentLoaded`. At a requested width of 390 Chrome gave a 500-pixel
-  viewport: without the CSS rule the document was 776 wide; with it the video
-  was 449 by 269 and the document 500.
-- **M15. The two follow-ups.** `_style_violations('ax.plot(x, "rate", "r-",
-  data=frame)')` returned `[]`. `_resolve_source("a%00b.png", ...)` raised
-  `ValueError: lstat: embedded null character in path`.
-- **M16. Current check.** After the local render,
-  `scripts/check_site_figures.py` printed "Figure contract OK: 9 pages
-  checked." Counting elements with a theme class in every rendered page gave 2
-  on each of the nine plotting pages and 0 on the other six, so the rule that
-  unlisted pages hold none is satisfied today.
+- **M1. The runner is not bitwise repeatable, and nothing diverged.** The
+  Getting Started cell (two masses, 40 observations, 1,500 particles, three
+  candidates) prints its posterior at full precision. From the Pages artifacts
+  of five deploy builds, all on image ubuntu-26.04 20261111.196.1 with Python
+  3.12.16, the same lock and no change to numerical code: three print `{1:
+  2.7885139471082757e-205, 2: 0.6086294618644883, 3: 0.3913705381355013}` and
+  two print `{1: 2.7885139471085926e-205, 2: 0.6086294618645575, 3:
+  0.39137053813541234}`. This Mac prints the first with `...5014` as the last
+  entry. The cause was not identified; differing runner CPUs are believed.
+- **M2. Candidate archives.** A scratch recorder ran each demo's default
+  inference. Sizes with 500 displayed particles: 1.80 MB in all; whole clouds
+  30.7 MB (float64), 13.0 MB (float32). Inference seconds: 0.2, 0.4, 0.8, 2.3
+  (two masses 2D), 1.4 (model comparison), 33.0 (density), 4.1 (echolocation).
+  The 2D run at M = 0.10 ended at (1.4169, -1.2223, 0.1000) ± (0.1111, 0.1148,
+  0.0012). Model comparison ended at 0.39903515 and 0.60096485. A JSON string
+  with non-ASCII text round-tripped through `savez_compressed` without pickle.
+  The candidates predate this revision's keys.
+- **M3. Local repeatability.** The six fast demos recorded twice, and once
+  under Python 3.12: every array bitwise equal.
+- **M4. Dense profiles fail.** On a 161-point grid from -8 to 8 at each demo's
+  track offset, 451 of 1,000 `demo_1d` prior particles and 1,319 of 3,000
+  `demo_multi_mass` prior particles exceed the weak-field limit somewhere; the
+  strict forward model raised `PhysicsDomainError` for both.
+- **M5. Density draw order.** With the demo's filter builder at 100 particles,
+  drawing three readings before any update against drawing them between
+  updates: the first reading equal, the second differing by up to 0.01824, the
+  third by 0.00476.
+- **M6. Thinning.** Uniform weights, N from 1000 to 6000, m = 500: offset 0.5
+  gave mixed strides with targets exactly on steps; φ gave one stride, the
+  nearest target 0.056 to 0.47 of a weight from a step. The three small cases
+  in "Testing" gave the indices stated there.
+- **M7. Spread over inference seeds**, data fixed, 20 seeds (8 for density).
+  Standard deviation of the final mean: `demo_1d` x 0.0011, M 4.2e-5;
+  `demo_2d` at 0.10, x 0.0027, y 0.0031, M 3.1e-5 (at 0.15: 0.0018, 0.0022,
+  2.1e-5); `demo_multi_mass` positions up to 0.0010, masses up to 1.8e-5;
+  `demo_multi_mass_2d` positions up to 0.057, masses 0.0003; density μ 0.0012,
+  σ 0.0035, A 1.6e-5; echolocation positions up to 0.0009, M 5.8e-5. Final
+  standard deviations stayed within 0.80 to 1.13 of the demo seed's. Model
+  comparison: P(K=2) from 0.178 to 0.835, standard deviation 0.18; P(K=1) zero
+  to printed precision.
+- **M8. Echolocation.** From all 6,000 particles: the round 1 cube (-1.6 to
+  3.6) held 0.25% of the prior weight, 77.8% after one observation and 94.2%
+  after two. The rule in section 5 gives -1.3 to 4.8, holding 0.45% of the
+  prior and 100.00% at every k ≥ 1. Spatial standard deviations: 9.2 to 9.3
+  (prior), 0.16 to 0.26 (k = 1), 0.017 to 0.030 (final). Frames at k = 0, 1, 8,
+  80 were drawn at 1500 by 1100 in both themes and looked at, in two layouts;
+  the second, described in section 5, has no overlapping text. The final frame
+  was also viewed scaled to 390 pixels: the layout holds and labels are about 5
+  pixels tall.
+- **M9. 2D details.** Clock fills: 2 of 400 clock-frames exceed 1.1 times the
+  final maximum (largest running mean 0.0317 at k = 1 against a scale top of
+  0.0267). The "Into the Plane" cell at 0.15 and 0.10 gave the numbers in
+  section 8.
+- **M10. Rendering.** A scratch renderer with explicit rectangles, artists
+  updated in place and raw frames piped to FFmpeg. 2D clip: 1500 by 900, 51
+  draws at 23 ms, 2.1 s per theme, 330 and 309 kB, 76 kB poster. Echolocation
+  in the round 1 layout: 1500 by 1000, 356 draws at 33 ms, 12.5 s per theme,
+  1.18 and 1.10 MB. A 7.5 by 4.6 inch canvas gave 1500 by 919; heights 4.2,
+  4.5, 5.0, 5.4 and 5.5 gave exact pixels.
+- **M11. Encoder.** `imageio-ffmpeg` 0.8.1 installed in an overlay without
+  touching the lock; its macOS binary is FFmpeg 9.0 with `libx264`; PyPI lists
+  a 67 MB `manylinux_2_28_x86_64` wheel uploaded 2026-11-03; it ships no
+  `ffprobe`. Decoding the 2D clip with it reported H.264 High, `yuv420p`, 1500
+  by 900, 20 fps, 296 frames, boxes `ftyp, moov, free, mdat`. The same file cut
+  to half its bytes kept `ftyp` and the box order, exited 0, and decoded 97
+  frames. The system FFmpeg 9.0.2 produced different bytes for the same frames.
+- **M12. Quarto 1.9.32**, in a scratch project with the site's themes: the
+  pre-render and resource behaviour in section 4; raw `<video>` attributes pass
+  through; Markdown in `<figcaption>` renders; the static body class is
+  `quarto-light`; the compiled CSS holds the plain theme selectors; a cell's
+  working directory is its page's.
+- **M13. Browser.** The section 4 markup with real clips, served locally with
+  request logging, in headless Chrome 157: both posters requested; no video
+  requested, with scripts on or off; the visible video 750 by 450 at
+  `DOMContentLoaded`; after `quartoToggleColorScheme()` the dark video shown.
+  At a requested 390 pixels Chrome gave 500: the document was 776 wide without
+  the CSS rule, and 500 with it, the video 449 by 269.
+- **M14. Environment.** `type -a` finds no docker, podman, colima, lima or
+  `container`. CI run 44473014146 logged image ubuntu-26.04 and `CPython
+  3.14.4 ... /usr/bin/python3`; the deploy builds logged 3.12.16. The Ubuntu
+  26.04 and 24.04 image software lists contain no "ffmpeg". "Render site" took
+  43 s and 61 s on the runner and 38.1 s here. `uv run pytest -q`: 1079 passed
+  in 32.1 s.
+- **M15. Guards.** `_style_violations('ax.plot(x, "rate", "r-", data=frame)')`
+  returned `[]`. `_resolve_source("a%00b.png", ...)` raised `ValueError`. A
+  module with postponed annotations and a frozen dataclass, imported by path
+  without registration, raised `AttributeError`; the same with a `NamedTuple`
+  imported. Counting themed elements in the rendered site gave 2 on each of the
+  nine plot pages and 0 on the other six.
 
 ## Risks
 
-- **The runner's trajectory may differ from this machine's.** One measurement
-  (M1) says the platforms agree to the last digit or so; nothing says they
-  always will. The first pull request finds out, because CI runs the
-  regeneration tests on Linux against files recorded on macOS. If they fail
-  there, the files are not wrong, the comparison is too strict for two
-  platforms. The fallback, to be decided then and not built now, is to compare
-  trajectories tightly only on the platform named in the file's `created_with`
-  and elsewhere to require each posterior mean within a stated fraction of the
-  recorded standard deviation. That is a weaker test and its looseness would
-  need its own mutation check.
-- **A NumPy or SciPy upgrade can change the numbers.** The regeneration tests
-  then fail until the files are re-recorded. That is the test doing its job,
-  but it couples a lock bump to a data commit.
-- **Quarto 1.11.9 was not run.** Every Quarto behaviour above was measured on
-  1.9.32. Pre-render scripts, `resources` and the theme classes are
-  long-standing features and are believed unchanged. The site check runs on
-  1.11.9 when the third pull request is marked ready, and the rendered-site
-  check fails if a clip, a poster or the markup is missing.
-- **Browsers other than headless Chrome were not tested.** Safari needs
-  `playsinline` and `muted` for scripted playback and byte-range responses for
-  video; the markup has the first two, and GitHub Pages is believed to serve
-  ranges. This is a check by eye on the deployed site.
-- **The phone width was not reached.** Headless Chrome would not go below 500
-  pixels. The 390-pixel behaviour rests on the same CSS rule and is checked
-  with the existing phone harness.
-- **Four clips and both static figures are specified, not drawn.** The two-mass
-  2D clip, with a map and six traces in 750 by 550, is the tightest layout. The
-  second pull request's contact sheets are where a layout that does not fit is
-  found, before any page depends on it.
-- **The echolocation prior frame is nearly empty**, as section 5 says. If
-  review finds that unacceptable, the alternatives are a wider fixed cube,
-  which shrinks the head again, or a second, zoomed-out view.
-- **The encoder is a 22 to 67 MB development dependency.** It is believed to be
-  kept by the runner's uv cache between runs, and it is not a dependency of the
-  library. Its binary is a GPL build of FFmpeg; the project invokes it as a
-  separate program and does not redistribute it.
-- **Replay files are binary.** A re-recording shows in a pull request as changed
-  files with no readable diff. The pull request must quote the changed final
-  estimates, which the demo command prints.
-- **The hidden theme's poster is downloaded**, 75 to 170 kB per clip. Accepted.
-- **Text in a clip scales with the video.** At 390 pixels, labels are about 7
-  CSS pixels, the same known limit as the plots.
+- **A discrete flip on the runner.** M1 shows the runner computing the same run
+  two ways. If the two ways ever choose differently at a tempering, resampling
+  or acceptance step, the reference comparison fails on some runs and passes on
+  others. Nothing measured shows this happening. If it does, the diff summary
+  will show which demo; the remedy to consider then is a looser comparison for
+  that demo, and it would need its own mutation check.
+- **The runner image moves.** `ubuntu-latest` was Ubuntu 26.04 in every run
+  inspected, while the image repository's table still maps the label to 24.04
+  (read). An image or lock change that alters output fails CI until the
+  archives are re-recorded with a reviewed summary. That is intended, and it
+  couples such changes to a data commit.
+- **Quarto 1.11.9 was not run.** Everything in M12 is from 1.9.32. Pull request
+  3's site check runs a clean build on 1.11.9 with real media.
+- **Only Chrome was tested, and not at 390 pixels.** Safari needs byte-range
+  responses for video, which GitHub Pages is believed to serve.
+- **Four clips are still undrawn.** The two-mass 2D layout is the tightest.
+  Pull request 3 draws them before fixing anything.
+- **The format may need a second version** once those clips are drawn.
+- **The encoder** is a 22 to 67 MB development dependency, a GPL build invoked
+  as a separate program and not redistributed. The Linux binary is untested.
+- **Archives are binary.** Review of a change rests on `replay-diff.md`.
+- **Layer 3 is loose where the posterior is unstable**: the two-mass 2D
+  position bound is 0.35 and the model-comparison bound is wide. Off the runner
+  those two demos are pinned mostly by layer 2.
+- **Text in a clip scales with the video**: about 7 CSS pixels at 390, the
+  plots' known limit.
 
 ## Not doing
 
-- A scrubber, play-on-scroll, or any in-browser drawing of replay data.
-- A JSON or other browser-readable export of the replay.
+- Autoplay, looping, play-on-scroll, a scrubber, or in-browser drawing.
+- A JSON export of the replay; recording the generating commit in the archive.
 - Pinning or committing video, poster or figure bytes; image-comparison tests.
-- A GIF fallback for machines without an encoder.
-- A seed spread or a one-mass case for model comparison.
-- A new landing-page visual; the landing page keeps the 2D clip.
-- Recording the generating commit inside a replay file. The file's own history
-  in git identifies it; `created_with` records versions and platform.
-- Parallel rendering, unless the measured runner time calls for it.
+- A GIF fallback; parallel rendering.
+- A seed spread or one-mass case for model comparison; a new landing visual.
 
 ## Where this design is least sure
 
-1. **The cross-platform tolerance** (section 3). It rests on one comparison.
-   The sequencing exists to test it first.
-2. **The echolocation scene and the undrawn layouts** (section 5). The scene
-   was prototyped only roughly, its prior frame is nearly empty by
-   construction, and the collapsed cloud is small with no inset; the two-mass
-   clips and the model-comparison clip have not been drawn at all.
-3. **Hand-written video markup with a playback script** (section 4). It was
-   measured in one browser and one Quarto version. The choice of raw HTML over
-   generated markup, and of script-driven playback over the `autoplay`
-   attribute, should be challenged; the second was chosen because an
-   `autoplay` video hidden by the theme switch would still load and play.
+1. **The reference comparison's stability** (section 3). The runner already
+   shows two numerical variants of one run. The design bets that they keep
+   agreeing through every discrete decision of seven demos, on evidence from
+   one cell across five builds and one Mac.
+2. **The clips that have not been drawn** (section 5): both 1D clips with the
+   new per-clock panel, both two-mass clips, and the model-comparison gutter.
+   Their layouts, and whether the archive holds everything they need, are
+   untested.
+3. **The text equivalents and the echolocation scene's reading.** A paragraph
+   per clip with bound numbers is new prose on story pages, in a track that
+   otherwise leaves them alone. The echolocation frame now carries six panels
+   in 750 by 550 and is legible at full width but small on a phone.
+
+## Changes since round 1
+
+1. Dense track profiles dropped; predictions recorded and drawn at the clocks.
+2. Archives recorded on the CI runner and compared there on every pull request;
+   invariants and explicit bounds elsewhere; Python pinned to 3.12.
+3. Observations consumed lazily; model comparison records `true_k`, the model
+   prior row and each candidate's final estimate.
+4. Echolocation: wider close view from a stated rule, a prior-scale panel,
+   weight in view, an open truth ring, an empty scatter at k = 0; frames drawn.
+5. Native click-to-play video; the playback script removed; accessible names
+   and text equivalents added.
+6. Rebuild on change; decode-based video checks; encoder path printed.
+7. Display-sample contract, parameter order, exact key sets; clock-fill scale,
+   ellipse and band labels, label gutter.
+8. Migration note, version bump and wheel run; `write_summary_figure` kept;
+   2D sentence, provenance wording and box-margin guard scoped.
+9. Ordered manifest as a `NamedTuple`; plot-producer detection; retired names
+   banned instead of `assets/`; three pull requests re-cut so each renderer
+   lands with its caller.
