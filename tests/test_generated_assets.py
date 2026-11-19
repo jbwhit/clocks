@@ -3,6 +3,7 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+from statistics import median
 
 import pytest
 
@@ -74,11 +75,34 @@ def test_certified_range_json_matches_raw_hash_and_tracked_records() -> None:
     }
 
 
+def _certified_range_summary() -> tuple[str, str, str]:
+    """Pass counts by range, overall total, and far/close median std ratio."""
+    study = json.loads(
+        (ROOT / "docs/calibration/echolocation_range_certification.json").read_text()
+    )
+    runs_by_range = [
+        [run for run in study["results"] if run["range_r"] == range_r]
+        for range_r in study["ranges"]
+    ]
+    counts = [sum(run["passed"] for run in runs) for runs in runs_by_range]
+    close_std = median(run["pos_std"] for run in runs_by_range[0])
+    far_std = median(run["pos_std"] for run in runs_by_range[-1])
+    return (
+        ", ".join(str(count) for count in counts),
+        f"{sum(counts)}/{len(study['results'])}",
+        f"{far_std / close_std:.3f}",
+    )
+
+
 def test_current_prose_identifies_corrected_assets_and_honest_model_results() -> None:
     report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
-    echo_story = (ROOT / "site/story/gravitational-echolocation.qmd").read_text()
+    echo_story = " ".join(
+        (ROOT / "site/story/gravitational-echolocation.qmd").read_text().split()
+    )
     model_story = (ROOT / "site/story/how-many-masses.qmd").read_text()
-    normalized_model_story = " ".join(model_story.split())
+    provenance = " ".join(
+        (ROOT / "site/reproduce/reproducibility.qmd").read_text().split()
+    )
     current_asset_pages = [
         ROOT / "README.md",
         ROOT / "site/index.qmd",
@@ -94,20 +118,82 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     assert "a1b016b" in report
     for expected_hash in EXPECTED_VISUAL_HASHES.values():
         assert expected_hash in report
-    assert "12, 12, 11, 8, 3, 0" in echo_story
-    assert "12/12" in echo_story
-    assert "66.524" in echo_story
-    assert "12/12 far-range" in echo_story
-    assert "population reliability" in echo_story
-    assert "K=2: 0.3990" in model_story
-    assert "K=3: 0.6010" in model_story
-    assert "K=2: 0.740" in model_story
-    assert "K=3: 0.260" in model_story
-    assert "finite data horizon" in normalized_model_story
-    assert "finite-particle" in model_story
+    # The exact protocol record lives on the Reproducibility page; the story
+    # pages state the results in plain words and link there. Each result is
+    # matched as a whole sentence, with its numbers computed from the
+    # certification artifact, so an edit inside the sentence cannot pass.
+    pass_counts, total, std_ratio = _certified_range_summary()
+    assert pass_counts == "12, 12, 11, 8, 3, 0"
+    assert (
+        f"Pass counts out of twelve, from closest to farthest: {pass_counts}. "
+        in echo_story
+    )
+    assert (
+        f"The frozen cell passed {total} cases overall; pass counts from close "
+        f"to far were {pass_counts}. The close range passed 12/12. The far/close "
+        f"median position-standard-deviation ratio was {std_ratio}, above the "
+        "frozen factor 20 gate, and the 12/12 far-range three-standard-deviation "
+        "coverage is retained as a diagnostic rather than promoted after "
+        "inspection into a new gate."
+    ) in provenance
+    assert (
+        "It does not estimate population reliability or justify a universal "
+        "pass probability."
+    ) in provenance
+    assert (
+        "With K=2 truth, its final estimate is K=2: 0.3990 and K=3: 0.6010. "
+    ) in provenance
+    assert (
+        "The committed GIF on [How Many Masses?](../story/how-many-masses.qmd) is "
+        "the packaged default run: 80 observations, 2,000 particles per candidate, "
+        "and seed 42. "
+    ) in provenance
+    assert (
+        "The executed cell on that page is a separate 25-observation, "
+        "400-particle calculation that ends near K=2: 0.740 and K=3: 0.260. "
+    ) in provenance
+    assert (
+        "A different finite data horizon changes the evidence supplied by the "
+        "noisy realization, and a different finite-particle budget changes the "
+        "Monte Carlo estimate of that evidence."
+    ) in provenance
     assert "as the verdict shows" not in model_story
     for page in current_asset_pages:
         text = page.read_text().casefold()
         assert "pre-remediation" not in text
         assert "pending task 11" not in text
         assert "asset regeneration remains pending" not in text
+
+
+PROVENANCE_VOCABULARY = (
+    "committed gif",
+    "committed png",
+    "packaged default",
+    "one-shot",
+    "certif",
+    "seed-block 400",
+    "400–411",
+    "population reliability",
+)
+
+
+@pytest.mark.parametrize(
+    "page",
+    sorted([ROOT / "site/index.qmd", *(ROOT / "site/story").glob("*.qmd")]),
+    ids=lambda page: page.name,
+)
+def test_story_pages_leave_provenance_to_the_reproducibility_page(
+    page: Path,
+) -> None:
+    text = " ".join(page.read_text().casefold().split())
+
+    for phrase in PROVENANCE_VOCABULARY:
+        assert phrase not in text, f"{page.name} carries provenance text: {phrase!r}"
+
+
+def test_landing_page_links_to_the_figure_provenance_section() -> None:
+    landing = (ROOT / "site/index.qmd").read_text()
+    provenance = (ROOT / "site/reproduce/reproducibility.qmd").read_text()
+
+    assert "reproduce/reproducibility.qmd#sec-figures" in landing
+    assert "{#sec-figures}" in provenance

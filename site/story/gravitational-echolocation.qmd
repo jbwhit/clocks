@@ -81,52 +81,45 @@ components as independent would give the wrong absolute
 
 ## Watching the head lock on
 
-The current default demo places the mass at two circumradii along a fixed off-axis
-direction and shows eighty differential observations while the camera orbits.
-It is one fixed-seed visualization at the closest, most favorable range, not a
-reliability measurement.
+The demo places the mass at two circumradii, off-axis, and shows eighty
+differential observations while the camera orbits. It is a single run at the
+closest, most favorable range.
 
 ![The echolocation demo. Left: the head lattice, the true exterior mass (star), and the particle cloud, camera orbiting. Right, top to bottom: parameter convergence, mass marginal, differential rates by clock.](../assets/demo_echolocation_3d.gif)
 
-This committed GIF is the packaged default output from the corrected
-contrast-space SMC release, not a re-render of the current code. Its
-differential-rates panel draws the forward model evaluated at the posterior
-mean; the code now plots the posterior mean of the particles' own
-predictions, so that panel will change when the assets are next regenerated.
-
 ## How far does the sense reach?
 
-The range harness sweeps the declared circumradius grid and records position
-error, mass error, posterior standard deviations, coverage, residuals, SMC
-controls, and forward-model evaluation counts. Development seeds selected and
-froze the controls and tolerances by the declared ranking. The reserved
-400–411 block was then run exactly once for the corrected implementation.
+To find out, place the mass at six distances, from two circumradii to eight,
+and at each distance run the whole experiment twelve times with different
+random seeds. A run passes if it recovers the position to within
+1.0, the spacing between neighboring clocks, and the mass to within 0.04.
 
-![A finite fixed-seed resolution study. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, and dashed lines show posterior standard deviations.](../assets/echolocation_range_study.png)
+![Resolution against range. Top: position error; bottom: mass error. Dots are individual runs, solid lines are median errors, and dashed lines are the filter's own uncertainty (median posterior standard deviation).](../assets/echolocation_range_study.png)
 
-The displayed study was regenerated directly from the certified block-400
-records. The frozen cell passed 46/72 cases overall; pass counts from close to
-far were 12, 12, 11, 8, 3, 0. The close range passed 12/12. The far/close
-median position-standard-deviation ratio was 66.524, above the frozen factor
-20 gate, and the 12/12 far-range three-standard-deviation coverage is retained
-as a diagnostic rather than promoted after inspection into a new gate.
+Pass counts out of twelve, from closest to farthest: 12, 12, 11, 8, 3, 0.
+Close in, the sense is sharp; at eight circumradii none of the twelve runs
+places the mass within one clock spacing, though all twelve still recover its
+mass within tolerance. Over the same span the filter's median position
+uncertainty grows about 66-fold, and at the farthest range the truth still
+lies within three posterior standard deviations, coordinate by coordinate and
+in mass, in all twelve runs. The head loses track of where the mass is, and
+its error bars say so.
 
-The completed protocol guards against tuning directly to the reported holdout,
-but its fixed seeds provide regression and calibration evidence only for those
-simulated cases. It does not estimate population reliability or justify a
-universal pass probability. The
-physically robust trend is the signal scaling: the differential gradient
-falls as $1/R^2$, while the curvature that helps separate mass from range
-falls as $1/R^3$.
+These are 72 simulated runs under one noise level, one prior and one particle
+budget, not a general success rate;
+[Reproducibility](../reproduce/reproducibility.qmd#sec-figures) describes how
+the settings were fixed before these seeds were run. The physically robust
+trend is the signal scaling: the differential gradient falls as $1/R^2$,
+while the curvature that helps separate mass from range falls as $1/R^3$.
 
 ## Verdict
 
 The surrogate poses a coherent inverse problem inside its $|2\Phi|\le0.1$
 domain, but exterior range is intrinsically difficult. Direction is carried
 by the leading gradient; separating a nearby small mass from a farther heavy
-one leans on the weaker curvature. Any claimed sensing horizon must therefore
-be attached to a stated noise model, prior, particle budget, SMC controls,
-pass rule, and finite seed set—not promoted to a property of the population.
+one leans on the weaker curvature. So any sensing horizon comes with its
+conditions attached: this noise level, this prior, this particle budget, this
+pass rule.
 
 ## Coda: could she feel the Sun?
 
@@ -247,11 +240,8 @@ Which may be the most meditative conclusion physics has on offer.
 ::: {.callout-note title="Reproduce"}
 `uv run demo-echolocation-3d` regenerates the demo;
 `uv run scripts/scan_echolocation_range.py --seed-block 0 --workers 8 --per-run`
-runs the development grid. The reserved run used the scenario-default cell via
-`--seed-block 400`; protected blocks reject control overrides. The development
-defaults and acceptance tolerances were scientifically frozen from seeds 0–11
-before the one-shot 400–411 certification. Certification and corrected asset
-regeneration are complete.
-See
-[Getting Started](../reproduce/getting-started.qmd).
+runs the range grid on the development seeds. See
+[Getting Started](../reproduce/getting-started.qmd), and
+[Reproducibility](../reproduce/reproducibility.qmd#sec-figures) for the seed
+protocol behind the figure above.
 :::

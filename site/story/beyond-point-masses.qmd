@@ -12,10 +12,7 @@ center $\mu$, width $\sigma$ (the profile's own width here, not the
 [observation noise](../method/notation-and-glossary.qmd#term-sigma-obs) from earlier pages), and peak amplitude $A$ — and the
 identical particle filter on top.
 
-![The density demo. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
-
-This committed PNG is the current packaged default output from the corrected
-SMC implementation.
+![The density demo, one simulated run. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
 
 ## What spreading the mass does to clocks
 
@@ -53,13 +50,9 @@ profile and a narrower, denser one can produce nearly identical potentials at
 a handful of clock positions. This is the same inverse-problem pattern as the
 [mass–distance degeneracy](one-clock-is-not-enough.qmd): different physical
 profiles map to nearly identical clock-rate data. The
-library's [rejuvenation move](../method/the-particle-filter.qmd#sec-resampling)
-uses a regularized empirical covariance to propose steps along correlated
-directions. Crucially, Metropolis-Hastings accepts or rejects those symmetric
-proposals against the current tempered target; covariance geometry improves
-mixing without redefining the posterior. The density demo samples a uniform
-box in $(\mu,\sigma,A)$ conditioned on that box and weak-field validity, and
-uses the same support for its prior density.
+filter's [rejuvenation move](../method/the-particle-filter.qmd#sec-resampling)
+is shaped by the cloud's own covariance, so it proposes steps along the ridge
+as well as across it.
 
 ::: {.callout-note title="Where this could go"}
 The repo's [someday-maybe list](https://github.com/jbwhit/clocks/blob/main/docs/someday-maybe.md)

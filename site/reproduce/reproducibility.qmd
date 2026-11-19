@@ -36,17 +36,83 @@ Two workflows run on GitHub Actions:
   re-renders and redeploys this site on every push to `main`, so every
   executed-cell figure you see is regenerated from source at deploy time. The
   demo GIFs, the density PNG, and the echolocation range-study PNG are the
-  exceptions: the currently committed copies were generated explicitly from
-  the corrected code after one-shot certification. The `uv run demo-*`
-  commands regenerate their scenarios, but image encoders are not claimed to
-  be byte-deterministic across tool versions. The development range grid uses
-  `uv run scripts/scan_echolocation_range.py --seed-block 0`; its controls and
-  tolerances are frozen, and the reserved 400–411 block was run exactly once.
-  See the
-  [echolocation page](../story/gravitational-echolocation.qmd).
+  exceptions: they are committed files, described in the next section.
 
-The protected fixed-seed results establish deterministic regression cases,
-not a population reliability estimate. SMC evidence is similarly a
+## Where the committed figures come from {#sec-figures}
+
+The story pages keep commentary on these figures' origin to a short caveat.
+This section summarizes where each came from and what it does and does not
+establish; the
+[development calibration report](https://github.com/jbwhit/clocks/blob/main/docs/2026-08-16-development-calibration.md)
+records the generating commit and the asset hashes.
+
+**Demo animations and the density figure.** Each committed GIF, and the
+density PNG, is the packaged default output of its `uv run demo-*` command,
+generated explicitly from the corrected physics and SMC implementation after
+one-shot certification. The commands regenerate their scenarios, but image
+encoders are not claimed to be byte-deterministic across tool versions. Each
+figure depicts one named finite realization: a fixed scenario and seed. None
+establishes a population recovery rate. Where a story page also runs a
+smaller example in an executed cell, that is a separate finite run whose
+settings are shown in the cell.
+
+The density demo samples a uniform box in $(\mu,\sigma,A)$ conditioned on
+that box and weak-field validity, and uses the same support for its prior
+density.
+
+**Echolocation animation.** The committed GIF is the packaged default output
+from the corrected contrast-space SMC release, not a re-render of the current
+code. Its differential-rates panel draws the forward model evaluated at the
+posterior mean; the code now plots the posterior mean of the particles' own
+predictions, so that panel will change when the assets are next regenerated.
+It places the mass at two circumradii along a fixed off-axis direction, and
+is one fixed-seed visualization at the closest, most favorable range, not a
+reliability measurement.
+
+**Model-comparison runs.** The committed GIF on
+[How Many Masses?](../story/how-many-masses.qmd) is the packaged default run:
+80 observations, 2,000 particles per candidate, and seed 42. With K=2 truth,
+its final estimate is K=2: 0.3990 and K=3: 0.6010. The executed cell on that
+page is a separate 25-observation, 400-particle calculation that ends near
+K=2: 0.740 and K=3: 0.260. A different finite data horizon changes the
+evidence supplied by the noisy realization, and a different finite-particle
+budget changes the Monte Carlo estimate of that evidence. The split between
+two and three masses also moves substantially with the inference seed at
+these budgets, so neither number is a claim about which model generated the
+data. Comparing models responsibly means examining data horizon,
+particle-count, and seed sensitivity rather than reading one run's extra
+decimal places as certainty.
+
+**Echolocation range study.** The range harness behind the figure on the
+[echolocation page](../story/gravitational-echolocation.qmd) sweeps the
+declared circumradius grid along the same fixed off-axis direction as the
+animation, at one fixed mass, and records position error, mass error, posterior
+standard deviations, coverage, residuals, SMC controls, and forward-model
+evaluation counts. Development seeds 0–11 selected the controls by the
+declared ranking
+(`uv run scripts/scan_echolocation_range.py --seed-block 0`), and the
+controls and acceptance tolerances were frozen before the reserved block was
+run. The reserved 400–411 block was then run exactly once for the
+corrected implementation, using the scenario-default cell via
+`--seed-block 400`; protected blocks reject control overrides.
+
+The displayed study was regenerated directly from the certified block-400
+records. The frozen cell passed 46/72 cases overall; pass counts from close to
+far were 12, 12, 11, 8, 3, 0. The close range passed 12/12. The far/close
+median position-standard-deviation ratio was 66.524, above the frozen factor
+20 gate, and the 12/12 far-range three-standard-deviation coverage is retained
+as a diagnostic rather than promoted after inspection into a new gate.
+
+The completed protocol guards against tuning directly to the reported holdout,
+but its fixed seeds provide regression and calibration evidence only for those
+simulated cases. It does not estimate population reliability or justify a
+universal pass probability. Any claimed sensing horizon must therefore be
+attached to a stated noise model, prior, particle budget, SMC controls, pass
+rule, and finite seed set, not promoted to a property of the population.
+
+Taken together: the protected fixed-seed results establish deterministic
+regression cases, not a population reliability estimate. SMC evidence is
+similarly a
 consistent Monte Carlo estimator with finite-particle sampling error, not a
 deterministic exact integral.
 
