@@ -100,7 +100,7 @@ def show(fig: Figure) -> None: ...
   `style()` is entered, not at import, so importing `clocks.viz` does not
   change the process's font registry for existing callers. Registration is
   idempotent. Nothing in the module selects a matplotlib backend.
-- `show(fig)` renders the figure to PNG at twice its dpi, closes it, and
+- `show(fig)` renders the figure to PNG at twice its logical dpi (the figure's dpi divided by the canvas's device pixel ratio, which is 1 except under interactive HiDPI backends), closes it, and
   displays it with `IPython.display.Image(..., retina=True)`. The save is made
   inside `rc_context({"savefig.bbox": None})` with `bbox_inches=None`,
   `transparent=False` and the figure's own face colour, so an inherited

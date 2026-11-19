@@ -134,12 +134,14 @@ def show(fig: Figure) -> None:
         raise ImportError(
             "clocks.viz.show needs IPython; it is meant for Jupyter and Quarto cells"
         ) from error
+    # Interactive HiDPI backends scale fig.dpi by the device pixel ratio.
+    dpi = 2 * fig.dpi / fig.canvas.device_pixel_ratio
     buffer = io.BytesIO()
     with matplotlib.rc_context({"savefig.bbox": None}):
         fig.savefig(
             buffer,
             format="png",
-            dpi=2 * fig.dpi,
+            dpi=dpi,
             bbox_inches=None,
             transparent=False,
             facecolor=fig.get_facecolor(),

@@ -279,3 +279,20 @@ def test_show_explains_a_missing_ipython(monkeypatch: pytest.MonkeyPatch) -> Non
                 show(fig)
         finally:
             plt.close(fig)
+
+
+@pytest.mark.usefixtures("agg_backend")
+def test_show_ignores_the_canvas_device_pixel_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_display(monkeypatch)
+    with style("light"):
+        fig, ax = plt.subplots()
+        ax.plot([0, 1], [0, 1])
+        fig.canvas._set_device_pixel_ratio(2)
+        assert fig.canvas.device_pixel_ratio == 2
+        assert fig.dpi == 200
+        show(fig)
+    image = calls[0]
+    assert _png_array(image).shape[:2] == (840, 1500)
+    assert (image.width, image.height) == (750, 420)
