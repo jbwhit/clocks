@@ -42,8 +42,8 @@ the clocks only see the tick rates the summed potential produces:
 #| code-fold: true
 #| renderings: [light, dark]
 #| fig-cap:
-#|   - "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The curves look alike, but at the five marked clock positions they differ by up to about three times the observation noise."
-#|   - "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The curves look alike, but at the five marked clock positions they differ by up to about three times the observation noise."
+#|   - "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The single mass makes one dip where the pair makes two, and at the five marked clock positions the curves differ by up to about three times the observation noise."
+#|   - "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The single mass makes one dip where the pair makes two, and at the five marked clock positions the curves differ by up to about three times the observation noise."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
@@ -83,8 +83,9 @@ for theme in THEMES:
         show(fig)
 ```
 
-The curves are close by eye, yet at $x = 0$ this pair and this combined
-mass differ by nearly three noise standard deviations in a single reading. A
+The two curves differ in shape, one dip against two, and at $x = 0$ this
+pair and this combined mass differ by nearly three noise standard deviations
+in a single reading. A
 better-placed single mass comes closer across the array, so one noisy
 observation need not settle the question. Repeated independent observations
 from all five clocks make the remaining difference easier to resolve.
