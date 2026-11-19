@@ -11,7 +11,7 @@ from clocks import _scenarios
 from clocks._replay import validate_replay
 from clocks._rng import study_generator
 from clocks._scenarios import generate_random_clocks
-from clocks.api import infer, simulate
+from clocks.api import build_model_comparison, infer, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.noise import add_clock_noise
 from clocks.physics import (
@@ -603,8 +603,20 @@ def test_model_scenario_values():
         np.array([module.TRUE_X1, module.TRUE_X2, module.TRUE_M1, module.TRUE_M2]),
     )
     assert scenario.seed == module.SEED
+    assert scenario.noise_std == module.NOISE_STD
     assert scenario.n_observations == module.N_OBSERVATIONS
     assert scenario.n_particles == module.N_PARTICLES
+    expected_clocks = ClockArray(
+        np.array([[position] for position in module.CLOCK_POSITIONS]),
+        track_offset=module.TRACK_OFFSET,
+    )
+    assert np.array_equal(scenario.clock_array.positions, expected_clocks.positions)
+    assert scenario.clock_array.track_offset == module.TRACK_OFFSET
+    truth = MassConfig(
+        np.array([[module.TRUE_X1], [module.TRUE_X2]]),
+        np.array([module.TRUE_M1, module.TRUE_M2]),
+    )
+    assert np.array_equal(scenario.true_rates, clock_rates(truth, expected_clocks))
 
 
 def test_model_record_is_valid(model_replay):
@@ -633,6 +645,26 @@ def test_model_record_agrees_with_the_public_api(model_replay, model_result):
     np.testing.assert_allclose(posterior[1:], expected, rtol=1e-12)
     final = [model_result.posterior_by_model[k] for k in (1, 2, 3)]
     np.testing.assert_allclose(posterior[-1], final, rtol=1e-12)
+    evidence = [model_result.log_evidence_by_model[k] for k in (1, 2, 3)]
+    np.testing.assert_allclose(
+        model_replay.arrays["model_log_evidence"][-1], evidence, rtol=1e-12
+    )
+
+
+def test_model_record_ess_and_evidence_follow_each_candidate(model_replay):
+    comparison = build_model_comparison(_model_config())
+    for row, observation in enumerate(_model_observations(), start=1):
+        comparison.update(observation)
+        filters = [comparison.filters[k] for k in (1, 2, 3)]
+        ess = [1.0 / np.sum(f.state.weights**2) for f in filters]
+        np.testing.assert_allclose(
+            model_replay.arrays["model_ess"][row], ess, rtol=1e-12
+        )
+        np.testing.assert_allclose(
+            model_replay.arrays["model_log_evidence"][row],
+            [f.log_evidence for f in filters],
+            rtol=1e-12,
+        )
 
 
 def test_model_record_final_estimates_match_the_public_api(model_replay, model_result):
