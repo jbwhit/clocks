@@ -561,7 +561,7 @@ DENSITY_BOUNDS = (((0.49, 0.38, 0.00050), (0.38, 0.15, 0.00069)),
 
 - `test_every_step_may_fail`: split the text after `steps:` into items (lines beginning with six spaces and `- `); every item contains `continue-on-error: true`.
 - `test_the_report_job_is_a_three_way_matrix`: the text contains `sample: [1, 2, 3]` and `fail-fast: false`.
-- `test_triggers_are_filtered_to_what_can_change_a_replay`: each of `src/clocks/**`, `assets/replays/**`, `scripts/record_replays.py`, `uv.lock`, `pyproject.toml` and the workflow's own path appears exactly twice, once per trigger.
+- `test_triggers_are_filtered_to_what_can_change_a_replay`: each of `src/clocks/**`, `assets/replays/**`, `scripts/record_replays.py`, `uv.lock`, `pyproject.toml` and the workflow's own path appears exactly twice as a quoted list entry (a line that is `- "<path>"` after stripping), once per trigger. Count the list entries, not the bare text: the script's path also appears in the record step's command.
 - `test_drafts_are_skipped_and_jobs_time_out`: the text contains the draft condition and `timeout-minutes: 10`.
 - `test_the_recording_uses_the_locked_environment`: the record step runs `uv run --locked`.
 - `test_artifacts_are_named_per_attempt_and_sample`: the artifact name contains `github.run_id`, `github.run_attempt` and `matrix.sample`.
@@ -671,7 +671,7 @@ No files change. This task proves the new tests can fail. Work in the task's own
 | `thin` uses offset 0.5 in place of φ | `test_thin_picks[unequal]`, `test_thin_picks[uniform_7_3]` |
 | `thin` uses `side="right"` | `test_thin_picks[tie]` |
 | `thin` does not divide the cumulative sum by its last entry | `test_thin_ignores_the_scale_of_the_weights` |
-| `record_filter` zeroes the off-diagonal entries of `cov` | `test_moments_match_an_independent_calculation` |
+| `record_filter` zeroes the off-diagonal entries of `cov` | `test_moments_match_an_independent_calculation`, `test_row_zero_holds_sentinels` (it checks the prior row's `cov`, and the scripted prior is correlated) |
 | `record_filter` computes `ess[0]` as 1 / Σw² | `test_row_zero_holds_sentinels` |
 | `record_filter` computes `predicted_mean` as `predict` at the mean particle, **only when the filter is the scripted double** (`not hasattr(pf, "rng")`) | `test_predictions_are_moments_of_predictions` |
 | `record_filter` draws one number from the filter's generator after the last update, when the filter has one (`getattr(pf, "rng", None)`) | `test_recording_does_not_change_the_run` |
