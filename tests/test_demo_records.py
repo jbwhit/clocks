@@ -14,7 +14,11 @@ from clocks._scenarios import generate_random_clocks
 from clocks.api import infer, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.noise import add_clock_noise
-from clocks.physics import clock_rates, clock_rates_density_gaussian
+from clocks.physics import (
+    clock_rates,
+    clock_rates_batch,
+    clock_rates_density_gaussian,
+)
 from clocks.types import ClockArray, MassConfig, Observation
 
 SMALL = {"n_observations": 3, "n_particles": 64}
@@ -244,6 +248,19 @@ def _echo_readings():
     )
 
 
+def _unrecorded_echo_filter():
+    """A second packaged filter, updated with the same contrasts, outside record()."""
+    from clocks._demos import demo_echolocation_3d as module
+
+    _, _, contrasts = _echo_readings()
+    particle_filter = _scenarios.build_echolocation_filter(
+        module.DEMO_SEED, n_particles=64
+    )
+    for observation in contrasts:
+        particle_filter.update(observation)
+    return particle_filter
+
+
 def test_echolocation_record_is_valid(echo_replay):
     validate_replay(echo_replay)
     for key in (
@@ -290,15 +307,25 @@ def test_echolocation_predictions_are_centred(echo_replay):
     )
 
 
-def test_echolocation_record_agrees_with_an_unrecorded_filter(echo_replay):
-    from clocks._demos import demo_echolocation_3d as module
+def test_echolocation_predictions_are_per_particle_centred_moments(echo_replay):
+    states = _unrecorded_echo_filter().history
+    clock_array = _scenarios.build_head_lattice()
+    for k in (1, len(states) - 1):
+        particles, weights = states[k].particles, states[k].weights
+        rates = clock_rates_batch(particles[:, :3], particles[:, 3], clock_array)
+        centred = rates - rates.mean(axis=1, keepdims=True)
+        mean = np.average(centred, weights=weights, axis=0)
+        std = np.sqrt(np.average((centred - mean) ** 2, weights=weights, axis=0))
+        np.testing.assert_allclose(
+            echo_replay.arrays["predicted_mean"][k], mean, rtol=1e-12
+        )
+        np.testing.assert_allclose(
+            echo_replay.arrays["predicted_std"][k], std, rtol=1e-12
+        )
 
-    _, _, contrasts = _echo_readings()
-    particle_filter = _scenarios.build_echolocation_filter(
-        module.DEMO_SEED, n_particles=64
-    )
-    for observation in contrasts:
-        particle_filter.update(observation)
+
+def test_echolocation_record_agrees_with_an_unrecorded_filter(echo_replay):
+    particle_filter = _unrecorded_echo_filter()
     np.testing.assert_allclose(
         particle_filter.estimate()["mean"], echo_replay.arrays["mean"][-1], rtol=1e-12
     )
@@ -334,6 +361,34 @@ def test_echolocation_record_agrees_with_an_unrecorded_filter(echo_replay):
             [[0.0, 0.0, 0.0]],
             (-1.4, 1.3),
             id="rounding_down",  # a bare floor gives -1.5
+        ),
+        pytest.param(
+            [0.0, 0.0, 1.1000001],
+            [[0.0, 0.0, 1.1000001]],
+            [[0.0, 0.0, 0.0]],
+            (-1.3, 1.5),
+            id="product_rounding_up",  # rounding the coordinate gives 1.4
+        ),
+        pytest.param(
+            [0.0, 0.0, -1.1000001],
+            [[0.0, 0.0, -1.1000001]],
+            [[0.0, 0.0, 0.0]],
+            (-1.5, 1.3),
+            id="product_rounding_down",  # rounding the coordinate gives -1.4
+        ),
+        pytest.param(
+            [0.0, 0.0, 0.5],
+            [[0.0, 0.0, -2.0], [0.0, 0.0, 3.0]],
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            (-2.3, 3.3),
+            id="two_rows",  # low from the first row, high from the second
+        ),
+        pytest.param(
+            [0.0, 0.0, 3.0],
+            [[0.0, 0.0, 0.0]],
+            [[0.1, 0.1, 0.1]],
+            (-1.3, 3.3),
+            id="truth_sets_a_bound",  # mean ± 4 sd reaches only 0.4
         ),
     ],
 )
@@ -371,6 +426,20 @@ def test_echolocation_view_holds_the_head_the_truth_and_the_cloud(echo_replay):
     assert bounds[1] >= max(1.0, arrays["true_params"][:3].max())
     assert np.all((weight >= 0.0) & (weight <= 1.0 + 1e-12))
     assert weight[-1] > 0.9
+
+
+def test_echolocation_view_is_the_close_view_of_the_observed_rows(echo_replay):
+    from clocks._demos.demo_echolocation_3d import close_view, weight_in_view
+
+    arrays = echo_replay.arrays
+    sd = np.sqrt(np.diagonal(arrays["cov"], axis1=1, axis2=2))
+    expected = close_view(arrays["true_params"][:3], arrays["mean"][1:, :3], sd[1:, :3])
+    assert tuple(arrays["view_bounds"].tolist()) == expected
+    np.testing.assert_allclose(
+        arrays["weight_in_view"],
+        weight_in_view(_unrecorded_echo_filter().history, expected),
+        rtol=1e-12,
+    )
 
 
 # --- density -----------------------------------------------------------------
