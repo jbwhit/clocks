@@ -221,6 +221,45 @@ def test_a_partly_missing_font_set_registers_nothing(
     assert len(font_manager.fontManager.ttflist) == before
 
 
+def _bundled_entries() -> list[font_manager.FontEntry]:
+    font_dir = Path(clocks._style.__file__).parent / "_fonts"
+    return [
+        entry
+        for entry in font_manager.fontManager.ttflist
+        if Path(entry.fname).is_relative_to(font_dir)
+    ]
+
+
+def test_a_font_that_fails_to_load_registers_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = font_manager.fontManager
+    # Start from a registry without the bundled fonts, as in a fresh process;
+    # monkeypatch puts the real list back afterwards.
+    bundled = _bundled_entries()
+    without_bundled = [entry for entry in manager.ttflist if entry not in bundled]
+    monkeypatch.setattr(manager, "ttflist", without_bundled)
+    monkeypatch.setattr(clocks._style, "_fonts_registered", False)
+    real_addfont = manager.addfont
+
+    def addfont_failing_on_semibold(path: str) -> None:
+        if Path(path).name == "SourceSans3-Semibold.ttf":
+            raise RuntimeError("bad font")
+        real_addfont(path)
+
+    monkeypatch.setattr(manager, "addfont", addfont_failing_on_semibold)
+    before = len(manager.ttflist)
+    with pytest.raises(RuntimeError, match="bad font"):
+        with style("light"):
+            pass
+    assert len(manager.ttflist) == before
+
+    monkeypatch.setattr(manager, "addfont", real_addfont)
+    with style("light"):
+        pass
+    assert len(_bundled_entries()) == 2
+
+
 @pytest.fixture
 def agg_backend() -> Iterator[None]:
     # On macOS the interactive backend doubles fig.dpi on a retina display,
@@ -274,6 +313,21 @@ def test_show_scales_with_figure_size_and_dpi(monkeypatch: pytest.MonkeyPatch) -
     image = calls[0]
     assert _png_array(image).shape[:2] == (720, 1200)
     assert (image.width, image.height) == (600, 360)
+
+
+@pytest.mark.usefixtures("agg_backend")
+def test_show_closes_the_figure_when_saving_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_display(monkeypatch)
+    with style("light"):
+        fig, ax = plt.subplots()
+        ax.set_title(r"$\frac{1}{$")  # invalid mathtext: fails at draw time
+        # matplotlib 3.10 reports a mathtext parse error as a ValueError.
+        with pytest.raises(ValueError, match="frac"):
+            show(fig)
+    assert calls == []
+    assert not plt.fignum_exists(fig.number)
 
 
 def test_show_explains_a_missing_ipython(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -140,16 +140,18 @@ def show(fig: Figure) -> None:
     # Interactive HiDPI backends scale fig.dpi by the device pixel ratio.
     dpi = 2 * fig.dpi / fig.canvas.device_pixel_ratio
     buffer = io.BytesIO()
-    with matplotlib.rc_context({"savefig.bbox": None}):
-        fig.savefig(
-            buffer,
-            format="png",
-            dpi=dpi,
-            bbox_inches=None,
-            transparent=False,
-            facecolor=fig.get_facecolor(),
-        )
-    plt.close(fig)
+    try:
+        with matplotlib.rc_context({"savefig.bbox": None}):
+            fig.savefig(
+                buffer,
+                format="png",
+                dpi=dpi,
+                bbox_inches=None,
+                transparent=False,
+                facecolor=fig.get_facecolor(),
+            )
+    finally:
+        plt.close(fig)
     display(Image(data=buffer.getvalue(), retina=True))
 
 
@@ -162,6 +164,14 @@ def _register_fonts() -> None:
     for path in paths:
         if not path.is_file():
             raise FileNotFoundError(f"bundled font missing: {path}")
-    for path in paths:
-        font_manager.fontManager.addfont(str(path))
+    # addfont appends to ttflist at once, so a failure part-way through would
+    # leave the earlier files registered; roll the list back before re-raising.
+    ttflist = font_manager.fontManager.ttflist
+    before = len(ttflist)
+    try:
+        for path in paths:
+            font_manager.fontManager.addfont(str(path))
+    except BaseException:
+        del ttflist[before:]
+        raise
     _fonts_registered = True
