@@ -10,7 +10,7 @@ import json
 import math
 import platform
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,9 +18,12 @@ import numpy as np
 import scipy
 from numpy.typing import NDArray
 
+from clocks.types import Observation
+
 FORMAT = "clocks-replay"
 VERSION = 1
 CLOUD_SIZE = 500  # most particles ever displayed
+THINNING_OFFSET = (math.sqrt(5.0) - 1.0) / 2.0  # φ: where the first pick falls
 
 DEMOS: tuple[str, ...] = (
     "demo_1d",
@@ -81,6 +84,96 @@ def load_replay(path: Path) -> Replay:
     replay = Replay(meta, arrays)
     validate_replay(replay, str(path))
     return replay
+
+
+def thin(particles: NDArray, weights: NDArray, size: int) -> NDArray[np.float32]:
+    """Pick ``min(size, N)`` particles to display, deterministically.
+
+    Targets are evenly spaced quantiles of the normalised cumulative weight,
+    offset by φ so no target lands on a step exactly; no random numbers.
+    """
+    weights = np.asarray(weights, dtype=np.float64)
+    if np.any(weights < 0) or not weights.sum() > 0:
+        raise ValueError(
+            f"weights must be nonnegative with a positive sum, got {weights.tolist()}"
+        )
+    count = min(size, len(weights))
+    cumulative = np.cumsum(weights)
+    cumulative = cumulative / cumulative[-1]
+    targets = (np.arange(count) + THINNING_OFFSET) / count
+    indices = np.searchsorted(cumulative, targets, side="left")
+    return np.asarray(particles)[indices].astype(np.float32)
+
+
+def record_filter(
+    pf,
+    observations: Sequence[Observation],
+    *,
+    meta: Mapping[str, object],
+    arrays: Mapping[str, NDArray],
+    predict: Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
+) -> Replay:
+    """Run ``pf`` over ``observations`` and record its history as a replay.
+
+    Reads only ``state.observations_seen``, ``n_particles``, ``update``,
+    ``history``, ``diagnostics_history`` and ``log_evidence_history``, and draws
+    nothing itself. ``predict`` is applied to each row's particles, never to a
+    mean. The result is not validated; the caller adds its arrays and does.
+    """
+    seen = pf.state.observations_seen
+    if seen != 0:
+        raise RuntimeError(
+            f"record_filter needs a fresh filter; this one has seen {seen} observations"
+        )
+    for observation in observations:
+        pf.update(observation)
+    history = pf.history
+    diagnostics = pf.diagnostics_history
+    shown = min(CLOUD_SIZE, pf.n_particles)
+
+    out: dict[str, NDArray] = dict(arrays)
+    moments = [_moments(state.particles, state.weights) for state in history]
+    out["mean"] = np.array([m for m, _ in moments], dtype=np.float64)
+    out["cov"] = np.array([c for _, c in moments], dtype=np.float64)
+    out["ess"] = np.array(
+        [float(pf.n_particles)]
+        + [1.0 / float(np.sum(s.weights**2)) for s in history[1:]],
+        dtype=np.float64,
+    )
+    out["log_evidence"] = np.array([0.0, *pf.log_evidence_history], dtype=np.float64)
+    for key in ("tempering_stages", "mh_proposals", "mh_acceptances"):
+        out[key] = np.array([getattr(d, key) for d in diagnostics], dtype=np.int64)
+    out["cloud"] = np.array(
+        [thin(s.particles, s.weights, shown) for s in history], dtype=np.float32
+    )
+    if "observations" not in out:
+        out["observations"] = np.array(
+            [o.rates for o in observations], dtype=np.float64
+        )
+    if predict is not None:
+        predicted = [
+            _moments(np.asarray(predict(s.particles)), s.weights) for s in history
+        ]
+        out["predicted_mean"] = np.array([m for m, _ in predicted], dtype=np.float64)
+        out["predicted_std"] = np.sqrt(
+            np.array([np.diag(c) for _, c in predicted], dtype=np.float64)
+        )
+    return Replay(meta, out)
+
+
+def _moments(
+    values: NDArray, weights: NDArray
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Weighted mean and covariance (divisor: the weights' sum)."""
+    w = np.asarray(weights, dtype=np.float64)
+    x = np.asarray(values, dtype=np.float64)
+    total = w.sum()
+    mean = (w[:, None] * x).sum(axis=0) / total
+    centred = x - mean
+    cov = (w[:, None, None] * centred[:, :, None] * centred[:, None, :]).sum(
+        axis=0
+    ) / total
+    return mean, cov
 
 
 def provenance() -> dict[str, str]:

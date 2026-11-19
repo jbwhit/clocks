@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from clocks._demos import demo_1d
 from clocks._replay import (
     CLOUD_SIZE,
     DEMOS,
@@ -14,8 +15,19 @@ from clocks._replay import (
     Replay,
     load_replay,
     provenance,
+    record_filter,
     save_replay,
+    thin,
     validate_replay,
+)
+from clocks.api import build_particle_filter, simulate
+from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
+from clocks.types import (
+    ClockArray,
+    MassConfig,
+    Observation,
+    ParticleState,
+    UpdateDiagnostics,
 )
 
 F8, I8 = np.float64, np.int64
@@ -490,3 +502,264 @@ def test_save_refuses_an_invalid_replay(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="mean"):
         save_replay(path, Replay(meta, arrays))
     assert not path.exists()
+
+
+# --- thin and record_filter --------------------------------------------------
+
+
+PHI = (5**0.5 - 1) / 2
+
+
+@pytest.mark.parametrize(
+    ("weights", "size", "expected"),
+    [
+        ([0.1, 0.2, 0.0, 0.3, 0.4], 5, [1, 3, 3, 4, 4]),
+        ([1 / 7] * 7, 3, [1, 3, 6]),
+        ([0.25] * 4, 4, [0, 1, 2, 3]),
+        ([PHI / 2, 0.0, 1 - PHI / 2], 2, [0, 2]),
+    ],
+    ids=["unequal", "uniform_7_3", "uniform_4_4", "tie"],
+)
+def test_thin_picks(weights, size, expected) -> None:
+    particles = np.arange(len(weights), dtype=float)[:, None]
+    picked = thin(particles, np.array(weights), size)
+    assert picked.dtype == np.float32
+    assert picked.shape == (len(expected), 1)
+    assert picked[:, 0].tolist() == expected
+
+
+def test_thin_ignores_the_scale_of_the_weights() -> None:
+    w = np.array([0.1, 0.2, 0.0, 0.3, 0.4])
+    particles = np.arange(5, dtype=float)[:, None]
+    assert np.array_equal(thin(particles, 0.5 * w, 5), thin(particles, w, 5))
+
+
+def test_thin_is_capped_by_the_particle_count() -> None:
+    particles = np.arange(4, dtype=float)[:, None]
+    assert thin(particles, np.full(4, 0.25), 500).shape == (4, 1)
+
+
+@pytest.mark.parametrize(
+    "weights", [[0.5, -0.1, 0.6], [0.0, 0.0, 0.0]], ids=["negative", "all_zero"]
+)
+def test_thin_rejects_unusable_weights(weights) -> None:
+    with pytest.raises(ValueError, match="weights"):
+        thin(np.arange(3, dtype=float)[:, None], np.array(weights), 3)
+
+
+STATE_PARTICLES = [
+    [[-4.0, 0.02], [-2.0, 0.05], [0.0, 0.08], [2.0, 0.11], [4.0, 0.14]],
+    [[0.1, 0.050], [0.2, 0.055], [0.4, 0.060], [0.5, 0.066], [0.7, 0.070]],
+    [[0.42, 0.0480], [0.47, 0.0495], [0.50, 0.0500], [0.53, 0.0512], [0.58, 0.0520]],
+]
+STATE_WEIGHTS = [
+    [0.2] * 5,
+    [0.1, 0.2, 0.3, 0.25, 0.15],
+    [0.05, 0.4, 0.05, 0.3, 0.2],
+]
+
+
+class ScriptedFilter:
+    """Exactly the surface record_filter may read; no rng."""
+
+    def __init__(self, states, diagnostics, log_evidence) -> None:
+        self._states = states
+        self._diagnostics = diagnostics
+        self._log_evidence = log_evidence
+        self.n_particles = len(states[0].weights)
+        self.history = [states[0]]
+        self.diagnostics_history: list = []
+        self.log_evidence_history: list = []
+
+    @property
+    def state(self) -> ParticleState:
+        return self.history[-1]
+
+    def update(self, observation) -> ParticleState:
+        i = len(self.diagnostics_history)
+        self.history.append(self._states[i + 1])
+        self.diagnostics_history.append(self._diagnostics[i])
+        self.log_evidence_history.append(self._log_evidence[i])
+        return self.state
+
+
+def scripted():
+    states = [
+        ParticleState(np.array(p), np.array(w), i)
+        for i, (p, w) in enumerate(zip(STATE_PARTICLES, STATE_WEIGHTS))
+    ]
+    pf = ScriptedFilter(
+        states, [UpdateDiagnostics(3, 24, 6), UpdateDiagnostics(1, 8, 3)], [5.0, 11.0]
+    )
+    obs = [
+        Observation(np.array([0.97, 0.98]), 0.0),
+        Observation(np.array([0.9, 1.0]), 1.0),
+    ]
+    return pf, obs
+
+
+def record_scripted(predict=None, arrays=None):
+    pf, obs = scripted()
+    return record_filter(pf, obs, meta={"m": 1}, arrays=arrays or {}, predict=predict)
+
+
+def explicit_moments(x, w):
+    total = sum(w)
+    m = [sum(wi * xi[j] for wi, xi in zip(w, x)) / total for j in range(len(x[0]))]
+    p = len(m)
+    c = [
+        [
+            sum(wi * (xi[a] - m[a]) * (xi[b] - m[b]) for wi, xi in zip(w, x)) / total
+            for b in range(p)
+        ]
+        for a in range(p)
+    ]
+    return m, c
+
+
+def test_moments_match_an_independent_calculation() -> None:
+    replay = record_scripted()
+    for row in range(3):
+        m, c = explicit_moments(STATE_PARTICLES[row], STATE_WEIGHTS[row])
+        np.testing.assert_allclose(
+            replay.arrays["mean"][row], m, rtol=1e-12, atol=1e-15
+        )
+        np.testing.assert_allclose(replay.arrays["cov"][row], c, rtol=1e-12)
+    assert abs(replay.arrays["cov"][1][0, 1]) > 0
+
+
+def test_row_zero_holds_sentinels() -> None:
+    arrays = record_scripted().arrays
+    assert arrays["ess"][0] == 5.0
+    assert arrays["log_evidence"][0] == 0.0
+    m, c = explicit_moments(STATE_PARTICLES[0], STATE_WEIGHTS[0])
+    np.testing.assert_allclose(arrays["mean"][0], m, rtol=1e-12, atol=1e-15)
+    np.testing.assert_allclose(arrays["cov"][0], c, rtol=1e-12)
+    expected = thin(
+        np.array(STATE_PARTICLES[0]), np.array(STATE_WEIGHTS[0]), CLOUD_SIZE
+    )
+    assert np.array_equal(arrays["cloud"][0], expected)
+
+
+def test_ess_rows_follow_the_weights() -> None:
+    ess = record_scripted().arrays["ess"]
+    for row in (1, 2):
+        expected = 1 / sum(w * w for w in STATE_WEIGHTS[row])
+        np.testing.assert_allclose(ess[row], expected, rtol=1e-12)
+
+
+def test_diagnostics_and_evidence_are_copied() -> None:
+    arrays = record_scripted().arrays
+    for key, expected in (
+        ("tempering_stages", [3, 1]),
+        ("mh_proposals", [24, 8]),
+        ("mh_acceptances", [6, 3]),
+    ):
+        assert arrays[key].dtype == np.int64
+        assert arrays[key].tolist() == expected
+    assert arrays["log_evidence"].tolist() == [0.0, 5.0, 11.0]
+
+
+def test_predictions_are_moments_of_predictions() -> None:
+    def predict(p):
+        return np.column_stack([p[:, 0] ** 2, np.exp(p[:, 1])])
+
+    arrays = record_scripted(predict=predict).arrays
+    for row in range(3):
+        values = predict(np.array(STATE_PARTICLES[row]))
+        w = STATE_WEIGHTS[row]
+        for c in range(2):
+            mean = sum(wi * v for wi, v in zip(w, values[:, c]))
+            var = sum(wi * (v - mean) ** 2 for wi, v in zip(w, values[:, c]))
+            np.testing.assert_allclose(
+                arrays["predicted_mean"][row, c], mean, rtol=1e-12
+            )
+            np.testing.assert_allclose(
+                arrays["predicted_std"][row, c], var**0.5, rtol=1e-12
+            )
+    at_mean = predict(arrays["mean"][1][None])[0]
+    assert np.max(np.abs(arrays["predicted_mean"][1] - at_mean)) > 1e-6
+
+
+def test_observations_are_what_the_filter_consumed() -> None:
+    assert np.array_equal(
+        record_scripted().arrays["observations"], [[0.97, 0.98], [0.9, 1.0]]
+    )
+    kept = np.array([[1.0, 2.0]])
+    assert record_scripted(arrays={"observations": kept}).arrays["observations"] is kept
+
+
+N_REAL = 64
+CLOCKS = ClockArray(np.array([[p] for p in demo_1d.CLOCK_POSITIONS]), track_offset=1.0)
+
+
+def real_filter():
+    return build_particle_filter(
+        InferenceConfig(
+            clock_array=CLOCKS,
+            noise=NoiseConfig(demo_1d.NOISE_STD),
+            prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
+            n_particles=N_REAL,
+            n_masses=1,
+            seed=42,
+        )
+    )
+
+
+def real_observations():
+    truth = MassConfig(np.array([[demo_1d.TRUE_X]]), np.array([demo_1d.TRUE_M]))
+    return simulate(
+        SimulationConfig(
+            clock_array=CLOCKS,
+            ground_truth=truth,
+            noise=NoiseConfig(demo_1d.NOISE_STD),
+            n_observations=3,
+            seed=42,
+        )
+    ).observations
+
+
+def real_runs():
+    obs = real_observations()
+    recorded, plain = real_filter(), real_filter()
+    replay = record_filter(
+        recorded, obs, meta={}, arrays={}, predict=recorded.forward_model_batch
+    )
+    for o in obs:
+        plain.update(o)
+    return recorded, plain, replay
+
+
+def test_recording_does_not_change_the_run() -> None:
+    recorded, plain, replay = real_runs()
+    fresh = real_filter()
+    assert sum(d.mh_acceptances for d in plain.diagnostics_history) > 0
+    assert plain.rng.bit_generator.state != fresh.rng.bit_generator.state
+    assert len(recorded.history) == len(plain.history) == 4
+    for a, b in zip(recorded.history, plain.history):
+        assert np.array_equal(a.particles, b.particles)
+        assert np.array_equal(a.weights, b.weights)
+    assert recorded.rng.bit_generator.state == plain.rng.bit_generator.state
+    assert replay.arrays["cloud"].shape[0] == 4
+
+
+def test_final_row_matches_the_filter_estimate() -> None:
+    recorded, _, replay = real_runs()
+    estimate = recorded.estimate()
+    arrays = replay.arrays
+    np.testing.assert_allclose(arrays["mean"][-1], estimate["mean"], rtol=1e-12)
+    np.testing.assert_allclose(
+        np.sqrt(np.diag(arrays["cov"][-1])), estimate["std"], rtol=1e-12
+    )
+    np.testing.assert_allclose(arrays["ess"][-1], estimate["ess"], rtol=1e-12)
+    assert arrays["cloud"].shape == (4, 64, 2)
+    assert arrays["cloud"].dtype == np.float32
+
+
+def test_a_used_filter_is_refused() -> None:
+    pf = real_filter()
+    pf.update(real_observations()[0])
+    with pytest.raises(RuntimeError, match="fresh"):
+        record_filter(pf, real_observations(), meta={}, arrays={})
+    assert pf.state.observations_seen == 1
+    assert len(pf.history) == 2
