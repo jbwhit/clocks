@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.12+, matplotlib, pytest, Quarto 1.9.32+, uv, ruff.
 
+**Status:** Approved for execution. Codex xhigh round 3, on `07711b3`: "SOUND ENOUGH TO IMPLEMENT", with two minor corrections that this revision folds in.
+
 **Spec:** `docs/plans/2026-11-18-figure-style-design.md`. Read it before any task. Where this plan and the spec disagree, the spec wins and the disagreement is a plan bug to report.
 
 ## Global Constraints
@@ -19,7 +21,7 @@
 - Data, scenarios, seeds, printed output and prose do not change. The only content changes are the four listed in the spec under "Declared changes to what a plot shows".
 - The committed GIFs and PNGs under `assets/` and `site/assets/` are not touched. `tests/test_generated_assets.py` must stay green throughout.
 - Quarto 1.9.32 or later is required to render the site.
-- Before every commit run the full local gate: `uv run ruff format --check .`, `uv run ruff check .`, `uv run pytest`. Run the checks and the commit in separate commands, and read the output before committing.
+- Before every commit run the full local gate: `uv run ruff format --check .`, `uv run ruff check .`, `uv run pytest`, and `uv run pytest -m slow` (CI runs the slow tests as a separate step; the default run skips them). Run the checks and the commit in separate commands, and read the output before committing.
 - Every commit ends with a `Co-Authored-By:` trailer naming the model that wrote it. Commit messages are passed with a quoted heredoc (`<<'MSG'`).
 - Commit after each task and push; do not open a pull request (the coordinator does).
 
@@ -209,7 +211,7 @@ Per-page details:
 |---|---|
 | `clocks-as-gravimeters` | Read the lower y-limit after drawing the three curves and before adding the reference line. The upper limit is `1 + 0.05 * (max_rate - min_rate)` across all three curves. The line at 1 is solid, in `colors.rule`. |
 | `one-clock-is-not-enough` | The page's first cell only prints and stays as it is. In the plotting cell the two series keep their joining lines, with circle and square markers, and the legend shows those markers. |
-| `the-search-in-one-dimension` | Each panel's truth label is anchored at `steps[-1]` in data coordinates; `axhline` spans axes fractions, so its own x-data cannot be used. |
+| `the-search-in-one-dimension` | Each panel's truth label follows the horizontal-line rule above: anchored at the axes' right x-limit on the truth value, in data coordinates. `axhline` spans axes fractions, so its own x-data cannot be used as the anchor. |
 | `into-the-plane` | The weights are no longer passed to the scatter. The ring and the crosshair are one legend entry. Remove the existing `fontsize=8` on the legend so the style's size applies. |
 | `two-hidden-masses` | The legend entries show the circle and square markers. Today the labels belong to the dense, markerless curves. |
 | `how-many-masses` | The legend is replaced by three end labels; the K = 2 label reads `K = 2 (true model)`. |
