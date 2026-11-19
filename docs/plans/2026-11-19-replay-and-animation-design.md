@@ -2,10 +2,9 @@
 
 **Date:** 2026-11-19
 
-**Status:** Draft, in review. Revised after review rounds 1 and 2 (Codex xhigh
-on `5edbcb5` and `8ada3a4`, both "NOT SOUND ENOUGH TO IMPLEMENT"). Since round
-2 the required tests no longer depend on reproducing a recorded trajectory
-(section 3).
+**Status:** Approved for implementation. Codex xhigh round 3, on `75ef763`:
+"SOUND ENOUGH TO IMPLEMENT", with three small findings that this revision folds
+in.
 
 **Source:** findings V1, V5 and C6 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), the visual reviewer's critique
@@ -215,8 +214,9 @@ def first_difference(a: Replay, b: Replay) -> Difference | None: ...
   geometry. The two-mass 2D demo generates its clocks from its seed there, so
   no module constant holds them. `record(*, n_observations=..., n_particles=...)
   -> Replay` runs the scenario and draws nothing.
-- The model-comparison demo runs its comparison once; today it runs twice, once
-  to print and once to animate.
+- The model-comparison `record()` runs its comparison once. The command keeps
+  its present path, which runs it twice and whose animator advances the
+  filters itself, until pull request 3.
 - **The density demo's readings get their own generator.** Today each reading
   is drawn from the generator the filter is using, between updates, so the
   data depend on how many random numbers the sampler consumed: drawing the
@@ -248,10 +248,11 @@ which valid trajectory a machine takes, and full comparison is reported.
 and compares it with the committed archive:
 
 1. **Schema and inputs, exactly.** Key set, shapes and dtypes; `meta` except
-   `created_with`; `clock_positions` and `true_params`. The inputs that are
-   computed in floating point (`true_rates`, `observations`,
-   `filter_observations`) are compared at `rtol=1e-12`, since a library's last
-   digit is not the scenario.
+   `created_with`; `clock_positions`, `true_params`, `model_ks` and
+   `model_prior`. The inputs computed in floating point (`true_rates`,
+   `observations`, `filter_observations`) are compared with `rtol=1e-12` and
+   `atol=1e-12`: a library's last digit is not the scenario, and centred and
+   contrast values near zero need the absolute term.
 2. **Summaries a reader sees, within bounds**, after observations 1 and 8 and
    at the end: each component of the posterior mean, and each posterior
    standard deviation, within a stated absolute distance of the archive's. The
@@ -311,8 +312,12 @@ observation 1. The split between two and three masses is not bounded later.
   equal the demo's `scenario()`;
 - `true_rates` equals the forward model at `true_params` (1e-12). This holds
   for the density demo too, and involves no readings;
-- each echolocation reading sums to zero (1e-12) and `filter_observations =
-  Q @ observations` (1e-12);
+- each echolocation reading sums to zero within an absolute 1e-12, and
+  `filter_observations = Q @ observations` with `rtol=1e-12, atol=1e-12`;
+- every `model_posterior` row equals `model_prior × exp(model_log_evidence)`
+  normalized, computed in log space, with `rtol=1e-9, atol=1e-12`. That is the
+  relation the inference code defines (read), and it catches an archive whose
+  probabilities disagree with its evidence while still summing to 1;
 - the truth meets the existing 0.08 weak-field margin at the clocks, and
   x₁ < x₂ where there are two masses;
 - sentinels, exactly: `log_evidence[0] = 0`, `ess[0] = N`,
@@ -323,37 +328,46 @@ observation 1. The split between two and three masses is not bounded later.
   `model_posterior` rows sum to 1 within 1e-12; `weight_in_view` in
   [0, 1 + 1e-12]; acceptances ≤ proposals;
 - the dots agree with the summaries: in every row, the display sample lies
-  inside `prior_ranges`, its mean is within 6 s.d./√m of `mean`, and its
+  inside `prior_ranges` with the endpoints rounded to float32 first (0.15
+  rounds up as float32, and rounding is monotone), its mean is within 6
+  s.d./√m of `mean`, and its
   standard deviation is within 0.6 to 1.5 of the recorded one. The candidates
   reach 3.0 and 0.78 to 1.29 (measured, M6).
 
-**The report, which never fails the job.** A CI step records all seven on the
-runner, compares each with the committed archive in full, and uploads a short
-report:
+**The report, which never fails anything.** A separate workflow,
+`replay-report.yml`, runs on pull requests and pushes to `main` that touch the
+library, the lock, the archives or the recorder. Three jobs from one matrix
+check out the same tree on three runner allocations, so one run gives three
+samples without repeating the test suite. Each job records all seven demos,
+compares each with the committed archive in full, and uploads a short report:
 
 ```yaml
 - name: Replay report
   continue-on-error: true
   run: uv run python scripts/record_replays.py --out recorded --compare assets/replays --report replay-report.md
 - uses: actions/upload-artifact@v4
-  with: {name: "replay-report-${{ github.run_id }}", path: replay-report.md}
+  continue-on-error: true
+  with: {name: "replay-report-${{ github.run_id }}-${{ matrix.sample }}", path: replay-report.md}
 ```
 
-For each demo it says "reproduced" (integers equal, float64 arrays within
-`rtol=1e-9`, `cloud` within 1e-5) or gives the first differing key and row. It
-records the run ID, the pull request's head SHA, the SHA checked out, the
-platform, the resolved Python version and the NumPy, SciPy and BLAS versions.
-The CI test job keeps the Python it has (3.14.4 today; M13).
+Every step may fail without failing the job, the upload included. A last step
+adds the report to the job summary, or a warning annotation if no report was
+written. For each demo the report says "reproduced" (integers equal, float64
+arrays within `rtol=1e-9`, `cloud` within 1e-5) or gives the first differing
+key and row; `created_with` is ignored, so a change of platform still reaches
+the arrays. It records the run ID, the pull request's head SHA, the SHA
+checked out, the platform, the resolved Python version and the NumPy, SciPy
+and BLAS versions. The CI test job is not touched and keeps the Python it has
+(3.14.4 today; M13).
 
-Pull request 1's description carries this report from at least three
-independent runs of the job and from macOS. If a demo reproduces in all of
-them, a later change may promote its full comparison to a gate. This spec does
-not.
+Pull request 1's description carries the three reports of one run and the same
+comparison from macOS. If a demo reproduces in all of them, a later change may
+promote its full comparison to a gate. This spec does not.
 
 **Cost.** Inference takes 0.2 to 4.1 s for six demos and 33 s for density
 (measured, M2). The four cheapest gate tests run in the default suite, which
-takes 32 s today (M13); the other three are marked `slow`. The report step
-adds under a minute.
+takes 32 s today (M13); the other three are marked `slow`. Each report
+job takes about a minute beyond its setup.
 
 **Against the old hashes.** They caught any change to the committed bytes
 (corruption, a wrong file under a right name, drift between the two copies)
@@ -440,7 +454,8 @@ x = 1.42 ± 0.11, …
   readings used in the fit. On "How Many Masses?" the paragraph already under
   the figure is the description: it tells the sequence, and the archive agrees
   with it (the lead passes to two masses at observation 10 and back to three
-  at 19; M6). Numbers in a description are checked against that clip's archive
+  at 19; M6; the test derives the lead changes and the ending from the
+  archive). Numbers in a description are checked against that clip's archive
   and nothing else. The test reads only the described element, so the numbers
   of a page's executed cell, a different run, are not touched.
 - Seven embeds are written by hand and verified by the rendered-site check.
@@ -756,15 +771,17 @@ that nothing calls.
 
 1. **Replay data.** `_replay.py`; `scenario()` and `record()` in each demo;
    `scripts/record_replays.py`; the seven archives at today's truths; the gate
-   and invariants; the report step. Demos still write GIFs, and `demo-density`
-   keeps its present output until pull request 2, so the committed PNG still
-   matches its command. Before the format is fixed, every undrawn panel is
+   and invariants; the report workflow. Every command keeps its present path
+   and output: the demos still write GIFs, and `demo-density` keeps its shared
+   generator until pull request 2, so each committed file still matches its
+   command. Before the format is fixed, every undrawn panel is
    smoke-drawn from candidate archives with throwaway code, and the sheet goes
    in the pull request with the reports of section 3 and a probe recording of
    the 2D run at 0.10.
 2. **The two static figures.** `density_figure` and `range_study_figure` with
-   their page cells and captions; `demo-density` running through `record()`
-   and the new figure; the check and guard learning several plots per page,
+   their page cells and captions; `demo-density` switching to `record()`, the
+   separate generator and the new figure in the same change as the hash rows
+   and provenance sentences; the check and guard learning several plots per page,
    with the two owed fixes (NUL, `data=`), each with its own test; removal of
    the two PNGs, their mirror and hash rows; the ban on links to them; the
    provenance sentences about them.
@@ -880,7 +897,7 @@ exact tests expected to fail.
 | gate, inputs | a changed seed, control, noise level or truth without re-recording; one demo's archive under another's name | a sampler change that leaves every input alone |
 | gate, early bounds | **an early trajectory change:** likelihood noise doubled for the first three updates (measured to pass the final bounds and fail at observation 1, M15); the first update skipped | a different valid trajectory, by design; rows other than 1, 8 and last |
 | gate, final bounds | **a stale final result:** an archive recorded before a change to the forward model or the likelihood | a change smaller than seed-to-seed spread |
-| invariants | a constant offset on the echolocation channels; a truth outside physical support; dots taken from another row | summaries wrong but consistent with their dots |
+| invariants | a constant offset on the echolocation channels; a truth outside physical support; dots taken from another row; a model-posterior row changed to (0, 0.99, 0.01), which keeps its sum | summaries wrong but consistent with their dots |
 | box margin | `TRUE_M = 0.15` | a truth 6% inside the box |
 | clip frames | autoscaling in a middle frame; x and y swapped; an invisible cloud on frame 0; uncropped points in the close view; two middle dwells swapped; constant camera speed | a fixed limit badly chosen; labels that collide |
 | trace and cloud mutations | a renderer reading a stale or different archive, for traces and for dots separately | a panel neither test perturbs |
