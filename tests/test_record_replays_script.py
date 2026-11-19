@@ -5,8 +5,10 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from clocks import WeightRoundingUndecided
 from clocks._demos import demo_1d
 from clocks._replay import DEMOS, Replay, load_replay, save_replay
 
@@ -170,6 +172,105 @@ def test_report_survives_a_missing_git(
     )
 
     assert "checkout: unknown" in report.read_text().splitlines()
+
+
+@pytest.mark.parametrize("compare", [True, False], ids=["compare", "no_compare"])
+def test_a_failed_recording_is_reported_and_the_others_still_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compare: bool
+) -> None:
+    small = demo_1d.record(n_observations=1, n_particles=16)
+
+    def stub(name: str) -> Replay:
+        if name == "demo_2d":
+            raise WeightRoundingUndecided("precision cap reached")
+        return small
+
+    monkeypatch.setattr(record_replays, "record_demo", stub)
+    committed, out, report = tmp_path / "a", tmp_path / "b", tmp_path / "report.md"
+    committed.mkdir()
+    save_replay(committed / "demo_1d.npz", small)
+    compare_args = ["--compare", str(committed)] if compare else []
+
+    status = record_replays.main(
+        [
+            "--out",
+            str(out),
+            *compare_args,
+            "--report",
+            str(report),
+            "demo_2d",
+            "demo_1d",
+        ]
+    )
+
+    lines = report.read_text().splitlines()
+    assert status == 1
+    assert (
+        "demo_2d: recording failed: WeightRoundingUndecided: precision cap reached"
+        in lines
+    )
+    assert ("demo_1d: reproduced" in lines) is compare
+    assert [p.name for p in out.iterdir()] == ["demo_1d.npz"]
+
+
+def test_the_report_directory_is_created(tmp_path: Path) -> None:
+    report = tmp_path / "not" / "yet" / "report.md"
+
+    record_replays.main(
+        ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+    )
+
+    assert any(line.startswith("run: ") for line in report.read_text().splitlines())
+
+
+def test_the_report_is_printed_before_it_is_written(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unwritable = tmp_path / "a-directory"
+    unwritable.mkdir()
+
+    with pytest.raises(OSError):
+        record_replays.main(
+            ["--out", str(tmp_path / "b"), "--report", str(unwritable), "demo_1d"]
+        )
+
+    assert "run: " in capsys.readouterr().out
+
+
+def test_a_numpy_without_build_config_gives_unknown_blas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(np, "show_config", lambda mode=None: {})
+
+    assert "blas: unknown" in record_replays._report_text([]).splitlines()
+
+
+def test_the_checkout_is_read_beside_the_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout="0123abcd\n", stderr="")
+
+    monkeypatch.setattr(record_replays.subprocess, "run", run)
+
+    lines = record_replays._report_text([]).splitlines()
+
+    assert "checkout: 0123abcd" in lines
+    assert [call["cwd"] for call in calls] == [_SCRIPT.parent]
+
+
+def test_a_failed_git_gives_an_unknown_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing_git(*args: object, **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD"])
+
+    monkeypatch.setattr(record_replays.subprocess, "run", failing_git)
+
+    assert "checkout: unknown" in record_replays._report_text([]).splitlines()
 
 
 def test_report_is_also_printed(
