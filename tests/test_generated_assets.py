@@ -143,7 +143,15 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     assert (
         "With K=2 truth, its final estimate is K=2: 0.3990 and K=3: 0.6010. "
     ) in provenance
-    assert "calculation that ends near K=2: 0.740 and K=3: 0.260. " in provenance
+    assert (
+        "The committed GIF on [How Many Masses?](../story/how-many-masses.qmd) is "
+        "the packaged default run: 80 observations, 2,000 particles per candidate, "
+        "and seed 42. "
+    ) in provenance
+    assert (
+        "The executed cell on that page is a separate 25-observation, "
+        "400-particle calculation that ends near K=2: 0.740 and K=3: 0.260. "
+    ) in provenance
     assert (
         "A different finite data horizon changes the evidence supplied by the "
         "noisy realization, and a different finite-particle budget changes the "

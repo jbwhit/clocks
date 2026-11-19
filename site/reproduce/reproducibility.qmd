@@ -40,8 +40,8 @@ Two workflows run on GitHub Actions:
 
 ## Where the committed figures come from {#sec-figures}
 
-The story pages show these figures without commentary on their origin. This
-section summarizes where each came from and what it does and does not
+The story pages keep commentary on these figures' origin to a short caveat.
+This section summarizes where each came from and what it does and does not
 establish; the
 [development calibration report](https://github.com/jbwhit/clocks/blob/main/docs/2026-08-16-development-calibration.md)
 records the generating commit and the asset hashes.
@@ -110,8 +110,9 @@ universal pass probability. Any claimed sensing horizon must therefore be
 attached to a stated noise model, prior, particle budget, SMC controls, pass
 rule, and finite seed set, not promoted to a property of the population.
 
-The protected fixed-seed results establish deterministic regression cases,
-not a population reliability estimate. SMC evidence is similarly a
+Taken together: the protected fixed-seed results establish deterministic
+regression cases, not a population reliability estimate. SMC evidence is
+similarly a
 consistent Monte Carlo estimator with finite-particle sampling error, not a
 deterministic exact integral.
 
