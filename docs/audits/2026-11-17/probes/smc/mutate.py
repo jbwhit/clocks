@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/Users/jonathan/projects/clocks/.worktrees/audit-smc")
+ROOT = Path(".worktrees/audit-smc")
 TESTS = [
     "tests/test_smc_rigorous.py",
     "tests/test_smc_api.py",

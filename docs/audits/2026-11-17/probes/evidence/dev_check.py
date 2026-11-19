@@ -1,7 +1,7 @@
 import json, statistics, re, collections
 from pathlib import Path
 
-R = Path("/Users/jonathan/projects/clocks")
+R = Path(".")
 doc = (R / "docs/2026-08-16-development-calibration.md").read_text()
 
 

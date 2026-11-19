@@ -28,7 +28,7 @@ I reviewed all 15 pages at 1440 px and 390 px in both themes, all six GIFs frame
 
 ## 2. Figure by figure
 
-All paths are under `/Users/jonathan/projects/clocks/`. Contact sheets of each GIF are in `scratchpad/visual/frames/` as `<name>__sheet.png`.
+All paths are under ``. Contact sheets of each GIF are in `scratchpad/visual/frames/` as `<name>__sheet.png`.
 
 **Shared by all four 2×2 dashboards** (`src/clocks/_animate.py:84-112`, `src/clocks/_panels.py:258-273`)
 

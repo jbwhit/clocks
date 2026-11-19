@@ -1,7 +1,7 @@
 import subprocess, sys, shutil
 from pathlib import Path
 
-W = Path("/Users/jonathan/projects/clocks/.worktrees/audit-evidence")
+W = Path(".worktrees/audit-evidence")
 ECHO = "site/story/gravitational-echolocation.qmd"
 REP = "docs/2026-08-16-development-calibration.md"
 REPRO = "site/reproduce/reproducibility.qmd"

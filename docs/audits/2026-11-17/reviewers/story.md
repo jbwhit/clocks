@@ -1,6 +1,6 @@
 # Editorial review: "GPS in Reverse"
 
-Assessment only: no repo files were edited, and `git status` is clean. I ran a few read-only checks with the repo's own library, flagged below where they matter. All line references are to files under `/Users/jonathan/projects/clocks/site/`.
+Assessment only: no repo files were edited, and `git status` is clean. I ran a few read-only checks with the repo's own library, flagged below where they matter. All line references are to files under `site/`.
 
 ## 1. Diagnosis
 
@@ -24,7 +24,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
 
 ## 2. Page-by-page
 
-### Landing: `/Users/jonathan/projects/clocks/site/index.qmd`
+### Landing: `site/index.qmd`
 
 - **Works:** lines 6-16. The 45/7/38 microsecond arithmetic and "But flip the logic around" are a strong hook.
 - **Fails:**
@@ -35,7 +35,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - The contents list (63-79) describes pages in abstract terms: "label switching and what honesty about degeneracies looks like".
 - **After thirty seconds:** the reader knows GPS corrects for relativity and that the idea can be inverted. They have not been asked anything, so there is no reason to click.
 
-### 1. `/Users/jonathan/projects/clocks/site/story/clocks-as-gravimeters.qmd`
+### 1. `site/story/clocks-as-gravimeters.qmd`
 
 - **Job:** convince the reader the premise is real, then introduce the toy.
 - **Works:** the Skytree paragraph (29-35); "A sufficiently precise clock, then, is a gravimeter" (37-39); the one-pixel hand-off (76-81).
@@ -46,7 +46,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - The best fact about the toy is hidden in `method/units-and-scales.qmd:52-55`: real dips are parts per billion, the demos use a few percent, and the 1D demo's clocks sit about 13 Schwarzschild radii from the mass. That belongs here as a reveal.
   - The "gravity camera" metaphor (37-39) is set up and never used again.
 
-### 2. `/Users/jonathan/projects/clocks/site/story/one-clock-is-not-enough.qmd`
+### 2. `site/story/one-clock-is-not-enough.qmd`
 
 - **Job:** the keystone idea. It has the most consistent voice of any page.
 - **Works:** "the clock simply cannot tell you which world it lives in" (10-11); "Two visibly different universes, one identical clock reading" (25); the noise-floor callout (67-74).
@@ -56,7 +56,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - The caption (42) contradicts the plot, as above.
 - **Missing figure:** the degeneracy as a set of surviving worlds. I confirmed the library draws it today. With one clock, the particle cloud in (x, M) is a clean V; with clocks at −5 and 0 it is two separate arcs; with three clocks it is a knot. See `../screenshots/ridge_check.png`.
 
-### 3. `/Users/jonathan/projects/clocks/site/story/the-search-in-one-dimension.qmd`
+### 3. `site/story/the-search-in-one-dimension.qmd`
 
 - **Job:** introduce the filter and show the first recovery.
 - **Works:** the three-sentence setup (7-9).
@@ -67,7 +67,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - "What to notice" (78-84) is not in the figure.
 - **Needs:** a frame of the prior, the one-clock/two-clock/three-clock strip above, and the standard reweight / resample / move picture.
 
-### 4. `/Users/jonathan/projects/clocks/site/story/into-the-plane.qmd`
+### 4. `site/story/into-the-plane.qmd`
 
 - **Job:** currently unclear; this is the weakest page. It opens by saying what does not change (7-10).
 - **Fails:**
@@ -76,7 +76,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - The callout promises the multi-mass pages "will feel" the curse of dimensionality "properly" (83-85). Nothing later pays that off, though the 2D two-mass GIF does visibly struggle for about 30 readings.
 - **Give it a question:** where should the clocks go?
 
-### 5. `/Users/jonathan/projects/clocks/site/story/two-hidden-masses.qmd`
+### 5. `site/story/two-hidden-masses.qmd`
 
 - **Works:** "'Mass 1' and 'mass 2' are *our* labels; the physics doesn't care" (21); the admission that the mass "was moved to 4.5 to keep the demo crisp" (35-37); the closing callout (82-86).
 - **Fails:**
@@ -86,7 +86,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - The superposition caption (47) and the cliffhanger premise "If two masses can imitate one this well" (83) are contradicted by the plot and by page 6.
 - **Missing figure:** label switching as a picture. Two modes in (x₁, x₂), the mean landing between them, then the fold along the diagonal.
 
-### 6. `/Users/jonathan/projects/clocks/site/story/how-many-masses.qmd`
+### 6. `site/story/how-many-masses.qmd`
 
 - **Works:** the opening (7-8) and lines 32-35.
 - **Fails:**
@@ -95,7 +95,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - The caption announces the wrong answer; lines 18-22, 28-31, 35-38, the parenthetical (42-45) and the callout (87-97) are all audit prose.
 - **A check I ran:** with a one-mass truth (x=1.5, M=0.05, five clocks, 25 readings, 400 particles, three seeds), the probabilities form a staircase. K=1 gets 0.67-0.78, K=2 gets 0.15-0.29, K=3 gets 0.04-0.07. That is the razor shown. It is a small check and needs proper runs.
 
-### 7. `/Users/jonathan/projects/clocks/site/story/beyond-point-masses.qmd`
+### 7. `site/story/beyond-point-masses.qmd`
 
 - **Works:** the first sentence (7-8), "ore bodies, voids, aquifers", is the only place the site says what this could be for. The spreading figure is the cleanest forward-model picture on the site.
 - **Fails:**
@@ -103,7 +103,7 @@ Assessment only: no repo files were edited, and `git status` is clean. I ran a f
   - Lines 56-62 are implementation.
   - The "Where this could go" callout (64-71) is a leftover ending from before page 8 existed.
 
-### 8. `/Users/jonathan/projects/clocks/site/story/gravitational-echolocation.qmd`
+### 8. `site/story/gravitational-echolocation.qmd`
 
 - **Works:** the premise (7-21); "Direction is cheap; range is expensive" (31); the coda.
 - **Fails:**
