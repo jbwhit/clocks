@@ -294,10 +294,29 @@ The model-comparison archive's per-candidate final estimates
 only, and are compared with the public API only at recording time, by
 `tests/test_demo_records.py`.
 
-Four invariants tie the arrays the drawings use to the rest of each archive:
-the echolocation close view to `close_view` of the recorded rows, the weight
-in view to the displayed dots, the final predictions to the forward model at
-the final mean, and the covariance's correlations to the dots' within 0.4.
+Four invariants tie the arrays the drawings use to the rest of each archive.
+
+- The echolocation close view equals `close_view` of the recorded rows.
+- In every row, the weight in view is within max(0.01, 6√(p(1 − p)/m)) of
+  the fraction p of displayed dots inside the view: six sampling errors of
+  that fraction. The committed archive's worst gap is 0.03 of its bound
+  (measured). Setting the prior row's 0.45% to 4% fails.
+- In every row of `demo_1d`, `demo_multi_mass` and echolocation, the forward
+  model is evaluated at each displayed dot (centred over clocks for
+  echolocation, as recorded). At each clock the dots' mean reading is within
+  6 `predicted_std`/√m of `predicted_mean`, and their standard deviation is
+  0.6 to 1.5 times `predicted_std`. The worst rows reach 3.4 and 0.89 to 1.11
+  (measured). The exception is echolocation's prior row, which is bounded at
+  0.01 to 2.2: there the ratio runs from 0.019 to 1.43, because one of the
+  6,000 prior particles, inside the head, carries 99.8% of the centre clock's
+  predicted variance and no 500-dot sample holds it (measured). That row is
+  not drawn. Shifting the first update's predictions by 0.02, or multiplying
+  the final predicted standard deviations by ten, fails. The forward model is
+  defined at every prior dot. This replaces a check of the final predictions
+  against the model at the final mean; the replacement caught every edit
+  tried on the old check, and more.
+- The covariance's correlations are within 0.4 of the dots'.
+
 The last is partial: a reversed tilt is caught only where |r| exceeds about
 0.2 (an axis ratio below about 0.82), so the near-round final ellipses of
 `demo_1d` and `demo_2d` are not tied. A tighter bound was tried and does not

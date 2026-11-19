@@ -23,13 +23,14 @@ from scipy.special import logsumexp
 from clocks._demos.demo_echolocation_3d import close_view
 from clocks._replay import DEMOS, PARAM_NAMES, Replay, Scenario, load_replay
 from clocks._scenarios import contrast_matrix
-from clocks.physics import clock_rates
-from clocks.types import ClockArray, MassConfig
+from clocks.physics import clock_rates_batch_multi
+from clocks.types import ClockArray
 
 ROOT = Path(__file__).parents[1]
 ARCHIVES = ROOT / "assets/replays"
 
 FILTER_DEMOS = tuple(name for name in DEMOS if name != "demo_model_comparison")
+PREDICTING_DEMOS = ("demo_1d", "demo_multi_mass", "demo_echolocation_3d")
 SLOW_DEMOS = {"demo_multi_mass_2d", "demo_density", "demo_echolocation_3d"}
 
 # (mean positions, mean masses, sd positions, sd masses) after observation 1, 8, last
@@ -66,6 +67,21 @@ DENSITY_BOUNDS = (
     ((0.067, 0.22, 0.0016), (0.039, 0.20, 0.0031)),
     ((0.019, 0.027, 0.00011), (0.014, 0.021, 0.000083)),
 )
+
+# The dots' predicted readings against the recorded ones, per row and clock: the
+# mean within this many predicted s.d. / sqrt(m), the s.d. within a ratio range.
+# Measured on the committed archives, worst over every row and clock: mean 3.39
+# (echolocation row 34), 2.82 (demo_1d row 7), 2.47 (demo_multi_mass row 40);
+# ratio 0.892 to 1.109 in every row but one.
+PREDICTION_MEAN_BOUND = 6.0
+PREDICTION_SPREAD = (0.6, 1.5)
+# The exception: echolocation's prior row, where the ratio runs from 0.019
+# (centre clock) to 1.425. One of the 6,000 prior particles, inside the head,
+# carries 99.8% of the centre clock's predicted variance, and no 500-dot sample
+# holds it, so the recorded s.d. there is not something the dots can estimate.
+# These are the tightest round bounds leaving a factor of 1.5 on that row. The
+# row is not drawn: the observed-against-fitted panel is empty at k = 0.
+ECHOLOCATION_PRIOR_SPREAD = (0.01, 2.2)
 
 
 def _params(names: Sequence[str]) -> list[object]:
@@ -148,42 +164,73 @@ def _assert_weight_matches_dots(
     """Assert each row's weight in view is near the fraction of dots in view.
 
     The dots are an equal-weight sample of the weighted cloud, so their
-    unweighted fraction inside the cube estimates the weight inside it.
+    unweighted fraction p inside the cube estimates the weight inside it, with
+    sampling error sqrt(p (1 - p) / m); the bound is six of those, or 0.01
+    where p is near 0 or 1. Measured on the committed archive, the worst gap is
+    0.03 of its bound (row 0: 0.0005 against 0.0169).
     """
     low, high = view_bounds
     positions = cloud[:, :, :3]
     inside = np.all((positions >= low) & (positions <= high), axis=2)
-    gap = np.abs(weight_in_view - inside.mean(axis=1))
-    assert np.all(gap <= 0.05), (
-        f"row {int(np.argmax(gap))}: weight_in_view differs from the dots by "
-        f"{gap.max():.3g}"
+    p = inside.mean(axis=1)
+    bound = np.maximum(0.01, 6 * np.sqrt(p * (1 - p) / cloud.shape[1]))
+    gap = np.abs(weight_in_view - p)
+    worst = int(np.argmax(gap / bound))
+    assert np.all(gap <= bound), (
+        f"row {worst}: weight_in_view differs from the dots by {gap[worst]:.3g}, "
+        f"bound {bound[worst]:.3g}"
     )
 
 
-def _rates_at(
-    params: NDArray, clock_positions: NDArray, track_offset: float
+def _readings_at(
+    params: NDArray, clock_positions: NDArray, track_offset: float, centred: bool
 ) -> NDArray[np.float64]:
-    """The forward model's tick rates at one parameter vector.
+    """The forward model's reading at every clock, one row per parameter vector.
 
-    ``params`` is laid out as the library lays it out: positions row-major,
-    then masses.
+    ``params`` (n, P) is laid out as the library lays it out: positions
+    row-major, then masses. ``centred`` removes each row's mean over clocks, as
+    echolocation's recorder does.
     """
     dimensions = clock_positions.shape[1]
-    n_masses = len(params) // (dimensions + 1)
+    n_masses = params.shape[1] // (dimensions + 1)
     split = n_masses * dimensions
-    masses = MassConfig(params[:split].reshape(n_masses, dimensions), params[split:])
-    return clock_rates(masses, ClockArray(clock_positions, track_offset=track_offset))
-
-
-def _assert_prediction_matches(
-    predicted_mean: NDArray, predicted_std: NDArray, model: NDArray
-) -> None:
-    """Assert one row's predicted readings are within half an s.d. of ``model``."""
-    gap = np.abs(predicted_mean - model) / predicted_std
-    assert np.all(gap <= 0.5), (
-        f"predicted_mean differs from the model at the mean by {gap.max():.3g} "
-        "predicted s.d."
+    rates = clock_rates_batch_multi(
+        params[:, :split].reshape(-1, n_masses, dimensions),
+        params[:, split:],
+        ClockArray(clock_positions, track_offset=track_offset),
     )
+    return rates - rates.mean(axis=1, keepdims=True) if centred else rates
+
+
+def _assert_predictions_match_dots(
+    predicted_mean: NDArray,
+    predicted_std: NDArray,
+    dot_readings: NDArray,
+    spreads: Sequence[tuple[float, float]],
+) -> None:
+    """Assert, row by row, the recorded predictions summarise the dots' readings.
+
+    ``dot_readings`` (rows, m, C) is the forward model at each displayed dot.
+    Per clock, the dots' mean is within ``PREDICTION_MEAN_BOUND`` predicted
+    s.d. / sqrt(m) of ``predicted_mean``, and their s.d. over ``predicted_std``
+    lies in that row's ``spreads`` range.
+    """
+    m = dot_readings.shape[1]
+    for row, readings in enumerate(dot_readings):
+        sd = predicted_std[row]
+        deviation = np.abs(readings.mean(axis=0) - predicted_mean[row]) / sd
+        worst = int(np.argmax(deviation))
+        assert np.all(deviation <= PREDICTION_MEAN_BOUND / np.sqrt(m)), (
+            f"row {row}, clock {worst}: the dots' mean reading is "
+            f"{deviation[worst] * np.sqrt(m):.3g} s.d./sqrt(m) from predicted_mean"
+        )
+        ratio = readings.std(axis=0) / sd
+        low, high = spreads[row]
+        outside = int(np.argmax((ratio < low) | (ratio > high)))
+        assert np.all((low <= ratio) & (ratio <= high)), (
+            f"row {row}, clock {outside}: the dots' s.d. is {ratio[outside]:.3g} "
+            f"of predicted_std, expected {low} to {high}"
+        )
 
 
 def _assert_dots_share_orientation(cloud: NDArray, cov: NDArray) -> None:
@@ -347,39 +394,80 @@ def test_a_weight_in_view_the_dots_contradict_is_caught() -> None:
         _assert_weight_matches_dots(corrupted, arrays["cloud"], arrays["view_bounds"])
 
 
-def _model_at_final_mean(name: str) -> NDArray[np.float64]:
-    """The forward model at the archive's last posterior mean, as the demo predicts.
+def test_a_weight_in_view_off_by_its_sampling_error_is_caught() -> None:
+    # The prior row's 0.45% set to 4%: inside the old fixed 0.05, outside six
+    # sampling errors of the dots' 0.4%.
+    arrays = _archive("demo_echolocation_3d").arrays
+    corrupted = arrays["weight_in_view"].copy()
+    corrupted[0] = 0.04
 
-    Echolocation predicts centred readings, so the mean over clocks is removed.
-    """
+    with pytest.raises(AssertionError, match="row 0:"):
+        _assert_weight_matches_dots(corrupted, arrays["cloud"], arrays["view_bounds"])
+
+
+@functools.lru_cache(maxsize=None)
+def _dot_readings(name: str) -> NDArray[np.float64]:
+    """The forward model at every displayed dot of every row: (rows, m, C)."""
     meta, arrays = _archive(name).meta, _archive(name).arrays
-    rates = _rates_at(
-        arrays["mean"][-1], arrays["clock_positions"], meta["track_offset"]
+    cloud = arrays["cloud"].astype(np.float64)
+    centred = name == "demo_echolocation_3d"
+    return np.stack(
+        [
+            _readings_at(dots, arrays["clock_positions"], meta["track_offset"], centred)
+            for dots in cloud
+        ]
     )
+
+
+def _spreads(name: str) -> list[tuple[float, float]]:
+    rows = len(_archive(name).arrays["cloud"])
+    spreads = [PREDICTION_SPREAD] * rows
     if name == "demo_echolocation_3d":
-        return rates - rates.mean()
-    return rates
+        spreads[0] = ECHOLOCATION_PRIOR_SPREAD
+    return spreads
 
 
-@pytest.mark.parametrize("name", ["demo_1d", "demo_multi_mass", "demo_echolocation_3d"])
-def test_archive_predictions_match_the_final_estimate(name: str) -> None:
+@pytest.mark.parametrize("name", PREDICTING_DEMOS)
+def test_archive_predictions_match_the_dots(name: str) -> None:
     arrays = _archive(name).arrays
 
-    _assert_prediction_matches(
-        arrays["predicted_mean"][-1],
-        arrays["predicted_std"][-1],
-        _model_at_final_mean(name),
+    _assert_predictions_match_dots(
+        arrays["predicted_mean"],
+        arrays["predicted_std"],
+        _dot_readings(name),
+        _spreads(name),
     )
 
 
-def test_a_shifted_prediction_is_caught() -> None:
-    arrays = _archive("demo_1d").arrays
+@pytest.mark.parametrize("name", PREDICTING_DEMOS)
+@pytest.mark.parametrize(
+    ("row", "shift"), [(1, 0.02), (-1, 0.002)], ids=["first_update", "final"]
+)
+def test_a_shifted_prediction_is_caught(name: str, row: int, shift: float) -> None:
+    arrays = _archive(name).arrays
+    corrupted = arrays["predicted_mean"].copy()
+    clock = int(np.argmax(arrays["predicted_std"][row]))  # where a shift shows least
+    corrupted[row, clock] += shift
+    shown_row = row % len(corrupted)
 
-    with pytest.raises(AssertionError):
-        _assert_prediction_matches(
-            arrays["predicted_mean"][-1] + 0.002,
-            arrays["predicted_std"][-1],
-            _model_at_final_mean("demo_1d"),
+    with pytest.raises(
+        AssertionError, match=f"row {shown_row}, clock {clock}: .* from predicted_mean"
+    ):
+        _assert_predictions_match_dots(
+            corrupted, arrays["predicted_std"], _dot_readings(name), _spreads(name)
+        )
+
+
+@pytest.mark.parametrize("name", PREDICTING_DEMOS)
+def test_widened_final_prediction_bars_are_caught(name: str) -> None:
+    arrays = _archive(name).arrays
+    corrupted = arrays["predicted_std"].copy()
+    corrupted[-1] *= 10
+    last = len(corrupted) - 1
+
+    with pytest.raises(AssertionError, match=f"row {last}, clock .* of predicted_std"):
+        _assert_predictions_match_dots(
+            arrays["predicted_mean"], corrupted, _dot_readings(name), _spreads(name)
         )
 
 
