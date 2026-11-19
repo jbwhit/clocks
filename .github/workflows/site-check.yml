@@ -1,0 +1,58 @@
+name: Site check
+
+# Render the site and run the rendered-site checks on a pull request, so a
+# change that breaks a page is caught on the runner before it merges rather
+# than by the deploy that follows the merge. Nothing is uploaded or deployed.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "site/**"
+      - "src/clocks/**"
+      - "scripts/check_site_*.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/site.yml"
+      - ".github/workflows/site-check.yml"
+
+# A later push to the same pull request cancels the run it supersedes. The
+# workflow prefix keeps other workflows out of the group; the draft suffix
+# stops a skipped draft run from cancelling the real run that marking the
+# pull request ready starts. The run_id fallback never applies here, since
+# only pull requests trigger this workflow; the expression matches ci.yml's.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.pull_request.draft && 'draft' || 'ready' }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    # Draft pull requests are not rendered: review rounds push often, and only
+    # a head that could merge is worth the minutes. Marking the pull request
+    # ready starts a run for its current head. A skipped run is not a passing
+    # one.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: "1.11.9"
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "latest"
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Render site
+        run: |
+          cd site
+          uv run --frozen quarto render
+      - name: Check rendered site
+        run: |
+          uv run --frozen python scripts/check_site_links.py
+          uv run --frozen python scripts/check_site_figures.py
