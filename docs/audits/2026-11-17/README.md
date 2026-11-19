@@ -15,7 +15,7 @@ This document records the audit as it stood at `0171af3`. Since then:
 | C4 (one mass imitating two) | Prose fixed and the figure's offset disclosed in #20; the figure still uses an offset of 2.0 where the demo uses 1.0 |
 | C10 (smaller items) | "Task 11" removed in #19; the rest fixed in #20 |
 | C2 (the model-comparison callout) | Wording corrected in #19; the seed-averaged presentation is still to do |
-| T2 (prose guards) | Partly addressed in #19: the range-study sentences are now matched whole, with their numbers computed from the certification data. "Run exactly once" is still unguarded |
+| T2 (prose guards) | Partly addressed in #19: the range-study sentences are now matched whole, with the pass counts, the overall total and the far/close ratio computed from the certification data (the 12/12 figures and the factor 20 are literals). "Run exactly once" is still unguarded |
 | V3 (phone clipping and sideways scroll) | Fixed in #21 |
 | CI workflow: draft gating, concurrency, timeouts | Fixed in #22 |
 | `core.hooksPath` unset in the main clone | Set locally |
@@ -53,7 +53,7 @@ were not kept.
 or believed. The coordinating session separately confirmed: the local gate
 (format, lint, 946 tests, 2 slow replays, all passing); a clean site render and
 link-contract check; the prose quoted in findings C1, C2, C4 and C7; the
-seed-spread data behind C3; the phone clipping screenshot behind V3; and the
+seed-spread data behind C2; the phone clipping screenshot behind V3; and the
 prior bound behind C6. Everything else rests on the reviewer who reported it.
 
 ## Summary
