@@ -34,7 +34,7 @@ Two workflows run on GitHub Actions:
   runs tests and lint on pushes to `main` and on non-draft pull requests
   targeting `main`, including when a draft is marked ready for review.
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
-  re-renders and redeploys this site on every push to `main`, so every
+  is triggered by each push to `main` and re-renders and redeploys this site, so every
   executed-cell figure you see is regenerated from source at deploy time. The
   demo GIFs, the density PNG, and the echolocation range-study PNG are the
   exceptions: they are committed files, described in the next section.

@@ -9,9 +9,9 @@ permissions:
   pages: write
   id-token: write
 
-# Deployments run one at a time, in order. A later push never cancels a
-# build or deployment already under way, and waiting runs are kept rather
-# than replaced, so every push to main is deployed.
+# Deployments run one at a time. A later push does not cancel a build or
+# deployment already under way, and up to 100 waiting runs are queued rather
+# than replaced.
 concurrency:
   group: pages
   queue: max
@@ -41,7 +41,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # deploy-pages keeps its own 10-minute clock; leave room around it.
+    timeout-minutes: 12
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
