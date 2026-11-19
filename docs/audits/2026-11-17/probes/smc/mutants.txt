@@ -1,0 +1,95 @@
+== M1_mh_targets_beta1
+2 failed, 260 passed in 8.59s
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+== M2_mh_targets_beta0
+4 failed, 258 passed in 54.76s
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+    tests/test_api.py::test_infer_model_comparison_returns_model_probabilities
+    tests/test_api.py::test_model_comparison_result_to_dict_includes_nested_results
+== M3_accept_all_in_support
+11 failed, 251 passed in 129.98s (0:02:09)
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+    tests/test_smc_rigorous.py::test_failed_particle_update_rolls_back_all_state_and_rng
+    tests/test_smc_rigorous.py::test_failed_model_comparison_update_rolls_back_every_filter
+    tests/test_weight_filter.py::test_gaussian_update_matches_fast_accepted_stage_control
+    tests/test_weight_filter.py::test_full_beta_cap_is_speculative_and_production_update_completes
+    tests/test_api.py::test_infer_model_comparison_returns_model_probabilities
+    tests/test_api.py::test_model_comparison_result_to_dict_includes_nested_results
+    tests/test_api.py::TestDefaultFlipRecovery::test_single_mass_2d_recovery
+    tests/test_api.py::TestDefaultFlipRecovery::test_multi_mass_1d_recovery
+    tests/test_api.py::TestInference3D::test_single_mass_3d_recovery
+== M6_no_resampling_drop_weights
+8 failed, 254 passed in 21.03s
+    tests/test_smc_rigorous.py::test_multistage_update_records_every_pre_resample_evidence_increment
+    tests/test_smc_rigorous.py::test_update_freezes_one_pre_resample_proposal_factor_per_stage
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+    tests/test_smc_rigorous.py::test_update_stage_keeps_the_particle_favoured_by_one_ulp
+    tests/test_weight_filter.py::test_gaussian_update_matches_fast_accepted_stage_control
+    tests/test_weight_filter.py::test_full_beta_cap_is_speculative_and_production_update_completes
+    tests/test_api.py::TestInference3D::test_single_mass_3d_recovery
+== M9_mh_drops_prior
+4 failed, 258 passed in 9.11s
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+    tests/test_weight_filter.py::test_gaussian_update_matches_fast_accepted_stage_control
+    tests/test_weight_filter.py::test_full_beta_cap_is_speculative_and_production_update_completes
+== M21_mh_ratio_sign_flipped
+21 failed, 241 passed, 14 warnings in 6.65s
+    tests/test_smc_rigorous.py::test_update_never_leaves_ess_below_tempering_target
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+    tests/test_smc_rigorous.py::test_mh_rejects_support_crossing_without_repair
+    tests/test_smc_rigorous.py::test_failed_particle_update_rolls_back_all_state_and_rng
+    tests/test_smc_rigorous.py::test_failed_model_comparison_update_rolls_back_every_filter
+    tests/test_smc_api.py::test_api_initial_and_moved_particles_stay_in_actual_support
+    tests/test_smc_api.py::test_fixed_k_result_serializes_evidence_and_diagnostics
+    tests/test_weight_filter.py::test_gaussian_update_matches_fast_accepted_stage_control
+    tests/test_weight_filter.py::test_full_beta_cap_is_speculative_and_production_update_completes
+    tests/test_api.py::test_fixed_k_particles_remain_in_conditional_support_after_updates
+    tests/test_api.py::test_infer_multi_mass_returns_summary_history
+    tests/test_api.py::test_build_particle_filter_is_public_and_runs
+    tests/test_api.py::test_infer_model_comparison_returns_model_probabilities
+    tests/test_api.py::test_simulate_and_infer_preserves_simulation_output
+    tests/test_api.py::test_inference_result_to_dict_includes_particle_state_and_simulation
+    tests/test_api.py::test_model_comparison_result_to_dict_includes_nested_results
+    tests/test_api.py::TestDefaultFlipRecovery::test_single_mass_2d_recovery
+    tests/test_api.py::TestDefaultFlipRecovery::test_multi_mass_1d_recovery
+    tests/test_api.py::TestConditionalSupportPlumbing::test_model_comparison_filters_get_conditional_support
+    tests/test_api.py::TestInference3D::test_single_mass_3d_recovery
+== M22_stale_loglik_after_move
+8 failed, 254 passed in 210.82s (0:03:30)
+    tests/test_smc_rigorous.py::test_multistage_update_records_every_pre_resample_evidence_increment
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+    tests/test_weight_filter.py::test_gaussian_update_matches_fast_accepted_stage_control
+    tests/test_weight_filter.py::test_full_beta_cap_is_speculative_and_production_update_completes
+    tests/test_api.py::test_infer_model_comparison_returns_model_probabilities
+    tests/test_api.py::test_model_comparison_result_to_dict_includes_nested_results
+    tests/test_api.py::TestInference3D::test_single_mass_3d_recovery
+== M24_target_not_updated_on_accept
+2 failed, 260 passed in 8.72s
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+== M25_beta_fraction_ignored_in_mh
+2 failed, 260 passed in 8.25s
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+== M26_next_beta_returns_high
+9 failed, 253 passed in 7.47s
+    tests/test_smc_rigorous.py::test_next_beta_hits_target_ess_and_evidence_identity
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
+    tests/test_smc_rigorous.py::test_next_beta_probes_ess_without_multiplying_one_ulp_differences_away
+    tests/test_smc_rigorous.py::test_next_beta_from_a_partial_temperature_keeps_one_ulp_differences
+    tests/test_weight_filter.py::test_gaussian_update_matches_fast_accepted_stage_control
+    tests/test_weight_filter.py::test_full_beta_cap_is_speculative_and_production_update_completes
+    tests/test_api.py::test_infer_model_comparison_returns_model_probabilities
+    tests/test_api.py::test_model_comparison_result_to_dict_includes_nested_results
+== M27_evidence_ignores_base_weights
+2 failed, 260 passed in 8.65s
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[3]
+    tests/test_smc_rigorous.py::test_conjugate_normal_posterior_and_evidence[11]
