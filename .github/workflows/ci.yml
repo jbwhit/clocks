@@ -5,10 +5,25 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# A later push to the same pull request cancels the run it supersedes. The
+# workflow prefix keeps other workflows out of the group; the draft suffix
+# stops a skipped draft run from cancelling the real run that marking the
+# pull request ready starts; pushes to main key on run_id so one merge never
+# cancels or displaces another's run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.pull_request.draft && 'draft' || 'ready' }}
+  cancel-in-progress: true
 
 jobs:
   test:
+    # Draft pull requests are not tested: review rounds push often, and only a
+    # head that could merge is worth the minutes. Marking the pull request
+    # ready tests that exact head. A skipped run is not a passing one.
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

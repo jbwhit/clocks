@@ -31,7 +31,8 @@ because hardcoded counts go stale.
 Two workflows run on GitHub Actions:
 
 - [`ci.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/ci.yml)
-  runs tests and lint on every push to `main` and on every pull request.
+  runs tests and lint on every push to `main` and on every pull request once
+  it is marked ready for review; draft pull requests are skipped.
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
   re-renders and redeploys this site on every push to `main`, so every
   executed-cell figure you see is regenerated from source at deploy time. The
