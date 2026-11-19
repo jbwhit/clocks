@@ -24,6 +24,7 @@ def _wrapper(
     height: int,
     tag: str = "div",
     extra_class: str = "",
+    before_figure: str = "",
 ) -> str:
     imgs = "".join(
         f'<p><img src="{src}" width="{width}" height="{height}" '
@@ -33,7 +34,7 @@ def _wrapper(
     caps = "".join(f"<figcaption>{c}</figcaption>\n" for c in captions)
     classes = f"cell-output cell-output-display {theme}-content{extra_class}"
     return (
-        f'<{tag} class="{classes}">\n'
+        f'<{tag} class="{classes}">\n{before_figure}'
         '<div class="quarto-figure quarto-figure-center">\n'
         f'<figure class="figure">\n{imgs}{caps}</figure>\n</div>\n</{tag}>\n'
     )
@@ -50,6 +51,8 @@ def _build(
     dark_height: int = 420,
     dark_extra_class: str = "",
     tag: str = "div",
+    before_figure: str = "",
+    nest_dark: bool = False,
     extra: str = "",
 ) -> Path:
     for name in ("light.png", "dark.png", "plot.png"):
@@ -59,10 +62,18 @@ def _build(
     dark = dark if dark is not None else [("demo_files/dark.png", 750)]
     lc = light_captions if light_captions is not None else [CAPTION]
     dc = dark_captions if dark_captions is not None else [CAPTION]
+    light_html = _wrapper("light", light, lc, light_height, tag, "", before_figure)
+    dark_html = _wrapper(
+        "dark", dark, dc, dark_height, tag, dark_extra_class, before_figure
+    )
+    if nest_dark:
+        closing = f"</{tag}>\n"
+        light_html = light_html.removesuffix(closing) + dark_html + closing
+        dark_html = ""
     body = (
         '<p><img src="demo_files/light.png" width="1" height="1"></p>\n'  # ignored
-        + _wrapper("light", light, lc, light_height, tag)
-        + _wrapper("dark", dark, dc, dark_height, tag, dark_extra_class)
+        + light_html
+        + dark_html
         + extra
     )
     (tmp_path / "story" / "demo.html").write_text(
@@ -207,6 +218,46 @@ def test_a_well_formed_tall_page_passes(
     assert len(failures) == 2, failures
     for theme, failure in zip(("light", "dark"), failures, strict=True):
         assert f"{PAGE}: {theme}-content: height 540, expected 420" == failure
+
+
+def test_section_wrappers_with_a_div_before_the_image_pass(tmp_path: Path) -> None:
+    # A wrapper that closed at the first </div> inside it would lose its image.
+    site = _build(
+        tmp_path, tag="section", before_figure='<div class="cell-output"></div>\n'
+    )
+    assert check_site_figures.figure_failures(site) == []
+
+
+def test_a_dark_wrapper_nested_inside_the_light_one(tmp_path: Path) -> None:
+    _single_failure(
+        _build(tmp_path, nest_dark=True), "theme wrapper nested inside another"
+    )
+
+
+def test_a_query_string_on_the_image_urls_passes(tmp_path: Path) -> None:
+    site = _build(
+        tmp_path,
+        light=[("demo_files/light.png?v=2", 750)],
+        dark=[("demo_files/dark.png?v=2", 750)],
+    )
+    assert check_site_figures.figure_failures(site) == []
+
+
+def test_a_percent_escaped_image_url_names_its_file(tmp_path: Path) -> None:
+    site = _build(tmp_path, dark=[("demo_files/dark%20plot.png", 750)])
+    (site / "story" / "demo_files" / "dark plot.png").write_bytes(b"dark plot")
+    assert check_site_figures.figure_failures(site) == []
+
+
+def test_urls_differing_only_in_query_are_the_same_file(tmp_path: Path) -> None:
+    _single_failure(
+        _build(
+            tmp_path,
+            light=[("demo_files/plot.png?v=1", 750)],
+            dark=[("demo_files/plot.png?v=2", 750)],
+        ),
+        "same image file",
+    )
 
 
 def test_a_missing_page_is_a_failure(tmp_path: Path) -> None:

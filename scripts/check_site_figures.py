@@ -5,10 +5,11 @@ Quarto wraps the two outputs in elements with the classes `light-content` and
 `dark-content`, and the site shows one at a time. This check parses the
 rendered HTML and requires, for every page:
 
-- exactly one wrapper per theme, and no element carrying both theme classes;
+- exactly one wrapper per theme, none carrying both theme classes and none
+  nested inside another;
 - exactly one image in each wrapper, declared 750 pixels wide and the page's
-  expected height, with the two referenced files existing inside the site and
-  different;
+  expected height, whose URL path (query and fragment dropped) names a file
+  inside the site, the two files existing and different;
 - exactly one `figcaption` in each wrapper, with the same text in both.
 
 Images outside the two wrappers (committed GIFs and PNGs) are ignored.
@@ -24,7 +25,7 @@ from __future__ import annotations
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "site" / "_output"
@@ -59,6 +60,7 @@ class _Wrapper:
         self.tag = tag
         self.themes = themes
         self.depth = 1
+        self.nested = False
         self.images: list[dict[str, str | None]] = []
         self.captions: list[str] = []
 
@@ -69,7 +71,8 @@ class _FigureParser(HTMLParser):
     Any element whose class list names `light-content` or `dark-content` is a
     wrapper. Its end is found by counting that element's own tag, so a
     `section` wrapper with `div`s inside closes at its own `</section>`.
-    Contents belong to the innermost open wrapper.
+    Contents belong to the innermost open wrapper; a wrapper that opens while
+    another is open is marked as nested.
     """
 
     def __init__(self) -> None:
@@ -86,6 +89,7 @@ class _FigureParser(HTMLParser):
         themes = [theme for theme in THEMES if f"{theme}-content" in classes]
         if themes:
             wrapper = _Wrapper(tag, themes)
+            wrapper.nested = bool(self._open)
             self.wrappers.append(wrapper)
             if tag not in _VOID_TAGS:
                 self._open.append(wrapper)
@@ -129,7 +133,13 @@ def _page_failures(page: str, path: Path, height: int, output_dir: Path) -> list
         # Such an element counts for neither theme, so per-theme checks would
         # only repeat the same fault.
         return [f"{page}: <{w.tag}> wrapper has both theme classes" for w in ambiguous]
-    failures: list[str] = []
+    # The outer wrapper is hidden in the other theme and takes the inner one
+    # with it, so a nested wrapper never shows.
+    failures = [
+        f"{page}: <{w.tag}> {w.themes[0]}-content: theme wrapper nested inside another"
+        for w in parser.wrappers
+        if w.nested
+    ]
     files: dict[str, Path] = {}
     captions: dict[str, str] = {}
     for theme in THEMES:
@@ -142,11 +152,11 @@ def _page_failures(page: str, path: Path, height: int, output_dir: Path) -> list
         failures.extend(_image_failures(label, wrapper.images, height))
         if len(wrapper.images) == 1:
             src = wrapper.images[0].get("src") or ""
-            problem = _source_problem(src, path, output_dir)
-            if problem:
+            resolved, problem = _resolve_source(src, path, output_dir)
+            if resolved is None:
                 failures.append(f"{label}: {problem}")
             else:
-                files[theme] = (path.parent / src).resolve()
+                files[theme] = resolved
         texts = wrapper.captions
         if len(texts) != 1:
             failures.append(f"{label}: expected 1 figcaption, found {len(texts)}")
@@ -176,20 +186,24 @@ def _image_failures(
     return failures
 
 
-def _source_problem(src: str, page_path: Path, output_dir: Path) -> str | None:
-    """Say what is wrong with an image ``src``, or return None if it is fine.
+def _resolve_source(
+    src: str, page_path: Path, output_dir: Path
+) -> tuple[Path | None, str]:
+    """Return the file an image ``src`` names, or None and what is wrong.
 
-    The file must be referenced relative to the page and lie inside the site,
-    so the deployed page can load it.
+    Only the URL's path names the file: a query or fragment is dropped and
+    percent-escapes are decoded. The file must be referenced relative to the
+    page and lie inside the site, so the deployed page can load it.
     """
-    if src.startswith("/") or urlsplit(src).scheme:
-        return f"image is outside the site: {src!r}"
-    resolved = (page_path.parent / src).resolve()
+    url = urlsplit(src)
+    if url.scheme or url.netloc or url.path.startswith("/"):
+        return None, f"image is outside the site: {src!r}"
+    resolved = (page_path.parent / unquote(url.path)).resolve()
     if not resolved.is_relative_to(output_dir.resolve()):
-        return f"image is outside the site: {src!r}"
-    if not src or not resolved.is_file():
-        return f"image {src!r} does not exist"
-    return None
+        return None, f"image is outside the site: {src!r}"
+    if not url.path or not resolved.is_file():
+        return None, f"image {src!r} does not exist"
+    return resolved, ""
 
 
 def main() -> int:
