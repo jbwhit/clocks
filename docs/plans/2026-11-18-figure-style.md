@@ -191,9 +191,9 @@ Tests:
   - `test_cell_declares_both_renderings`: the cell contains the line `#| renderings: [light, dark]`.
   - `test_cell_gives_one_identical_caption_per_rendering`: the cell has `#| fig-cap:` followed by exactly two `#|   - "..."` lines whose quoted strings are equal and non-empty.
   - `test_cell_draws_through_the_style_and_show`: the cell contains `for theme in THEMES:`, `with style(theme) as`, and `show(fig)`.
-  - `test_cell_has_no_unstyled_colour_or_display`: none of these regular expressions match the cell: `plt\.show\(`, `\bcmap\s*=`, `["']tab:\w+["']`, `["'](steelblue|lightcoral|red|black|gray|grey)["']`.
+  - `test_cell_has_no_unstyled_colour_or_display`: parses the plotting cell and asserts `_style_violations(cell)` is empty. The helper walks the cell's syntax tree and reports calls to `plt.show`, a `cmap` keyword, a string-literal colour (alone or in a list or tuple) in any colour keyword, a string `fmt` keyword, and positional string arguments to plot-family calls beyond the two column names allowed when `data=` is passed.
 
-- [ ] **Step 2: Run it.** `test_plot_pages_are_exactly_the_known_nine` passes already. The rendering, caption and style-and-show tests fail for all nine pages. The forbidden-pattern test fails for seven; `clocks-as-gravimeters` and `how-many-masses` use no named colours today and pass it from the start.
+- [ ] **Step 2: Run it.** `test_plot_pages_are_exactly_the_known_nine` passes already. The rendering, caption and style-and-show tests fail for all nine pages. The colour-and-display test, in the regular-expression form this step first used, failed for seven; `clocks-as-gravimeters` and `how-many-masses` used no named colours and passed it from the start. (The syntax-tree form that replaced it fails six of the original cells: `the-search-in-one-dimension` passes it, because that cell passed its `tab:` colours through a variable, which a keyword check does not see.)
 
 - [ ] **Step 3: Convert each cell**, following the spec's "Two renderings per plot" pattern, its "Per-plot colour assignments" table, and its four "Declared changes". For every cell:
 
