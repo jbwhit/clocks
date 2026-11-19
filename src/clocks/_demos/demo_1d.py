@@ -13,8 +13,17 @@ matplotlib.use("Agg")
 import numpy as np
 
 from clocks._demos._common import add_common_arguments
+from clocks._replay import (
+    Replay,
+    Scenario,
+    filter_controls,
+    record_filter,
+    scenario_meta,
+    validate_replay,
+)
 from clocks.api import build_particle_filter, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
+from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig
 from clocks.viz import animate_inference
 
@@ -27,6 +36,75 @@ NOISE_STD = 0.005
 N_PARTICLES = 1000
 SEED = 42
 OUTPUT_PATH = Path("output/demo_1d.gif")
+
+
+def scenario() -> Scenario:
+    """The packaged inputs of this demo, read from the module constants."""
+    clock_array = ClockArray(
+        np.array([[position] for position in CLOCK_POSITIONS]),
+        track_offset=TRACK_OFFSET,
+    )
+    params = np.array([TRUE_X, TRUE_M])
+    return Scenario(
+        demo="demo_1d",
+        clock_array=clock_array,
+        true_params=params,
+        true_rates=clock_rates(
+            MassConfig(params[:1].reshape(1, 1), params[1:]), clock_array
+        ),
+        param_names=("x", "M"),
+        prior_ranges=((-8.0, 8.0), (0.005, 0.15)),
+        seed=SEED,
+        noise_std=NOISE_STD,
+        n_observations=N_OBSERVATIONS,
+        n_particles=N_PARTICLES,
+    )
+
+
+def record(
+    *, n_observations: int = N_OBSERVATIONS, n_particles: int = N_PARTICLES
+) -> Replay:
+    """Run the packaged inference once and return it as a validated replay."""
+    packaged = scenario()
+    params = packaged.true_params
+    simulation = simulate(
+        SimulationConfig(
+            clock_array=packaged.clock_array,
+            ground_truth=MassConfig(params[:1].reshape(1, 1), params[1:]),
+            noise=NoiseConfig(packaged.noise_std),
+            n_observations=n_observations,
+            seed=packaged.seed,
+        )
+    )
+    particle_filter = build_particle_filter(
+        InferenceConfig(
+            clock_array=packaged.clock_array,
+            noise=NoiseConfig(packaged.noise_std),
+            prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
+            n_particles=n_particles,
+            n_masses=1,
+            seed=packaged.seed,
+        )
+    )
+    replay = record_filter(
+        particle_filter,
+        simulation.observations,
+        meta=scenario_meta(
+            packaged,
+            kind="filter",
+            n_observations=n_observations,
+            n_particles=n_particles,
+            controls=filter_controls(particle_filter),
+        ),
+        arrays={
+            "clock_positions": packaged.clock_array.positions,
+            "true_params": packaged.true_params,
+            "true_rates": packaged.true_rates,
+        },
+        predict=particle_filter.forward_model_batch,
+    )
+    validate_replay(replay)
+    return replay
 
 
 def build_parser() -> argparse.ArgumentParser:

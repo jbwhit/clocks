@@ -19,7 +19,7 @@ import numpy as np
 import scipy
 from numpy.typing import NDArray
 
-from clocks.types import Observation
+from clocks.types import ClockArray, Observation
 
 FORMAT = "clocks-replay"
 VERSION = 1
@@ -257,6 +257,63 @@ def provenance() -> dict[str, str]:
         "numpy": np.__version__,
         "scipy": scipy.__version__,
         "platform": platform.platform(),
+    }
+
+
+@dataclass(frozen=True, eq=False)  # eq=False: it holds arrays
+class Scenario:
+    """A demo's packaged inputs, as data: what ``record`` simulates and infers."""
+
+    demo: str
+    clock_array: ClockArray
+    true_params: NDArray[np.float64]
+    true_rates: NDArray[np.float64]
+    param_names: tuple[str, ...]
+    prior_ranges: tuple[tuple[float, float], ...]
+    seed: int
+    noise_std: float
+    n_observations: int
+    n_particles: int
+
+
+def scenario_meta(
+    scenario: Scenario,
+    *,
+    kind: str,
+    n_observations: int,
+    n_particles: int,
+    controls: Mapping[str, object],
+    **extra: object,
+) -> dict[str, object]:
+    """The complete ``meta`` of a replay, in plain JSON-round-trippable values."""
+    meta: dict[str, object] = {
+        "format": FORMAT,
+        "version": VERSION,
+        "demo": scenario.demo,
+        "kind": kind,
+        "seed": int(scenario.seed),
+        "n_observations": int(n_observations),
+        "n_particles": int(n_particles),
+        "noise_std": float(scenario.noise_std),
+        "track_offset": float(scenario.clock_array.track_offset),
+        "param_names": list(scenario.param_names),
+        "prior_ranges": [[float(lo), float(hi)] for lo, hi in scenario.prior_ranges],
+        "controls": dict(controls),
+        "created_with": provenance(),
+    }
+    if kind == "filter":
+        meta["cloud_size"] = min(CLOUD_SIZE, int(n_particles))
+    meta.update(extra)
+    return meta
+
+
+def filter_controls(pf) -> dict[str, object]:
+    """The tuning controls a particle filter was built with, as plain values."""
+    return {
+        "ess_target": float(pf.ess_target),
+        "rejuvenation_steps": int(pf.rejuvenation_steps),
+        "proposal_scale": float(pf.proposal_scale),
+        "resampling": str(pf.resampling),
     }
 
 
