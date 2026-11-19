@@ -280,9 +280,9 @@ stay outside the loop, so they happen once.
 `renderings` arrived in Quarto 1.7, but the caption-list behaviour this design
 relies on was verified only on 1.9.32, so that is the stated minimum: the
 Getting Started page's prerequisites gain a line saying the site is rendered
-with Quarto 1.9.32 or later. The deploy workflow installs Quarto's current
-release, which is newer; the rendered-site check below runs there on every
-deployment and fails if a later Quarto changes the behaviour.
+with Quarto 1.9.32 or later. The site workflows pin Quarto 1.11.9, and a pull
+request that touches the site is rendered and checked on the runner before it
+can merge; the rendered-site check below also runs on every deployment.
 
 ### Per-plot colour assignments
 
@@ -439,8 +439,8 @@ expected sets.
   build needing the files anyway.
 - **The two-rendering behaviour depends on the Quarto version.** An older local
   Quarto would show both figures stacked or drop a caption. The tested minimum
-  is documented, and the rendered-site check fails on a build that gets it
-  wrong.
+  is documented, the site workflows pin Quarto 1.11.9, and the rendered-site
+  check fails a pull request or a deployment whose build gets it wrong.
 - **Duplicated caption text** in each cell can drift. The source contract
   requires the two entries to be identical.
 - **Committed assets will not match** until the second track lands: for a
