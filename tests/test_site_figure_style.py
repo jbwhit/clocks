@@ -39,13 +39,17 @@ _COLOUR_KEYWORDS = frozenset(
         "edgecolors",
         "markerfacecolor",
         "markeredgecolor",
+        "mfc",  # alias of markerfacecolor
+        "mec",  # alias of markeredgecolor
         "ecolor",
+        "colors",  # vlines, hlines, contour, tick_params
     }
 )
-# Plotting calls whose positional string arguments are format strings, which
-# can carry a colour; markers and line styles are given by keyword instead.
+# Plotting calls whose positional string arguments are format strings (or, for
+# fill, colours), which can carry a colour; markers and line styles are given
+# by keyword instead.
 _FORMAT_STRING_CALLS = frozenset(
-    {"plot", "semilogy", "semilogx", "loglog", "step", "errorbar"}
+    {"plot", "semilogy", "semilogx", "loglog", "step", "errorbar", "fill"}
 )
 
 
@@ -179,10 +183,19 @@ def test_cell_has_no_unstyled_colour_or_display(page: str) -> None:
         ('ax.scatter(x, y, c=["red", "black"])', "literal colour in c"),
         ('ax.errorbar(x, y, fmt="r-")', "format string"),
         ('ax.plot("step", "rate", "r-", data=frame)', "positional format string"),
+        ('ax.vlines(x, 0, 1, colors="red")', "literal colour in colors"),
+        ('ax.fill(x, y, "r")', "positional format string"),
     ],
 )
 def test_style_violations_reports_unstyled_calls(source: str, violation: str) -> None:
     assert _style_violations(source) == [violation]
+
+
+def test_style_violations_reports_marker_colour_aliases() -> None:
+    assert _style_violations('ax.plot(x, y, mfc="red", mec="blue")') == [
+        "literal colour in mfc",
+        "literal colour in mec",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -191,6 +204,7 @@ def test_style_violations_reports_unstyled_calls(source: str, violation: str) ->
         'ax.set_ylabel("red")',
         'ax.scatter(x, y, facecolors="none", edgecolors=colors.truth)',
         "ax.plot(x, y, color=colors.ink)",
+        "ax.vlines(x, 0, 1, colors=colors.rule)",
         "# do not call plt.show()",
         'ax.plot("step", "rate", data=frame, color=colors.ink)',
     ],
