@@ -19,7 +19,9 @@ import numpy as np
 import scipy
 from numpy.typing import NDArray
 
-from clocks.types import ClockArray, Observation
+from clocks.api import build_particle_filter, simulate
+from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
+from clocks.types import ClockArray, MassConfig, Observation
 
 FORMAT = "clocks-replay"
 VERSION = 1
@@ -305,6 +307,63 @@ def scenario_meta(
         meta["cloud_size"] = min(CLOUD_SIZE, int(n_particles))
     meta.update(extra)
     return meta
+
+
+def record_point_masses(
+    scenario: Scenario,
+    *,
+    n_observations: int,
+    n_particles: int,
+    predictions: bool,
+) -> Replay:
+    """Simulate and infer a point-mass scenario once; return a validated replay.
+
+    The mass count and truth come from ``scenario.true_params``, laid out as the
+    library lays out parameters: positions row-major, then masses.
+    """
+    dimensions = scenario.clock_array.positions.shape[1]
+    params = scenario.true_params
+    n_masses = len(params) // (dimensions + 1)
+    split = n_masses * dimensions
+    truth = MassConfig(params[:split].reshape(n_masses, dimensions), params[split:])
+    simulation = simulate(
+        SimulationConfig(
+            clock_array=scenario.clock_array,
+            ground_truth=truth,
+            noise=NoiseConfig(scenario.noise_std),
+            n_observations=n_observations,
+            seed=scenario.seed,
+        )
+    )
+    particle_filter = build_particle_filter(
+        InferenceConfig(
+            clock_array=scenario.clock_array,
+            noise=NoiseConfig(scenario.noise_std),
+            prior=PriorConfig(scenario.prior_ranges[0], scenario.prior_ranges[split]),
+            n_particles=n_particles,
+            n_masses=n_masses,
+            seed=scenario.seed,
+        )
+    )
+    replay = record_filter(
+        particle_filter,
+        simulation.observations,
+        meta=scenario_meta(
+            scenario,
+            kind="filter",
+            n_observations=n_observations,
+            n_particles=n_particles,
+            controls=filter_controls(particle_filter),
+        ),
+        arrays={
+            "clock_positions": scenario.clock_array.positions,
+            "true_params": scenario.true_params,
+            "true_rates": scenario.true_rates,
+        },
+        predict=particle_filter.forward_model_batch if predictions else None,
+    )
+    validate_replay(replay)
+    return replay
 
 
 def filter_controls(pf) -> dict[str, object]:

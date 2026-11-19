@@ -16,10 +16,7 @@ from clocks._demos._common import add_common_arguments
 from clocks._replay import (
     Replay,
     Scenario,
-    filter_controls,
-    record_filter,
-    scenario_meta,
-    validate_replay,
+    record_point_masses,
 )
 from clocks._scenarios import (
     N_CLOCKS,
@@ -72,45 +69,12 @@ def record(
     *, n_observations: int = N_OBSERVATIONS, n_particles: int = N_PARTICLES
 ) -> Replay:
     """Run the packaged inference once and return it as a validated replay."""
-    packaged = scenario()
-    params = packaged.true_params
-    simulation = simulate(
-        SimulationConfig(
-            clock_array=packaged.clock_array,
-            ground_truth=MassConfig(params[:4].reshape(2, 2), params[4:]),
-            noise=NoiseConfig(packaged.noise_std),
-            n_observations=n_observations,
-            seed=packaged.seed,
-        )
+    return record_point_masses(
+        scenario(),
+        n_observations=n_observations,
+        n_particles=n_particles,
+        predictions=False,
     )
-    particle_filter = build_particle_filter(
-        InferenceConfig(
-            clock_array=packaged.clock_array,
-            noise=NoiseConfig(packaged.noise_std),
-            prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
-            n_particles=n_particles,
-            n_masses=2,
-            seed=packaged.seed,
-        )
-    )
-    replay = record_filter(
-        particle_filter,
-        simulation.observations,
-        meta=scenario_meta(
-            packaged,
-            kind="filter",
-            n_observations=n_observations,
-            n_particles=n_particles,
-            controls=filter_controls(particle_filter),
-        ),
-        arrays={
-            "clock_positions": packaged.clock_array.positions,
-            "true_params": packaged.true_params,
-            "true_rates": packaged.true_rates,
-        },
-    )
-    validate_replay(replay)
-    return replay
 
 
 def build_parser() -> argparse.ArgumentParser:
