@@ -684,7 +684,7 @@ No files change. This task proves the new tests can fail. Work in the task's own
 | `close_view` uses bare `floor` and `ceil` | `test_close_view[rounding_up]`, `test_close_view[rounding_down]` |
 | `weight_in_view` tests all four columns against the bounds | `test_weight_in_view` |
 | `demo_model_comparison.record()` writes each candidate's mean under `final_std_k<k>` as well | `test_model_record_final_estimates_match_the_public_api` |
-| **An early trajectory change.** In `demo_1d.record()`, before the call to `record_filter`: `real = pf.update`, then `pf.update = lambda o: (setattr(pf, "noise_std", 2 * NOISE_STD if pf.state.observations_seen < 3 else NOISE_STD), real(o))[1]` | `test_gate_summaries[demo_1d]`, `test_record_agrees_with_the_public_api[demo_1d]` |
+| **An early trajectory change.** In `_replay.record_point_masses` (the helper the four point-mass `record()` functions call), before the call to `record_filter` and only `if scenario.demo == "demo_1d"`, with `NOISE_STD = scenario.noise_std`: `real = pf.update`, then `pf.update = lambda o: (setattr(pf, "noise_std", 2 * NOISE_STD if pf.state.observations_seen < 3 else NOISE_STD), real(o))[1]` | `test_gate_summaries[demo_1d]`, `test_record_agrees_with_the_public_api[demo_1d]` |
 | **A stale final result.** In `assets/replays/demo_1d.npz`, add 0.05 to `mean[-1, 0]` | `test_gate_summaries[demo_1d]`, `test_archive_dots_agree_with_summaries[demo_1d]` |
 | **A stale early row.** In `assets/replays/demo_2d.npz`, multiply `cov[1]` by 9 | `test_gate_summaries[demo_2d]`, `test_archive_dots_agree_with_summaries[demo_2d]` |
 | In `assets/replays/demo_model_comparison.npz`, set the last `model_posterior` row to `[0.0, 0.99, 0.01]` | `test_model_posterior_follows_evidence` |
