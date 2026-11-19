@@ -1,11 +1,14 @@
 """Source contract for the site's build-time plots.
 
 Every plotting cell draws its figure once per theme through the shared style
-and gives one identical caption per rendering. These are string checks on the
-page source: they stop a plot from bypassing the conventions, but they do not
-prove that a plot looks right or that the style block encloses the drawing.
+and gives one identical caption per rendering. These are checks on the page
+source: the header and loop checks match text, and the colour and display check
+reads the cell's syntax tree. They stop a plot from bypassing the conventions,
+but they do not prove that a plot looks right or that the style block encloses
+the drawing.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -26,13 +29,23 @@ PLOT_PAGES = (
 _EXCLUDED_DIRS = {"_output", ".quarto"}
 _CELL = re.compile(r"^```\{python\}[^\n]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 _CAPTION_ENTRY = re.compile(r'^#\|\s{2,}-\s*"(.*)"\s*$')
-_FORBIDDEN = (
-    r"plt\.show\(",
-    r"\bcmap\s*=",
-    r"[\"']tab:\w+[\"']",
-    r"[\"'](steelblue|lightcoral|red|black|gray|grey)[\"']",
-    r"\b(?:color|c|facecolors?|edgecolors?|markerfacecolor|markeredgecolor)"
-    r"\s*=\s*[\"'](?!none[\"'])",
+_COLOUR_KEYWORDS = frozenset(
+    {
+        "color",
+        "c",
+        "facecolor",
+        "facecolors",
+        "edgecolor",
+        "edgecolors",
+        "markerfacecolor",
+        "markeredgecolor",
+        "ecolor",
+    }
+)
+# Plotting calls whose positional string arguments are format strings, which
+# can carry a colour; markers and line styles are given by keyword instead.
+_FORMAT_STRING_CALLS = frozenset(
+    {"plot", "semilogy", "semilogx", "loglog", "step", "errorbar"}
 )
 
 
@@ -103,20 +116,68 @@ def test_cell_draws_through_the_style_and_show(page: str) -> None:
     assert "show(fig)" in cell
 
 
+def _style_violations(cell: str) -> list[str]:
+    """Return what a cell does that bypasses the shared style.
+
+    The cell's ``#|`` option lines are comments, so the whole cell parses.
+    """
+    violations: list[str] = []
+    for node in ast.walk(ast.parse(cell)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "show"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "plt"
+        ):
+            violations.append("calls plt.show()")
+        for keyword in node.keywords:
+            if keyword.arg == "cmap":
+                violations.append("passes cmap")
+            elif keyword.arg in _COLOUR_KEYWORDS and _is_string(keyword.value):
+                if keyword.value.value != "none":
+                    violations.append(f"literal colour in {keyword.arg}")
+        if isinstance(func, ast.Attribute) and func.attr in _FORMAT_STRING_CALLS:
+            if any(_is_string(arg) for arg in node.args):
+                violations.append("positional format string")
+    return violations
+
+
+def _is_string(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
 @pytest.mark.parametrize("page", PLOT_PAGES)
 def test_cell_has_no_unstyled_colour_or_display(page: str) -> None:
-    cell = _only_plot_cell(page)
-    matches = [pattern for pattern in _FORBIDDEN if re.search(pattern, cell)]
-    assert matches == [], f"{page}: forbidden patterns {matches}"
+    violations = _style_violations(_only_plot_cell(page))
+    assert violations == [], f"{page}: {violations}"
+
+
+@pytest.mark.parametrize(
+    ("source", "violation"),
+    [
+        ('ax.plot(x, y, "r-")', "positional format string"),
+        ('ax.plot(x, y, "o-")', "positional format string"),
+        ('ax.plot(x, y, color="blue")', "literal colour in color"),
+        ("ax.scatter(x, y, c='C0')", "literal colour in c"),
+        ('ax.scatter(x, y, cmap="viridis")', "passes cmap"),
+        ("plt.show ()", "calls plt.show()"),
+    ],
+)
+def test_style_violations_reports_unstyled_calls(source: str, violation: str) -> None:
+    assert _style_violations(source) == [violation]
 
 
 @pytest.mark.parametrize(
     "source",
-    ['color="blue"', "c='C0'", 'color="#123456"', 'color="k"'],
+    [
+        'ax.set_ylabel("red")',
+        'ax.scatter(x, y, facecolors="none", edgecolors=colors.truth)',
+        "ax.plot(x, y, color=colors.ink)",
+        "# do not call plt.show()",
+    ],
 )
-def test_literal_colour_pattern_catches_string_colours(source: str) -> None:
-    assert any(re.search(pattern, source) for pattern in _FORBIDDEN)
-
-
-def test_literal_colour_pattern_allows_none_faces() -> None:
-    assert not any(re.search(p, 'facecolors="none"') for p in _FORBIDDEN)
+def test_style_violations_allows_styled_calls(source: str) -> None:
+    assert _style_violations(source) == []
