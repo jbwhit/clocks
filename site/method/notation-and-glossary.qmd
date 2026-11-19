@@ -37,7 +37,7 @@ masses; $c$ indexes clocks ($r_c$).
 
 | Symbol | Meaning | Where introduced |
 |---|---|---|
-| $\sigma_{\text{obs}}$ | Observation noise standard deviation (0.005 in the demos); written plain $\sigma$ on the inference pages | [One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd) |
+| $\sigma_{\text{obs}}$ | Observation noise standard deviation (0.005 in the other demos, 0.001 in the echolocation simulation); written plain $\sigma$ on the inference pages | [One Clock Is Not Enough](../story/one-clock-is-not-enough.qmd) |
 | $N$ | Number of particles in the filter's cloud | [The Particle Filter](the-particle-filter.qmd) |
 | $w_i$ | Weight of particle $i$ (weights sum to one) | [The Particle Filter](the-particle-filter.qmd) |
 | $\theta_i$ | Particle $i$'s full parameter hypothesis, e.g. $(x, M)$ | [The Particle Filter](the-particle-filter.qmd) |
@@ -55,9 +55,10 @@ profile *width* in [Beyond Point Masses](../story/beyond-point-masses.qmd)
 (which flags the reuse itself); this page writes $\sigma_{\text{obs}}$ vs
 $\sigma_{\text{density}}$ to keep them apart. **$\tau$** means proper time
 in $d\tau/dt$, but in the
-[echolocation coda](../story/gravitational-echolocation.qmd) it is a clock's
+[echolocation coda](../story/gravitational-echolocation.qmd) it is an
 *averaging time*: there $\sigma_y(\tau) = 10^{-16}/\sqrt{\tau}$ is the
-clock's fractional-frequency instability after averaging for time $\tau$.
+fractional-frequency instability of a comparison between two clocks after
+averaging for time $\tau$.
 :::
 
 ## Terms {#sec-terms}

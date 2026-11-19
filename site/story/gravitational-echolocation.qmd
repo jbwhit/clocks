@@ -125,8 +125,9 @@ pass rule.
 
 The simulation runs in units where G = c = 1, but nothing stops us from
 asking the question in SI. Give the head a 10 cm clock baseline. For this
-estimate, assume a clock budget with fractional-frequency instability near
-$10^{-16}/\sqrt{\tau}$ and a systematic floor around $10^{-18}$ — and ask:
+estimate, assume that comparing two of her clocks has fractional-frequency
+instability near $10^{-16}/\sqrt{\tau}$ and a systematic floor around
+$10^{-18}$ — and ask:
 sitting long and still enough, could she feel the Sun? Jupiter?
 
 ```{python}
@@ -195,16 +196,20 @@ for name, s in ROWS:
 Markdown("\n".join(lines))
 ```
 
-Earth passes immediately. The vertical gradient across her own head is
-$1.1\times10^{-17}$. Laboratory clocks have resolved the same
+Earth clears the assumed systematic floor by about a factor of eleven. The
+vertical gradient across her own head is $1.1\times10^{-17}$. Laboratory clocks have resolved the same
 gravitational-redshift effect across a single millimeter, about
-$1.1\times10^{-19}$ — so a minute or two of stillness gives her *down*,
-permanently and unambiguously.
+$1.1\times10^{-19}$. The table's sitting time is how long she must average
+before the signal equals her clocks' statistical noise, a signal-to-noise
+ratio of one; reaching three takes nine times longer. So a minute or two of
+stillness brings *down* level with the noise, and about a quarter of an hour
+lifts it to three standard deviations.
 
 The Sun is stranger. Hovering motionless at 1 AU the signal exists, and
-seven patient years would statistically resolve it — but it sits two
-orders of magnitude beneath today's systematic floor, so that sense waits
-on the next generation of clocks. And from a chair on Earth the problem
+seven patient years would bring it level with the statistical noise alone
+— but it sits about 150 times beneath the assumed systematic floor, so that
+sense waits until her comparison's floor falls below the solar signal. And
+from a chair on Earth the problem
 changes in kind, not just degree: the Earth free-falls around the Sun,
 and free fall cancels that leading $1/R^2$ gradient exactly — the
 equivalence principle, enforcing itself. What survives inside the head is
@@ -225,7 +230,7 @@ fall: it removes the leading $1/R^2$ gradient and leaves only the much
 smaller tidal residue. Hovering 100,000 km from
 Jupiter's center — barely 30,000 km above the cloud tops — Jupiter
 presses on her clocks as strongly as Earth does from a chair: one
-meditative minute.
+meditative minute to rise level with the statistical noise.
 
 There is a familiar shape in all this. Setting the signal against the
 $10^{-18}$ floor gives the head a detection horizon of about 0.08 AU for
