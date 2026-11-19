@@ -18,7 +18,7 @@
 - Before every commit run the full local gate: `uv run ruff format --check .`, `uv run ruff check .`, `uv run pytest`, and `uv run pytest -m slow`. Run the checks and the commit in separate commands, and read the output before committing.
 - Commit messages are passed with a quoted heredoc (`<<'MSG'`) and end with a `Co-Authored-By:` trailer naming the model that wrote the commit. Commit after each task and push; do not open a pull request (the coordinator does).
 - Nothing under `assets/` or `site/assets/` changes except the seven new files `assets/replays/<demo>.npz`. `tests/test_generated_assets.py` stays green.
-- Every command keeps its present path and output. In each `src/clocks/_demos/demo_*.py` the diff contains additions only: `build_parser`, `_run_demo` and `main` are not edited, the demos still write their GIFs, and `demo-density` keeps its shared generator.
+- Every command keeps its present path and output. In each `src/clocks/_demos/demo_*.py`, `build_parser`, `_run_demo` and `main` are not edited: the demos still write their GIFs, `demo-model-comparison` still runs its comparison twice, and `demo-density` keeps its shared generator. New code goes in new functions.
 - The seven demo names, in this order everywhere: `demo_1d`, `demo_2d`, `demo_multi_mass`, `demo_multi_mass_2d`, `demo_model_comparison`, `demo_density`, `demo_echolocation_3d`.
 - Format name `"clocks-replay"`, version `1`. Arrays are float64 except `cloud` (float32) and the integer arrays (int64). At most 500 particles are displayed: `cloud_size = min(500, n_particles)`.
 - The display-sample offset is φ = (√5 − 1) / 2, with `searchsorted(..., side="left")` on a cumulative sum divided by its last entry.
@@ -153,8 +153,9 @@ def model_fixture():  # T = 1, C = 2, candidates K = 1 and 2, N = 16
 - `test_extra_key_is_rejected` (each fixture): adding `"surplus": np.zeros(1)` raises `ValueError` naming `surplus`.
 - `test_wrong_dtype_is_rejected` (each fixture × each array key): float64 cast to float32, float32 to float64, int64 to int32; the message contains the key and the expected dtype name.
 - `test_wrong_rank_is_rejected` (each fixture × each array key): `array[None]` raises, naming the key.
-- `test_wrong_length_is_rejected` (each fixture × each array key except `clock_positions` × each axis): the array with its last entry along that axis removed raises, naming the key.
+- `test_wrong_length_is_rejected` (each fixture × each array key except `clock_positions` and `model_ks`, which define C and K × each axis): the array with its last entry along that axis removed raises, naming the key.
 - `test_clock_count_must_agree` (each fixture): `clock_positions` with a third clock row appended raises `ValueError`.
+- `test_candidate_count_must_agree`: the model fixture with `model_ks = [1, 2, 3]` and nothing else changed raises `ValueError`.
 - `test_meta_keys_are_exact` (each fixture × `missing`, `extra`): removing `"seed"`, or adding `"surplus": 1`, raises naming `meta` and the key.
 - `test_wrong_format_or_version_is_rejected`: `"format": "other"` and `"version": 2` each raise.
 - `test_unknown_demo_is_rejected`: `"demo": "demo_9d"` raises naming the value.
@@ -220,6 +221,7 @@ Run: `uv run pytest tests/test_replay.py -q`
   - `thin(particles: NDArray, weights: NDArray, size: int) -> NDArray[np.float32]`, with `min(size, N)` rows.
   - `record_filter(pf, observations: Sequence[Observation], *, meta: Mapping[str, object], arrays: Mapping[str, NDArray], predict: Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None) -> Replay`. It returns `meta` unchanged and `arrays` plus `mean`, `cov`, `ess`, `log_evidence`, `tempering_stages`, `mh_proposals`, `mh_acceptances`, `cloud`, `observations` (the stacked readings it fed the filter, unless `arrays` already holds that key), and, when `predict` is given, `predicted_mean` and `predicted_std`. It does not validate; the caller does, after adding anything else.
   - `record_filter` reads only this public surface of `pf`: `state.observations_seen`, `n_particles`, `update(observation)`, `history`, `diagnostics_history`, `log_evidence_history`. A test double with those six works.
+  - The spec's sketch of this signature had no `arrays` parameter; the scenario's arrays have to reach the recorder, and the spec's section 2 now shows this signature.
 
 - [ ] **Step 1: Write the failing tests**, added to `tests/test_replay.py`.
 
@@ -254,8 +256,9 @@ The scripted history has N = 5 particles, P = 2 and three states: the prior with
   - seven uniform weights, `size=3` → `[1, 3, 6]`;
   - four uniform weights, `size=4` → `[0, 1, 2, 3]`.
   Each result has dtype float32 and shape `(len(expected), 1)`. (All three measured; offset 0.5 gives `[0, 1, 3, 4, 4]` and `[1, 3, 5]`.)
-- `test_thin_ignores_the_scale_of_the_weights`: the first case with weights multiplied by 0.5 gives the same picks.
+- `test_thin_ignores_the_scale_of_the_weights`: the first case with weights multiplied by 0.5 gives the same picks. (Without the division the upper targets pass the end and indexing raises: measured.)
 - `test_thin_is_capped_by_the_particle_count`: four particles, `size=500` → four rows.
+- `test_thin_rejects_unusable_weights` (IDs `negative`, `all_zero`): `ValueError` for weights `[0.5, -0.1, 0.6]` and for `[0.0, 0.0, 0.0]`.
 - `test_moments_match_an_independent_calculation`: for every row, `mean` and the whole of `cov` equal values the test computes itself with explicit sums (`m = Σ wᵢxᵢ / Σ wᵢ`; `cov = Σ wᵢ (xᵢ−m)(xᵢ−m)ᵀ / Σ wᵢ`), `rtol=1e-12`; and `abs(cov[1][0, 1]) > 0`, so a diagonal-only implementation cannot pass.
 - `test_row_zero_holds_sentinels`: `ess[0] == 5.0` and `log_evidence[0] == 0.0` exactly; `mean[0]` equals the prior's moments; `cloud[0]` equals `thin(prior particles, prior weights, 500)`. (1 / Σw² for five uniform weights is 4.999999999999999, so a computed row 0 fails: measured.)
 - `test_ess_rows_follow_the_weights`: rows 1 and 2 equal `1 / Σ wᵢ²`, `rtol=1e-12`.
@@ -339,7 +342,7 @@ The scripted history has N = 5 particles, P = 2 and three states: the prior with
 
 - [ ] **Step 2: Run them and confirm they fail.**
 
-- [ ] **Step 3: Implement.** Each `record()` builds its simulation and filter exactly as that module's `_run_demo` does (`simulate(SimulationConfig(..., seed=SEED))`, `build_particle_filter(InferenceConfig(..., seed=SEED))`) and passes `record_filter` the scenario arrays `clock_positions`, `true_params`, `true_rates`. `demo_1d` and `demo_multi_mass` pass `predict=pf.forward_model_batch`, which returns tick rates at the clocks, shape (N, C) (measured); the 2D demos pass no `predict`. `_run_demo`, `build_parser` and `main` are not touched: after the change, `git diff main -- src/clocks/_demos | grep '^-[^-]'` prints nothing.
+- [ ] **Step 3: Implement.** Each `record()` builds its simulation and filter exactly as that module's `_run_demo` does (`simulate(SimulationConfig(..., seed=SEED))`, `build_particle_filter(InferenceConfig(..., seed=SEED))`) and passes `record_filter` the scenario arrays `clock_positions`, `true_params`, `true_rates`. `demo_1d` and `demo_multi_mass` pass `predict=pf.forward_model_batch`, which returns tick rates at the clocks, shape (N, C) (measured); the 2D demos pass no `predict`. `_run_demo`, `build_parser` and `main` are not touched: read `git diff main -- src/clocks/_demos` and confirm no changed line lies inside one of them.
 
 - [ ] **Step 4: Run the tests and confirm they pass.** Run `uv run pytest tests/test_cli.py -q` to confirm the commands still write their GIFs. Then run the full gate.
 
@@ -373,7 +376,7 @@ Echolocation (`record(n_observations=3, n_particles=64)` unless stated):
   - truth `[0.0, 0.0, 1.1]`, mean `[[0.0, 0.0, 1.1]]`, sd zeros → `(-1.3, 1.4)`;
   - truth `[0.0, 0.0, -1.1]`, mean `[[0.0, 0.0, -1.1]]`, sd zeros → `(-1.4, 1.3)`.
   Each compared with `==`. (The last two guard a float trap: `(1.1 + 0.3) * 10` is 14.000000000000002, which a bare `ceil` turns into 1.5: measured.)
-- `test_weight_in_view`: two states of four particles with weights `[0.1, 0.2, 0.3, 0.4]`; with bounds `(-1.0, 1.0)` and the second and fourth particles outside on one coordinate, the result is `[0.4, ...]` as computed by hand for each state; a particle exactly on a bound counts as inside.
+- `test_weight_in_view`: two states of four particles (columns x, y, z, M) with weights `[0.1, 0.2, 0.3, 0.4]` and bounds `(-1.0, 1.0)`. State one has positions `(0, 0, 0)`, `(2, 0, 0)`, `(0.5, 0.5, 0.5)`, `(0, 0, -3)`; state two has `(1.0, 0, 0)`, `(0, 0, 0)`, `(0, 1.5, 0)`, `(0, 0, 0)`. The result is `pytest.approx([0.4, 0.7])`: a particle exactly on a bound counts as inside, and the mass column is ignored.
 - `test_echolocation_view_holds_the_head_the_truth_and_the_cloud`: `view_bounds[0] <= -1.0`, `view_bounds[1] >= max(1.0, true_params[:3].max())`; every `weight_in_view` entry is in `[0, 1 + 1e-12]`; `weight_in_view[-1] > 0.9`.
 
 Density (`record(n_observations=3, n_particles=64)` unless stated; this takes under a second):
@@ -510,7 +513,7 @@ Invariants on the committed archives (no inference; all seven in the default sui
 
 - `test_archives_are_exactly_the_seven`: the `.npz` stems in `ARCHIVES` equal `set(DEMOS)`.
 - `test_archive_matches_its_scenario` (each demo): `meta` fields `demo`, `seed`, `noise_std`, `n_observations`, `n_particles`, `track_offset`, `param_names`, `prior_ranges` equal the scenario's (lists against tuples compared as lists); `clock_positions` and `true_params` are `np.array_equal` to the scenario's; `true_rates` matches with `rtol=1e-12, atol=1e-12`.
-- `test_archive_truth_is_physical` (each demo): `np.max(np.abs(true_rates**2 - 1.0)) <= 0.08`; for `demo_multi_mass`, `demo_multi_mass_2d` and `demo_model_comparison`, `true_params[0] < true_params[1]` or, in 2D, `true_params[0] < true_params[2]` (x₁ < x₂).
+- `test_archive_truth_is_physical` (each demo): `np.max(np.abs(true_rates**2 - 1.0)) <= 0.08`; and x₁ < x₂, which is `true_params[0] < true_params[1]` for `demo_multi_mass` and `demo_model_comparison` and `true_params[0] < true_params[2]` for `demo_multi_mass_2d`.
 - `test_archive_sentinels_and_ranges` (the six filter demos): `log_evidence[0] == 0.0`; `ess[0] == n_particles` exactly; `0 < ess` and `ess <= n_particles * (1 + 1e-12)` in every row; for every row, `cov` equals its transpose within `1e-12 * abs(cov).max()` and `np.linalg.eigvalsh(cov).min() >= -1e-12 * np.trace(cov)`; `mh_acceptances <= mh_proposals`; `tempering_stages >= 1`.
 - `test_archive_dots_agree_with_summaries` (the six filter demos): `_inside_prior(cloud, prior_ranges)`; in every row and column, `abs(cloud.mean(axis=1) - mean) <= 6 * sd / sqrt(m)` and `0.6 <= cloud.std(axis=1) / sd <= 1.5`, with `sd = sqrt(diag(cov))` and `cloud` cast to float64 for the moments. (The spec's candidates reach 3.0 and 0.78 to 1.29.)
 - `test_a_float32_dot_at_the_bound_is_inside`: `_inside_prior(np.array([[[np.nextafter(0.15, 0.0)]]], np.float32), [[0.005, 0.15]])` is true, although the stored value is greater than the float64 0.15.
@@ -591,7 +594,7 @@ name: Replay report
 on:
   push:
     branches: [main]
-    paths: &replay_paths
+    paths:
       - "src/clocks/**"
       - "assets/replays/**"
       - "scripts/record_replays.py"
@@ -601,7 +604,13 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: *replay_paths
+    paths:
+      - "src/clocks/**"
+      - "assets/replays/**"
+      - "scripts/record_replays.py"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/replay-report.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.pull_request.draft && 'draft' || 'ready' }}
@@ -648,7 +657,7 @@ jobs:
           fi
 ```
 
-GitHub's workflow parser may not accept YAML anchors. If `gh workflow view` or the first run rejects the file, write the six paths out under both triggers; the tests read the text and pass either way.
+The paths are written out under both triggers; do not use a YAML anchor. Check that `actions/upload-artifact@v4` is still a published major version (`gh api repos/actions/upload-artifact/tags --jq '.[0:5][].name'`) and, if it has been retired, use the newest and say so in the commit message. Action versions otherwise follow `.github/workflows/site-check.yml`.
 
 - [ ] **Step 4: Run the tests and confirm they pass.** Then run the full gate.
 
@@ -669,22 +678,22 @@ No files change. This task proves the new tests can fail. Work in the task's own
 | `record_filter` zeroes the off-diagonal entries of `cov` | `test_moments_match_an_independent_calculation` |
 | `record_filter` computes `ess[0]` as 1 / Σw² | `test_row_zero_holds_sentinels` |
 | `record_filter` computes `predicted_mean` as `predict` at the mean particle | `test_predictions_are_moments_of_predictions` |
-| `record_filter` draws one number from `pf.rng` after the last update | `test_recording_does_not_change_the_run` |
+| `record_filter` draws one number from the filter's generator after the last update, when the filter has one (`getattr(pf, "rng", None)`) | `test_recording_does_not_change_the_run` |
 | `record_filter` drops its freshness check | `test_a_used_filter_is_refused` |
-| `load_replay` skips the dtype check | every `test_wrong_dtype_is_rejected` case |
-| `load_replay` accepts descending `model_ks` | `test_descending_model_ks_is_rejected` |
+| `validate_replay` skips the dtype check | every `test_wrong_dtype_is_rejected` case |
+| `validate_replay` accepts descending `model_ks` | `test_descending_model_ks_is_rejected` |
 | `first_difference` skips `cloud` | `test_cloud_tolerance[outside]` |
 | `close_view` uses bare `floor` and `ceil` | `test_close_view[rounding_up]`, `test_close_view[rounding_down]` |
-| `demo_model_comparison.record()` writes the winning candidate's estimate under every `final_mean_k<k>` | `test_model_record_final_estimates_match_the_public_api` |
+| `demo_model_comparison.record()` writes each candidate's mean under `final_std_k<k>` as well | `test_model_record_final_estimates_match_the_public_api` |
 | **An early trajectory change.** In `demo_1d.record()`, before the call to `record_filter`: `real = pf.update`, then `pf.update = lambda o: (setattr(pf, "noise_std", 2 * NOISE_STD if pf.state.observations_seen < 3 else NOISE_STD), real(o))[1]` | `test_gate_summaries[demo_1d]`, `test_record_agrees_with_the_public_api[demo_1d]` |
 | **A stale final result.** In `assets/replays/demo_1d.npz`, add 0.05 to `mean[-1, 0]` | `test_gate_summaries[demo_1d]`, `test_archive_dots_agree_with_summaries[demo_1d]` |
-| **A stale early row.** In `assets/replays/demo_2d.npz`, multiply `cov[1]` by 4 | `test_gate_summaries[demo_2d]`, `test_archive_dots_agree_with_summaries[demo_2d]` |
+| **A stale early row.** In `assets/replays/demo_2d.npz`, multiply `cov[1]` by 9 | `test_gate_summaries[demo_2d]`, `test_archive_dots_agree_with_summaries[demo_2d]` |
 | In `assets/replays/demo_model_comparison.npz`, set the last `model_posterior` row to `[0.0, 0.99, 0.01]` | `test_model_posterior_follows_evidence` |
 | In `assets/replays/demo_echolocation_3d.npz`, add `1e-6` to every entry of `observations` | `test_echolocation_archive_channels`, `test_gate_inputs[demo_echolocation_3d]` |
 | `demo_1d.NOISE_STD = 0.010` | `test_archive_matches_its_scenario[demo_1d]`, `test_gate_inputs[demo_1d]`, `test_gate_summaries[demo_1d]` |
 | `demo_density.record()` draws each reading from the filter's generator between updates | `test_density_readings_come_from_their_own_generator`, `test_density_readings_do_not_depend_on_particles`, `test_density_record_agrees_with_an_unrecorded_filter`, `test_gate_inputs[demo_density]`, `test_gate_summaries[demo_density]` |
 
-Three of these expectations rest on measurements made for the spec and not on a run of this code: the early change fails the first checkpoint and passes the last (spec, M15); the last `test_gate_summaries[demo_density]` assumes a different realisation of 60 readings moves a summary by more than its bound, which is likely and not certain; and the model-posterior mutant passes the gate because only the first checkpoint bounds the split.
+Some of these expectations rest on measurements and arithmetic, not on a run of this code. The early change fails the first checkpoint and passes the last (spec, M15). The two `close_view` cases fail under bare rounding and the other two do not (measured for this plan). The stale final result moves the mean by 0.05 against a bound of 0.0085 and a dot tolerance of about 0.010; the stale early row triples a standard deviation of about 0.58 against a bound of 0.28. `test_gate_summaries[demo_density]` assumes a different realisation of 60 readings moves a summary by more than its bound, which is likely and not certain. The model-posterior mutant passes the gate because only the first checkpoint bounds the split.
 
 - [ ] **Step 1: Run each mutation** and record, for each, the exact set of failing test IDs.
 - [ ] **Step 2: Report** the table of results. Where the failing set differs from the expected set, say which tests were extra or missing; do not change tests or code to make the table match. A difference is a finding for the coordinator.
