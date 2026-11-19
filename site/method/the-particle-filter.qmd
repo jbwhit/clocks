@@ -109,13 +109,18 @@ inference results retain those diagnostics in each history entry.
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Final ESS and internal tempering-stage count for each public observation update."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "Final ESS and internal tempering-stage count for each public observation update."
+#|   - "Final ESS and internal tempering-stage count for each public observation update."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import (
     ClockArray, InferenceConfig, MassConfig, NoiseConfig,
     PriorConfig, SimulationConfig, build_particle_filter, simulate,
 )
+from clocks.viz import THEMES, show, style
+from matplotlib.ticker import MaxNLocator
 
 clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
 truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.10]))
@@ -138,19 +143,32 @@ for obs in sim.observations:
     stage_trace.append(pf.last_diagnostics.tempering_stages)
 
 steps = np.arange(1, len(ess_trace) + 1)
-fig, (ax_ess, ax_stages) = plt.subplots(2, 1, sharex=True)
-ax_ess.plot(steps, ess_trace, marker="o", ms=3)
-ax_ess.axhline(
-    pf.ess_target * pf.n_particles,
-    ls="--", color="gray", label="ESS target",
-)
-ax_ess.set_ylabel("final ESS")
-ax_ess.legend()
-ax_stages.step(steps, stage_trace, where="mid")
-ax_stages.set_xlabel("observation #")
-ax_stages.set_ylabel("tempering stages")
-plt.close(fig)
-fig
+ess_goal = pf.ess_target * pf.n_particles
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, (ax_ess, ax_stages) = plt.subplots(
+            2, 1, sharex=True, figsize=(7.5, 5.4)
+        )
+        # Unclipped, so points at the full particle count are drawn whole.
+        ax_ess.plot(
+            steps, ess_trace, marker="o", ms=3, color=colors.ink, clip_on=False
+        )
+        ax_ess.axhline(ess_goal, ls="--", color=colors.threshold)
+        ax_ess.set_ylim(0, pf.n_particles)
+        ax_ess.set_ylabel("final ESS")
+        ax_stages.step(steps, stage_trace, where="mid", color=colors.ink)
+        ax_stages.yaxis.set_major_locator(MaxNLocator(integer=True))
+        ax_stages.set_xlabel("observation #")
+        ax_stages.set_ylabel("tempering stages")
+        # Below the line: the ESS trace fills the band just above it.
+        ax_ess.annotate(
+            "ESS target", xy=(ax_ess.get_xlim()[1], ess_goal),
+            xytext=(-2, -3), textcoords="offset points",
+            ha="right", va="top", color=colors.threshold,
+            bbox={"facecolor": colors.background, "linewidth": 0, "pad": 1.5},
+        )
+        show(fig)
 ```
 
 ::: {.callout-warning title="What the diagnostics can and cannot show"}

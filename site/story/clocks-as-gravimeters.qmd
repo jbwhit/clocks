@@ -49,28 +49,48 @@ and rejects any state outside $|2\Phi|\le0.1$.
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Tick rate vs distance from a point mass. Heavier masses dig deeper wells; every curve approaches 1 (far-away time) at large distance."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "Tick rate vs distance from a point mass. Heavier masses dig deeper wells; every curve approaches 1 (far-away time) at large distance."
+#|   - "Tick rate vs distance from a point mass. Heavier masses dig deeper wells; every curve approaches 1 (far-away time) at large distance."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
+from clocks.viz import THEMES, show, style
 
-fig, ax = plt.subplots()
 # start far enough away that every curve satisfies |2 Phi| <= 0.1
 distances = np.linspace(2.2, 10, 200)
-for mass in (0.02, 0.05, 0.10):
-    rates = [
+masses = (0.02, 0.05, 0.10)
+curves = [
+    np.array([
         clock_rates(
             MassConfig(positions=np.array([[0.0]]), masses=np.array([mass])),
             ClockArray(positions=np.array([[d]])),
         )[0]
         for d in distances
-    ]
-    ax.plot(distances, rates, label=f"M = {mass}")
-ax.set_xlabel("distance from mass")
-ax.set_ylabel(r"tick rate $d\tau/dt$")
-ax.legend()
-plt.close(fig)
-fig
+    ])
+    for mass in masses
+]
+rate_span = max(c.max() for c in curves) - min(c.min() for c in curves)
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, ax = plt.subplots()
+        for mass, rates, color in zip(masses, curves, colors.ordered):
+            ax.plot(distances, rates, color=color)
+            ax.annotate(
+                f"M = {mass}", xy=(distances[-1], rates[-1]),
+                xytext=(6, 0), textcoords="offset points",
+                ha="left", va="center", color=color,
+                bbox={"facecolor": colors.background, "linewidth": 0, "pad": 1.5},
+            )
+        lower, _ = ax.get_ylim()
+        ax.set_ylim(lower, 1 + 0.05 * rate_span)
+        ax.axhline(1.0, color=colors.rule)
+        ax.set_xlim(distances[0], 10.85)
+        ax.set_xlabel("distance from mass")
+        ax.set_ylabel(r"tick rate $d\tau/dt$")
+        show(fig)
 ```
 
 ::: {.callout-note title="The whole game"}

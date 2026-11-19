@@ -40,10 +40,14 @@ the clocks only see the tick rates the summed potential produces:
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The curves look alike, but at the five clock positions (dots) they differ by up to about three times the observation noise."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The curves look alike, but at the five marked clock positions they differ by up to about three times the observation noise."
+#|   - "Tick-rate profiles for the two demo masses against a single mass of the combined weight placed between them, with the clocks set back to `track_offset=2.0` so the combined mass stays inside the model's domain. The curves look alike, but at the five marked clock positions they differ by up to about three times the observation noise."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates
+from clocks.viz import THEMES, show, style
 
 clock_positions = np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]])
 clock_array = ClockArray(positions=clock_positions, track_offset=2.0)
@@ -54,21 +58,29 @@ one_mass = MassConfig(positions=np.array([[0.6]]), masses=np.array([0.075]))
 
 xs = np.linspace(-8, 8, 300).reshape(-1, 1)
 dense = ClockArray(positions=xs, track_offset=2.0)
-fig, ax = plt.subplots()
-for config, label, color in [
-    (two_masses, "two masses (truth)", "lightcoral"),
-    (one_mass, "one combined mass", "steelblue"),
-]:
-    ax.plot(xs[:, 0], clock_rates(config, dense), color=color, label=label)
-    ax.plot(
-        clock_positions[:, 0], clock_rates(config, clock_array),
-        "o", color=color,
-    )
-ax.set_xlabel("position")
-ax.set_ylabel("tick rate")
-ax.legend()
-plt.close(fig)
-fig
+series = [
+    ("two masses (truth)", "o", two_masses),
+    ("one combined mass", "s", one_mass),
+]
+profiles = [clock_rates(config, dense) for _, _, config in series]
+readings = [clock_rates(config, clock_array) for _, _, config in series]
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, ax = plt.subplots()
+        handles = []
+        for (label, marker, _), profile, reading, color in zip(
+            series, profiles, readings, (colors.truth, colors.belief)
+        ):
+            (curve,) = ax.plot(xs[:, 0], profile, color=color)
+            (points,) = ax.plot(
+                clock_positions[:, 0], reading, marker, color=color,
+            )
+            handles.append((curve, points))
+        ax.set_xlabel("position")
+        ax.set_ylabel("tick rate")
+        ax.legend(handles, [label for label, _, _ in series])
+        show(fig)
 ```
 
 The curves are close by eye, yet at $x = 0$ this pair and this combined

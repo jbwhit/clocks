@@ -40,25 +40,34 @@ weak-field model to apply. Later pages keep an offset of this kind.
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Across a 5-clock array the two configurations are no longer twins. The heavy mass's dip is deeper and extends farther to the right, so the five readings differ."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "Across a 5-clock array the two configurations are no longer twins. The heavy mass's dip is deeper and extends farther to the right, so the five readings differ."
+#|   - "Across a 5-clock array the two configurations are no longer twins. The heavy mass's dip is deeper and extends farther to the right, so the five readings differ."
 import matplotlib.pyplot as plt
+from clocks.viz import THEMES, show, style
 
 positions = np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]])
 array5 = ClockArray(positions=positions, track_offset=2.0)
-fig, ax = plt.subplots()
-for config, label, color in [
-    (near_light, "near light mass (x=2, M=0.04)", "steelblue"),
-    (far_heavy, "far heavy mass (x=4, M=0.08)", "lightcoral"),
-]:
-    ax.plot(
-        positions[:, 0], clock_rates(config, array5), "o-",
-        label=label, color=color,
-    )
-ax.set_xlabel("clock position")
-ax.set_ylabel("tick rate")
-ax.legend()
-plt.close(fig)
-fig
+series = [
+    ("near light mass (x=2, M=0.04)", "o", clock_rates(near_light, array5)),
+    ("far heavy mass (x=4, M=0.08)", "s", clock_rates(far_heavy, array5)),
+]
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, ax = plt.subplots()
+        for (label, marker, rates), color in zip(
+            series, (colors.belief, colors.belief_alt)
+        ):
+            ax.plot(
+                positions[:, 0], rates, marker=marker,
+                label=label, color=color,
+            )
+        ax.set_xlabel("clock position")
+        ax.set_ylabel("tick rate")
+        ax.legend()
+        show(fig)
 ```
 
 With the clocks lifted off the track, even the $x = 0$ reading is no

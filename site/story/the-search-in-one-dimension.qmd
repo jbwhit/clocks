@@ -29,13 +29,17 @@ The same scenario, run small and live on this page:
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Posterior mean ± one standard deviation per observation, position above and mass below. Dashed lines mark the truth: x = 2.5, M = 0.10."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "Posterior mean ± one standard deviation per observation, position above and mass below. Solid lines mark the truth: x = 2.5, M = 0.10."
+#|   - "Posterior mean ± one standard deviation per observation, position above and mass below. Solid lines mark the truth: x = 2.5, M = 0.10."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import (
     ClockArray, InferenceConfig, MassConfig, NoiseConfig,
     PriorConfig, SimulationConfig, infer, simulate,
 )
+from clocks.viz import THEMES, show, style
 
 clock_array = ClockArray(positions=np.array([[-5.0], [0.0], [5.0]]), track_offset=1.0)
 truth = MassConfig(positions=np.array([[2.5]]), masses=np.array([0.10]))
@@ -53,20 +57,30 @@ result = infer(sim.observations, InferenceConfig(
 steps = np.arange(1, len(result.history) + 1)
 means = np.array([entry.mean for entry in result.history])
 stds = np.array([entry.std for entry in result.history])
-fig, axes = plt.subplots(2, 1, sharex=True)
-for j, (ax, label, true_val, color) in enumerate(
-    zip(axes, ["position x", "mass M"], [2.5, 0.10], ["tab:blue", "tab:orange"])
-):
-    ax.plot(steps, means[:, j], color=color)
-    ax.fill_between(
-        steps, means[:, j] - stds[:, j], means[:, j] + stds[:, j],
-        alpha=0.15, color=color,
-    )
-    ax.axhline(true_val, color=color, ls="--", alpha=0.5)
-    ax.set_ylabel(label)
-axes[-1].set_xlabel("observation #")
-plt.close(fig)
-fig
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, axes = plt.subplots(2, 1, sharex=True, figsize=(7.5, 5.4))
+        for j, (ax, label, true_val) in enumerate(
+            zip(axes, ["position x", "mass M"], [2.5, 0.10])
+        ):
+            ax.fill_between(
+                steps, means[:, j] - stds[:, j], means[:, j] + stds[:, j],
+                alpha=0.15, color=colors.belief, linewidth=0,
+            )
+            # Drawn before the mean, so the estimate stays visible where
+            # it lies on the truth.
+            ax.axhline(true_val, color=colors.truth, linewidth=1.3)
+            ax.plot(steps, means[:, j], color=colors.belief)
+            ax.set_ylabel(label)
+        axes[-1].set_xlabel("observation #")
+        for ax, true_val in zip(axes, [2.5, 0.10]):
+            ax.annotate(
+                "truth", xy=(ax.get_xlim()[1], true_val),
+                xytext=(-2, 3), textcoords="offset points",
+                ha="right", va="bottom", color=colors.truth,
+            )
+        show(fig)
 ```
 
 ## What to notice
