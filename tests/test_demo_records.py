@@ -13,7 +13,7 @@ from clocks._scenarios import generate_random_clocks
 from clocks.api import infer, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.physics import clock_rates
-from clocks.types import MassConfig
+from clocks.types import ClockArray, MassConfig
 
 SMALL = {"n_observations": 3, "n_particles": 64}
 NAMES = ["demo_1d", "demo_2d", "demo_multi_mass", "demo_multi_mass_2d"]
@@ -83,9 +83,28 @@ def test_scenario_values(name):
         ((-8.0, 8.0),) * n_positions + ((0.005, 0.15),) * len(masses)
     )
     assert np.array_equal(scenario.true_params, expected_params)
+    expected_clocks = ClockArray(
+        _clock_positions(name), track_offset=constants.TRACK_OFFSET
+    )
+    assert np.array_equal(scenario.clock_array.positions, expected_clocks.positions)
+    assert scenario.clock_array.track_offset == constants.TRACK_OFFSET
     assert np.array_equal(
         scenario.true_rates,
-        clock_rates(MassConfig(positions, masses), scenario.clock_array),
+        clock_rates(MassConfig(positions, masses), expected_clocks),
+    )
+
+
+def _clock_positions(name):
+    """The clock coordinates the command uses, from the module's constants."""
+    m = _module(name)
+    if name in ("demo_1d", "demo_multi_mass"):
+        return np.array([[position] for position in m.CLOCK_POSITIONS])
+    if name == "demo_2d":
+        return m.CLOCK_POSITIONS
+    return generate_random_clocks(
+        _scenarios.N_CLOCKS,
+        np.random.default_rng(m.SEED),
+        exclude=[tuple(p) for p in _scenarios.TRUE_POSITIONS],
     )
 
 
