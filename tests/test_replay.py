@@ -763,3 +763,32 @@ def test_a_used_filter_is_refused() -> None:
         record_filter(pf, real_observations(), meta={}, arrays={})
     assert pf.state.observations_seen == 1
     assert len(pf.history) == 2
+
+
+def test_cloud_rows_are_thinned_from_their_own_state() -> None:
+    cloud = record_scripted().arrays["cloud"]
+    # Picks worked out by hand from each row's cumulative weights and phi offsets.
+    literals = {
+        1: [[0.2, 0.055], [0.4, 0.060], [0.4, 0.060], [0.5, 0.066], [0.7, 0.070]],
+        2: [
+            [0.47, 0.0495],
+            [0.47, 0.0495],
+            [0.53, 0.0512],
+            [0.53, 0.0512],
+            [0.58, 0.052],
+        ],
+    }
+    for row, expected in literals.items():
+        assert np.array_equal(cloud[row], np.array(expected, dtype=np.float32))
+        direct = thin(
+            np.array(STATE_PARTICLES[row]), np.array(STATE_WEIGHTS[row]), CLOUD_SIZE
+        )
+        assert np.array_equal(cloud[row], direct)
+
+
+def test_cloud_is_capped_at_500_particles() -> None:
+    n = CLOUD_SIZE + 1
+    prior = ParticleState(np.linspace(0.0, 1.0, n)[:, None], np.full(n, 1.0 / n), 0)
+    pf = ScriptedFilter([prior], [], [])
+    replay = record_filter(pf, [], meta={}, arrays={})
+    assert replay.arrays["cloud"].shape == (1, CLOUD_SIZE, 1)
