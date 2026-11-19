@@ -4,7 +4,16 @@ Each role has one value per theme, so a plot reads the same wherever it
 appears. Contrast against the page is checked in ``tests/test_style.py``.
 """
 
+import io
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
+
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib import cycler, font_manager
+from matplotlib.figure import Figure
 
 THEMES: tuple[str, str] = ("light", "dark")
 
@@ -59,3 +68,95 @@ def palette(theme: str) -> Palette:
     if theme not in _PALETTES:
         raise ValueError(f"unknown theme {theme!r}; expected one of {THEMES}")
     return _PALETTES[theme]
+
+
+_FONT_DIR = Path(__file__).parent / "_fonts"
+_FONT_FILES = ("SourceSans3-Regular.ttf", "SourceSans3-Semibold.ttf")
+_fonts_registered = False
+
+_BASE_RC = {
+    "font.family": "Source Sans 3",
+    "font.size": 10.5,
+    "axes.labelsize": 10.5,
+    "xtick.labelsize": 9.5,
+    "ytick.labelsize": 9.5,
+    "legend.fontsize": 9.5,
+    "legend.frameon": False,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.linewidth": 0.8,
+    "axes.grid": True,
+    "grid.linewidth": 0.8,
+    "xtick.major.size": 3,
+    "ytick.major.size": 3,
+    "xtick.major.width": 0.8,
+    "ytick.major.width": 0.8,
+    "lines.linewidth": 1.8,
+    "lines.solid_capstyle": "round",
+    "figure.figsize": (7.5, 4.2),
+    "figure.dpi": 100,
+    "figure.autolayout": False,  # it would take priority over constrained
+    "figure.constrained_layout.use": True,
+}
+
+
+@contextmanager
+def style(theme: str) -> Iterator[Palette]:
+    """Apply ``theme``'s rcParams for the block and yield its palette."""
+    colors = palette(theme)
+    _register_fonts()
+    rc = {
+        **_BASE_RC,
+        "figure.facecolor": colors.background,
+        "axes.facecolor": colors.background,
+        "savefig.facecolor": colors.background,
+        "text.color": colors.ink,
+        "axes.labelcolor": colors.muted,
+        "xtick.color": colors.muted,
+        "ytick.color": colors.muted,
+        "axes.edgecolor": colors.rule,
+        "grid.color": colors.grid,
+        "axes.prop_cycle": cycler(color=[colors.ink]),
+    }
+    with matplotlib.rc_context(rc):
+        yield colors
+
+
+def show(fig: Figure) -> None:
+    """Display ``fig`` at its authored size, sharp on retina screens, then close it.
+
+    The PNG is rendered at twice the figure's dpi and never cropped, so a
+    7.5 by 4.2 inch figure is declared 750 by 420 pixels wide in the page.
+    """
+    try:
+        from IPython.display import Image, display
+    except ImportError as error:
+        raise ImportError(
+            "clocks.viz.show needs IPython; it is meant for Jupyter and Quarto cells"
+        ) from error
+    buffer = io.BytesIO()
+    with matplotlib.rc_context({"savefig.bbox": None}):
+        fig.savefig(
+            buffer,
+            format="png",
+            dpi=2 * fig.dpi,
+            bbox_inches=None,
+            transparent=False,
+            facecolor=fig.get_facecolor(),
+        )
+    plt.close(fig)
+    display(Image(data=buffer.getvalue(), retina=True))
+
+
+def _register_fonts() -> None:
+    """Add the bundled fonts to matplotlib once, all or none."""
+    global _fonts_registered
+    if _fonts_registered:
+        return
+    paths = [_FONT_DIR / name for name in _FONT_FILES]
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"bundled font missing: {path}")
+    for path in paths:
+        font_manager.fontManager.addfont(str(path))
+    _fonts_registered = True
