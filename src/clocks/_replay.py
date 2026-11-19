@@ -10,6 +10,7 @@ import json
 import math
 import platform
 import zipfile
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -396,7 +397,8 @@ def filter_controls(pf) -> dict[str, object]:
 
 # --- reading -----------------------------------------------------------------
 
-_OPEN_ERRORS = (ValueError, OSError, EOFError, zipfile.BadZipFile)
+# zlib.error: a damaged compressed member fails while it is decompressed.
+_OPEN_ERRORS = (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error)
 
 
 def _read_members(path: Path) -> tuple[NDArray, dict[str, NDArray]]:
@@ -408,16 +410,36 @@ def _read_members(path: Path) -> tuple[NDArray, dict[str, NDArray]]:
     if not isinstance(archive, np.lib.npyio.NpzFile):
         raise ValueError(f"{path}: not a replay archive: expected an .npz archive")
     with archive:
+        _check_unique_members(archive.files, path)
         if "meta" not in archive.files:
             raise ValueError(f"{path}: meta: expected a member, got missing")
         members: dict[str, NDArray] = {}
         for key in archive.files:
-            try:
-                members[key] = archive[key]
-            except _OPEN_ERRORS as error:
-                raise ValueError(f"{path}: {key}: unreadable: {error}") from error
+            members[key] = _read_member(archive, key, path)
     meta_text = members.pop("meta")
     return meta_text, members
+
+
+def _check_unique_members(keys: Sequence[str], path: Path) -> None:
+    """Raise if a key appears twice: a reader would see only one of the two."""
+    seen: set[str] = set()
+    for key in keys:
+        if key in seen:
+            raise ValueError(f"{path}: {key}: expected one member, got a duplicate")
+        seen.add(key)
+
+
+def _read_member(archive: np.lib.npyio.NpzFile, key: str, path: Path) -> NDArray:
+    try:
+        member = archive[key]
+    except _OPEN_ERRORS as error:
+        raise ValueError(f"{path}: {key}: unreadable: {error}") from error
+    if not isinstance(member, np.ndarray):
+        # NpzFile returns the raw bytes of a member that is not an .npy array.
+        raise ValueError(
+            f"{path}: {key}: expected an .npy array, got {type(member).__name__}"
+        )
+    return member
 
 
 def _decode_meta(stored: NDArray, source: str) -> dict[str, object]:

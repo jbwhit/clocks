@@ -1,5 +1,8 @@
 import json
 import re
+import struct
+import zipfile
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -501,6 +504,68 @@ def test_an_unreadable_member_is_a_value_error(tmp_path: Path) -> None:
     _write_plain(path, meta, arrays)
     with pytest.raises(
         ValueError, match=rf"(?s)(?=.*{re.escape(str(path))})(?=.*mean)"
+    ):
+        load_replay(path)
+
+
+def _members(path: Path) -> list[tuple[str, bytes]]:
+    with zipfile.ZipFile(path) as archive:
+        return [(name, archive.read(name)) for name in archive.namelist()]
+
+
+def _write_members(path: Path, members: list[tuple[str, bytes]]) -> None:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in members:
+            archive.writestr(name, data)
+
+
+def _saved_fixture(tmp_path: Path) -> Path:
+    meta, arrays = filter_fixture()
+    path = tmp_path / "real.npz"
+    save_replay(path, Replay(meta, arrays))
+    return path
+
+
+@pytest.mark.parametrize("key", ["meta", "cloud"])
+def test_a_member_that_is_not_an_array_is_a_value_error(
+    key: str, tmp_path: Path
+) -> None:
+    path = _saved_fixture(tmp_path)
+    members = [
+        (name, b"raw bytes" if name == f"{key}.npy" else data)
+        for name, data in _members(path)
+    ]
+    _write_members(path, members)
+    with pytest.raises(
+        ValueError, match=rf"(?s)(?=.*{re.escape(str(path))})(?=.*{key}: expected)"
+    ):
+        load_replay(path)
+
+
+def test_a_corrupted_compressed_member_is_a_value_error(tmp_path: Path) -> None:
+    path = _saved_fixture(tmp_path)
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo("cloud.npy")
+    raw = bytearray(path.read_bytes())
+    name_length, extra_length = struct.unpack_from("<HH", raw, info.header_offset + 26)
+    data_start = info.header_offset + 30 + name_length + extra_length
+    # Bits 1-2 of the first deflate byte are the block type; 0b11 is reserved,
+    # so decompression fails outright. (Flipped bytes elsewhere in so small a
+    # member tend to decompress and fail the CRC check instead.)
+    raw[data_start] |= 0b110
+    path.write_bytes(bytes(raw))
+    with pytest.raises(ValueError, match=re.escape(f"{path}: cloud")) as raised:
+        load_replay(path)
+    assert isinstance(raised.value.__cause__, zlib.error)
+
+
+def test_a_duplicated_member_is_a_value_error(tmp_path: Path) -> None:
+    path = _saved_fixture(tmp_path)
+    members = _members(path)
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        _write_members(path, [*members, ("mean.npy", dict(members)["mean.npy"])])
+    with pytest.raises(
+        ValueError, match=rf"(?s)(?=.*{re.escape(str(path))})(?=.*mean)(?=.*duplicate)"
     ):
         load_replay(path)
 

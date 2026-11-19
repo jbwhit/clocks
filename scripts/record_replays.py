@@ -5,7 +5,8 @@ With ``--compare DIR`` it also compares each fresh recording in full with
 ``DIR/<demo>.npz`` and prints a short report, writing it to ``--report FILE``
 as well when given; ``DIR`` must not be the output directory. A demo whose
 recording fails gets a ``recording failed`` line, with or without
-``--compare``, and the others still run. The exit status
+``--compare``, one whose comparison fails a ``comparison failed`` line, and
+the others still run. The exit status
 is 0 when every demo was recorded and every compared demo reproduced, and 1
 otherwise; a workflow that only wants the report ignores it.
 
@@ -71,23 +72,25 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return args
 
 
-# What a recording can raise on a platform it was not made on (a precision cap,
-# a floating-point error, a disk error) without the other demos being affected.
-_RECORDING_ERRORS = (ValueError, RuntimeError, ArithmeticError, OSError)
-
-
 def _record_and_compare(name: str, out: Path, committed_dir: Path | None) -> str | None:
     """One demo's report line after ``<name>: ``, or None when there is none.
 
-    A demo whose recording fails is reported, and the others still run.
+    A demo whose recording or comparison fails is reported, and the others
+    still run.
     """
     try:
         recorded = _record_and_save(name, out)
-    except _RECORDING_ERRORS as error:
+    # The report must be written when its surroundings are broken; this is the
+    # outermost per-demo boundary, and the error is reported and fails the run.
+    except Exception as error:
         return f"recording failed: {type(error).__name__}: {error}"
     if committed_dir is None:
         return None
-    return _compare_one(name, committed_dir, recorded)
+    try:
+        return _compare_one(name, committed_dir, recorded)
+    # As above: reported with its type, counted as a failure, others carry on.
+    except Exception as error:
+        return f"comparison failed: {type(error).__name__}: {error}"
 
 
 def _record_and_save(name: str, out: Path) -> Replay:

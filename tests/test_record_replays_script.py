@@ -242,6 +242,71 @@ def test_a_failed_recording_is_reported_and_the_others_still_run(
     assert [p.name for p in out.iterdir()] == ["demo_1d.npz"]
 
 
+def _two_demo_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder
+) -> tuple[int, list[str]]:
+    """Run demo_2d then demo_1d against committed copies of one small replay."""
+    monkeypatch.setattr(record_replays, "record_demo", recorder)
+    committed, out, report = tmp_path / "a", tmp_path / "b", tmp_path / "report.md"
+    committed.mkdir()
+    small = demo_1d.record(n_observations=1, n_particles=16)
+    for name in ("demo_1d", "demo_2d"):
+        save_replay(committed / f"{name}.npz", small)
+    status = record_replays.main(
+        [
+            "--out",
+            str(out),
+            "--compare",
+            str(committed),
+            "--report",
+            str(report),
+            "demo_2d",
+            "demo_1d",
+        ]
+    )
+    return status, report.read_text().splitlines()
+
+
+def test_an_unexpected_recording_error_is_reported_and_the_others_still_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    small = demo_1d.record(n_observations=1, n_particles=16)
+
+    def stub(name: str) -> Replay:
+        if name == "demo_2d":
+            raise TypeError("an unexpected argument")
+        return small
+
+    status, lines = _two_demo_run(tmp_path, monkeypatch, stub)
+
+    assert status == 1
+    assert "demo_2d: recording failed: TypeError: an unexpected argument" in lines
+    assert "demo_1d: reproduced" in lines
+
+
+def test_a_failed_comparison_is_reported_and_the_others_still_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    small = demo_1d.record(n_observations=1, n_particles=16)
+    real_first_difference = record_replays.first_difference
+    calls: list[int] = []
+
+    def first_call_raises(reference: Replay, other: Replay):
+        calls.append(1)
+        if len(calls) == 1:  # demo_2d is compared first
+            raise KeyError("cloud")
+        return real_first_difference(reference, other)
+
+    monkeypatch.setattr(record_replays, "first_difference", first_call_raises)
+
+    status, lines = _two_demo_run(tmp_path, monkeypatch, lambda name: small)
+
+    assert status == 1
+    assert "demo_2d: comparison failed: KeyError: 'cloud'" in lines
+    assert "demo_1d: reproduced" in lines
+    assert len(calls) == 2
+
+
 def test_the_report_directory_is_created(tmp_path: Path) -> None:
     report = tmp_path / "not" / "yet" / "report.md"
 
