@@ -2,7 +2,9 @@
 
 **Date:** 2026-11-18
 
-**Status:** Draft, in review (revised after Codex rounds 1 and 2)
+**Status:** Approved for implementation. Codex xhigh round 3, on `55af882`:
+"SOUND ENOUGH TO IMPLEMENT", with four small findings that this revision folds
+in.
 
 **Source:** findings V2 and V4 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), and the visual reviewer's proposed system
@@ -198,7 +200,10 @@ Rules:
   as a 1500 by 840 pixel PNG declared as 750 by 420 CSS pixels. Labels are
   10.5 pt and ticks 9.5 pt, about 14 and 13 CSS pixels at full width. This was
   checked with Quarto 1.9.32: an image displayed this way is emitted with
-  `width="750" height="420"`.
+  `width="750" height="420"`. The width is fixed for every plot. A plot that
+  needs a different height (two stacked panels, the equal-aspect map) sets its
+  figure height explicitly, and the rendered-site check records that page's
+  expected height.
 - On a 390-pixel phone the existing rule in `site/styles.css` scales the image
   to the column, which brings labels to about 7 CSS pixels. That is a known
   limit of one raster per theme; it is inspected, not fixed, here.
@@ -229,6 +234,7 @@ BASE = {
     "lines.solid_capstyle": "round",
     "figure.figsize": (7.5, 4.2),
     "figure.dpi": 100,
+    "figure.autolayout": False,  # it would take priority over constrained
     "figure.constrained_layout.use": True,
 }
 ```
@@ -271,7 +277,7 @@ stay outside the loop, so they happen once.
 `renderings` arrived in Quarto 1.7, but the caption-list behaviour this design
 relies on was verified only on 1.9.32, so that is the stated minimum: the
 Getting Started page's prerequisites gain a line saying the site is rendered
-with Quarto 1.9 or later. The deploy workflow installs Quarto's current
+with Quarto 1.9.32 or later. The deploy workflow installs Quarto's current
 release, which is newer; the rendered-site check below runs there on every
 deployment and fails if a later Quarto changes the behaviour.
 
@@ -313,7 +319,8 @@ deliberate:
 2. **`clocks-as-gravimeters` gains a reference line at a rate of 1**, the
    far-away value every curve approaches. It is a solid line in `rule`, since
    dashes are reserved for thresholds. The upper y-limit is set to 1 plus 5% of
-   the plotted range, so the line sits visibly inside the frame; the lower
+   the plotted range, where the range is the largest minus the smallest rate
+   across the three curves, so the line sits visibly inside the frame; the lower
    limit stays where matplotlib puts it for the curves alone.
 3. **`gravitational-echolocation` shades the region below the per-observation
    noise level**, in `threshold` at 12% opacity. The axis is logarithmic: the
@@ -325,8 +332,9 @@ deliberate:
    starts near 320 today, which puts the target line on the frame. The stage
    count keeps its existing step drawing and gains integer ticks.
 
-Captions otherwise change only where they name a colour or line style that no
-longer applies.
+Captions otherwise change only where they name a colour, line style or marker
+that no longer applies. For example the two-mass caption's "dots" becomes "the
+five marked clock positions", which holds for circles and squares alike.
 
 ## Testing
 
@@ -364,8 +372,9 @@ The nine pages are listed explicitly. The test first asserts that the set of
 `.qmd` files under `site/` whose Python cells call `plt.subplots` or
 `plt.figure` is exactly those nine, so the test cannot pass by collecting
 nothing, and a new page that plots through either call is caught. A page that
-reached matplotlib some other way would not be; the rendered-site check is the
-backstop for that. Then, per page, looking only inside executable Python cells:
+reached matplotlib some other way, for example through an alias, would not be
+caught by this test or by the rendered-site check, which visits the same nine
+pages. Then, per page, looking only inside executable Python cells:
 
 - the plotting cell has `renderings: [light, dark]`, a two-entry `fig-cap`
   whose entries are identical, a call to `style(` and a call to `show(`;
@@ -383,8 +392,9 @@ A script in the manner of `scripts/check_site_links.py`, run on `site/_output`
 after rendering. For each of the nine pages it parses the HTML and asserts:
 
 - exactly one plot image inside a `light-content` wrapper and exactly one
-  inside a `dark-content` wrapper, each declared 750 pixels wide and of the
-  same declared height as the other, and the two image files differ;
+  inside a `dark-content` wrapper, each declared 750 by 420 pixels unless the
+  page's entry in the script names a different height, and the two image
+  files differ;
 - exactly one `<figcaption>` inside each wrapper, with the same text in both.
 
 The deploy workflow runs this script and `scripts/check_site_links.py` after
