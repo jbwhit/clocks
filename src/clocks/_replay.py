@@ -67,6 +67,8 @@ def validate_replay(replay: Replay, source: str = "<memory>") -> None:
     _check_key_set(specs, arrays, source)
     for key, (shape, dtype) in specs.items():
         _check_array(arrays[key], key, shape, dtype, source)
+    if meta["kind"] == "model_comparison":
+        _check_true_model(meta, arrays, ks, source)
     _check_finite(arrays, source)
 
 
@@ -319,12 +321,15 @@ def record_point_masses(
     """Simulate and infer a point-mass scenario once; return a validated replay.
 
     The mass count and truth come from ``scenario.true_params``, laid out as the
-    library lays out parameters: positions row-major, then masses.
+    library lays out parameters: positions row-major, then masses. The library's
+    prior has one position range and one mass range, so every position range
+    must equal the first and every mass range the first mass range.
     """
     dimensions = scenario.clock_array.positions.shape[1]
     params = scenario.true_params
     n_masses = len(params) // (dimensions + 1)
     split = n_masses * dimensions
+    _check_shared_ranges(scenario, split)
     truth = MassConfig(params[:split].reshape(n_masses, dimensions), params[split:])
     simulation = simulate(
         SimulationConfig(
@@ -364,6 +369,19 @@ def record_point_masses(
     )
     validate_replay(replay)
     return replay
+
+
+def _check_shared_ranges(scenario: Scenario, split: int) -> None:
+    """Raise unless the prior the filter is built with is the one ``meta`` records."""
+    ranges = [tuple(pair) for pair in scenario.prior_ranges]
+    positions, masses = ranges[:split], ranges[split:]
+    if any(pair != positions[0] for pair in positions) or any(
+        pair != masses[0] for pair in masses
+    ):
+        raise ValueError(
+            f"{scenario.demo}: prior_ranges: expected one range shared by every "
+            f"position and one by every mass, got {ranges}"
+        )
 
 
 def filter_controls(pf) -> dict[str, object]:
@@ -614,6 +632,23 @@ def _array_specs(
         specs["view_bounds"] = ((2,), _F8)
         specs["weight_in_view"] = ((rows,), _F8)
     return specs
+
+
+def _check_true_model(
+    meta: Mapping[str, object],
+    arrays: Mapping[str, NDArray],
+    ks: list[int],
+    source: str,
+) -> None:
+    """The true count is a candidate, and the truth has that many masses."""
+    true_k = meta["true_k"]
+    if true_k not in ks:
+        _fail(source, "meta.true_k", f"one of model_ks {ks}", repr(true_k))
+    dimensions = arrays["clock_positions"].shape[1]
+    want = true_k * (dimensions + 1)
+    have = len(arrays["true_params"])
+    if have != want:
+        _fail(source, "true_params", f"{want} values for true_k = {true_k}", have)
 
 
 def _model_specs(steps: int, dimensions: int, ks: list[int]) -> dict[str, Spec]:

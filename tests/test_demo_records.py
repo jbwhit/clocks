@@ -1,5 +1,7 @@
-"""scenario() and record() of the demos that record a single particle filter."""
+"""scenario() and record() of the seven demos: the six that record one particle
+filter, and the model comparison, which records one filter per candidate."""
 
+import dataclasses
 import importlib
 import inspect
 import json
@@ -206,6 +208,29 @@ def test_record_handles_one_observation(name):
     replay = _module(name).record(n_observations=1, n_particles=16)
     validate_replay(replay)
     assert replay.arrays["mean"].shape[0] == 2
+
+
+@pytest.mark.parametrize(
+    "ranges",
+    [
+        pytest.param(
+            ((-8.0, 8.0), (-7.0, 8.0), (0.005, 0.15), (0.005, 0.15)), id="position"
+        ),
+        pytest.param(
+            ((-8.0, 8.0), (-8.0, 8.0), (0.005, 0.15), (0.005, 0.10)), id="mass"
+        ),
+    ],
+)
+def test_record_rejects_a_prior_the_filter_cannot_use(ranges):
+    from clocks._replay import record_point_masses
+
+    scenario = dataclasses.replace(
+        _module("demo_multi_mass").scenario(), prior_ranges=ranges
+    )
+    with pytest.raises(ValueError, match=r"demo_multi_mass: prior_ranges: .*\(-8\.0"):
+        record_point_masses(
+            scenario, n_observations=1, n_particles=16, predictions=False
+        )
 
 
 # --- echolocation ------------------------------------------------------------

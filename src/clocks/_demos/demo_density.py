@@ -74,21 +74,21 @@ def record(
     """Run the density inference once and return it as a validated replay.
 
     Unlike the command, every reading is drawn first, from its own
-    ``study_generator(SEED)``, and the filter gets a second one, so the readings
-    do not depend on how many random numbers the sampler consumed. The result
-    is therefore not the command's run.
+    ``study_generator`` of the scenario's seed, and the filter gets a second
+    one, so the readings do not depend on how many random numbers the sampler
+    consumed. The result is therefore not the command's run.
     """
     packaged = scenario()
-    reading_rng = study_generator(SEED)
+    reading_rng = study_generator(packaged.seed)
     readings = [
-        add_clock_noise(packaged.true_rates, NOISE_STD, reading_rng)
+        add_clock_noise(packaged.true_rates, packaged.noise_std, reading_rng)
         for _ in range(n_observations)
     ]
     observations = [
         Observation(rates, float(step)) for step, rates in enumerate(readings)
     ]
     particle_filter = build_density_filter(
-        packaged.clock_array, study_generator(SEED), n_particles=n_particles
+        packaged.clock_array, study_generator(packaged.seed), n_particles=n_particles
     )
     replay = record_filter(
         particle_filter,

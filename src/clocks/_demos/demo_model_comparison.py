@@ -72,19 +72,19 @@ def record(
             ground_truth=MassConfig(
                 packaged.true_params[:2].reshape(2, 1), packaged.true_params[2:]
             ),
-            noise=NoiseConfig(NOISE_STD),
+            noise=NoiseConfig(packaged.noise_std),
             n_observations=n_observations,
-            seed=SEED,
+            seed=packaged.seed,
         )
     )
     comparison = build_model_comparison(
         InferenceConfig(
             clock_array=packaged.clock_array,
-            noise=NoiseConfig(NOISE_STD),
+            noise=NoiseConfig(packaged.noise_std),
             prior=PriorConfig(*packaged.prior_ranges),
             n_particles=n_particles,
             n_masses=MODEL_KS,
-            seed=SEED,
+            seed=packaged.seed,
         )
     )
     arrays = _model_arrays(comparison, simulation.observations, n_particles)

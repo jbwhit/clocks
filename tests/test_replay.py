@@ -323,13 +323,14 @@ def test_clock_count_must_agree(name: str) -> None:
     meta, arrays = FIXTURES[name]()
     positions = arrays["clock_positions"]
     arrays["clock_positions"] = np.vstack([positions, positions[:1]])
-    _invalid(meta, arrays, None)
+    # The first array sized by the clock count, checked after clock_positions.
+    _invalid(meta, arrays, re.escape("true_rates: expected shape (3)"))
 
 
 def test_candidate_count_must_agree() -> None:
     meta, arrays = model_fixture()
     arrays["model_ks"] = np.array([1, 2, 3], I8)
-    _invalid(meta, arrays, None)
+    _invalid(meta, arrays, re.escape("final_mean_k3: expected an array, got missing"))
 
 
 @pytest.mark.parametrize(("name", "key"), EACH_FLOATING_KEY)
@@ -338,6 +339,21 @@ def test_non_finite_value_is_rejected(name: str, key: str) -> None:
     arrays[key] = arrays[key].copy()
     arrays[key].flat[0] = np.nan
     _invalid(meta, arrays, _loose(key))
+
+
+def test_true_k_must_be_a_candidate() -> None:
+    meta, arrays = model_fixture()
+    meta["true_k"] = 3
+    _invalid(meta, arrays, re.escape("meta.true_k: expected one of model_ks [1, 2]"))
+
+
+def test_true_params_must_hold_true_k_masses() -> None:
+    meta, arrays = model_fixture()
+    meta["param_names"] = ["x₁", "x₂", "M₁"]
+    arrays["true_params"] = arrays["true_params"][:3]
+    _invalid(
+        meta, arrays, re.escape("true_params: expected 4 values for true_k = 2, got 3")
+    )
 
 
 def test_descending_model_ks_is_rejected() -> None:
