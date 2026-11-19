@@ -4,6 +4,29 @@ Audited commit: `0171af3` (`origin/main`, the commit deployed at
 <https://jbwhit.github.io/clocks/>). Nothing in the library, tests or site was
 changed by this audit.
 
+## Status as of 2026-11-18
+
+This document records the audit as it stood at `0171af3`. Since then:
+
+| Finding | Status |
+|---|---|
+| S1 (auditor's voice on story pages) | Fixed in #19 |
+| C1, C4, C5, C7, C10 (statements the figures contradict) | Fixed in #20 |
+| C2 (the model-comparison callout) | Wording corrected in #19; the seed-averaged presentation is still to do |
+| V3 (phone clipping and sideways scroll) | Fixed in #21 |
+| CI workflow: draft gating, concurrency, timeouts | Fixed in #22 |
+| `core.hooksPath` unset in the main clone | Set locally |
+| C3, C6, C8, C9, T1-T5, P1, P2, S2-S5, V1, V2, V4-V6 | Open |
+
+Review of #20 corrected one thing this audit got wrong by omission: the phone
+screenshots given to the reviewers were cropped by headless Chrome rather than
+reflowed, so body text was never cut off on phones. The plot clipping in V3 was
+real. The Reproducibility page's sideways scroll also disappeared when #19
+restructured its text, before #21.
+
+Decisions taken by the owner on 2026-11-18 are recorded at the end, under
+"Decisions".
+
 ## How it was run
 
 Five independent reviewers, each briefed separately so none was anchored on
@@ -283,12 +306,26 @@ final figures.
 6. **In parallel, independent of the site**: T1-T5, the CI workflow, and a
    decision on P1.
 
-## Decisions that are the owner's
+## Decisions
 
-- How much certification and provenance language stays on story pages (S1, C9).
-- Whether to finish the population-reliability study or park
-  `_reliability.py` (P1).
-- Whether committed GIFs remain the evidence artifact, or are replaced by video
-  or replayed particle states (V5, V6). `tests/test_generated_assets.py` pins
-  the current bytes.
-- Page order and titles (S4).
+Taken by Jonathan on 2026-11-18.
+
+- **Certification and provenance language** leaves the story pages and lives
+  on the Reproducibility page (S1, C9). Done in #19. "Run exactly once" is to be
+  reworded as a protocol statement, with the earlier seed blocks disclosed.
+- **Population-reliability study** (P1): finish it in its simplest form, a
+  runner, one interval formula and one figure, and add no more protocol code.
+- **Evidence artifacts** (V5, V6): committed replay data replaces pinned GIF
+  bytes; the site renders video from it at build time.
+- **"How Many Masses?"** (C2, S4): keep the scenario in which two and three
+  masses are a toss-up, show the spread over inference seeds, and add a
+  one-mass case where the simplest model visibly wins.
+- **Figure style** (V2): the direction in `prototype/sheet_proto.png`.
+- **2D demo** (C6): lower the true mass from 0.15 to 0.10.
+- **Page order and titles** (S4): 1 Clocks as Gravimeters; 2 One Clock Is Not
+  Enough; 3 The Search; 4 Where to Put the Clocks; 5 Point or Blob? (the
+  density page, moved up from 7); 6 Two Hidden Masses; 7 How Many Masses?;
+  8 Gravitational Echolocation. Existing URLs need not be kept.
+
+Not explicitly decided: the "Match the clocks" interactive (S5) and a new
+landing visual (V6).
