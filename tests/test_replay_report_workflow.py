@@ -38,6 +38,23 @@ def test_every_step_may_fail() -> None:
         assert "continue-on-error: true" in step, step
 
 
+def test_the_last_step_runs_whatever_came_before() -> None:
+    # Without it, a failed earlier step would skip the warning about a missing
+    # report, and the summary would say nothing.
+    last = _steps()[-1]
+    assert "if: always()" in [line.strip() for line in last.splitlines()], last
+
+
+def test_the_head_commit_is_the_pull_requests_own() -> None:
+    # On a pull request github.sha is the merge commit, which no one pushed.
+    job = _text().split("jobs:\n", 1)[1].split("steps:\n", 1)[0]
+    env = job.split("    env:\n", 1)[1].splitlines()
+    assert (
+        "      REPLAY_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}"
+        in env
+    )
+
+
 def test_the_report_job_is_a_three_way_matrix() -> None:
     text = _text()
     assert "sample: [1, 2, 3]" in text
