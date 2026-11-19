@@ -42,6 +42,8 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 88
+# One-off probe scripts kept as audit records, not maintained code.
+extend-exclude = ["docs/audits"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
