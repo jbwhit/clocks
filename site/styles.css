@@ -32,3 +32,28 @@ div.description {
 .mermaid-js .cluster rect {
   fill: transparent !important;
 }
+
+/* Phone widths. Quarto emits plots from executed cells with fixed pixel
+   dimensions and no fluid class, so on a narrow screen their output box
+   shows only the left part until it is scrolled. Scale them to the column. */
+.cell-output-display img,
+.quarto-figure img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Long inline code, a long page title and display equations can each push
+   the whole page wider than the screen. Code and titles wrap; equations
+   scroll inside their own box, with a little vertical padding so the
+   scroll box does not shave the tops of tall glyphs. */
+p code,
+li code,
+.quarto-title h1.title {
+  overflow-wrap: anywhere;
+}
+mjx-container[display="true"] {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.15em;
+}
