@@ -47,9 +47,10 @@ profile *width* in [Beyond Point Masses](../story/beyond-point-masses.qmd)
 (which flags the reuse itself); this page writes $\sigma_{\text{obs}}$ vs
 $\sigma_{\text{density}}$ to keep them apart. **$\tau$** means proper time
 in $d\tau/dt$, but in the
-[echolocation coda](../story/gravitational-echolocation.qmd) it is a clock's
+[echolocation coda](../story/gravitational-echolocation.qmd) it is an
 *averaging time*: there $\sigma_y(\tau) = 10^{-16}/\sqrt{\tau}$ is the
-clock's fractional-frequency instability after averaging for time $\tau$.
+fractional-frequency instability of a comparison between two clocks after
+averaging for time $\tau$.
 :::
 
 ## Terms {#sec-terms}

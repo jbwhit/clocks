@@ -125,8 +125,9 @@ pass rule.
 
 The simulation runs in units where G = c = 1, but nothing stops us from
 asking the question in SI. Give the head a 10 cm clock baseline. For this
-estimate, assume a clock budget with fractional-frequency instability near
-$10^{-16}/\sqrt{\tau}$ and a systematic floor around $10^{-18}$ — and ask:
+estimate, assume that comparing two of her clocks has fractional-frequency
+instability near $10^{-16}/\sqrt{\tau}$ and a systematic floor around
+$10^{-18}$ — and ask:
 sitting long and still enough, could she feel the Sun? Jupiter?
 
 ```{python}
