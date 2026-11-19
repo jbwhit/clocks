@@ -160,9 +160,12 @@ def show(fig: Figure) -> None:
 def _register_fonts() -> None:
     """Add the bundled fonts to matplotlib once, all or none.
 
-    Every file is checked to exist and to parse as a font before any is added,
-    so a bad file raises with nothing registered. The lock stops two first
-    calls from both registering.
+    Every file is checked to exist and then put through the same work
+    ``addfont`` does to a TrueType file (open the face, extract and decode its
+    metadata) before any is added. A face can open and still fail at the
+    metadata step, so opening alone is not enough; mirroring ``addfont`` means
+    a bad file raises with nothing registered. The lock stops two first calls
+    from both registering.
     """
     global _fonts_registered
     with _fonts_lock:
@@ -173,7 +176,7 @@ def _register_fonts() -> None:
             if not path.is_file():
                 raise FileNotFoundError(f"bundled font missing: {path}")
         for path in paths:
-            ft2font.FT2Font(str(path))
+            font_manager.ttfFontProperty(ft2font.FT2Font(str(path)))
         for path in paths:
             font_manager.fontManager.addfont(str(path))
         _fonts_registered = True

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import IPython.display
 import matplotlib
+import matplotlib.ft2font
 import matplotlib.image
 import matplotlib.pyplot as plt
 import pytest
@@ -246,6 +247,37 @@ def test_a_font_that_fails_to_load_registers_nothing(
         with style("light"):
             pass
     assert len(font_manager.fontManager.ttflist) == before
+
+
+def test_a_font_whose_metadata_fails_registers_nothing_and_retry_is_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = font_manager.fontManager
+    bundled = _bundled_entries()
+    without_bundled = [entry for entry in manager.ttflist if entry not in bundled]
+    monkeypatch.setattr(manager, "ttflist", without_bundled)
+    monkeypatch.setattr(clocks._style, "_fonts_registered", False)
+    real_ttf_font_property = font_manager.ttfFontProperty
+
+    def failing_on_semibold(font: matplotlib.ft2font.FT2Font) -> object:
+        # A face can open in FT2Font yet carry a name record addfont cannot
+        # decode; this stands in for that file.
+        if Path(font.fname).name == "SourceSans3-Semibold.ttf":
+            raise UnicodeDecodeError("utf-16", b"", 0, 1, "bad name record")
+        return real_ttf_font_property(font)
+
+    monkeypatch.setattr(font_manager, "ttfFontProperty", failing_on_semibold)
+    before = len(manager.ttflist)
+    for _attempt in ("first", "retry"):
+        with pytest.raises(UnicodeDecodeError, match="bad name record"):
+            with style("light"):
+                pass
+        assert len(manager.ttflist) == before
+
+    monkeypatch.setattr(font_manager, "ttfFontProperty", real_ttf_font_property)
+    with style("light"):
+        pass
+    assert len(_bundled_entries()) == 2
 
 
 def test_concurrent_first_use_registers_once(monkeypatch: pytest.MonkeyPatch) -> None:
