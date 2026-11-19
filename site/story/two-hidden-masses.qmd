@@ -73,9 +73,9 @@ fig
 
 The curves are close by eye, yet at $x = 0$ this pair and this combined
 mass differ by nearly three noise standard deviations in a single reading. A
-better-placed single mass comes closer, so one noisy reading need not settle
-the question; repeated independent observations compound the difference
-until it does.
+better-placed single mass comes closer across the array, so one noisy
+observation need not settle the question. Repeated independent observations
+from all five clocks make the remaining difference easier to resolve.
 
 ::: {.callout-note title="The question behind the question"}
 This combined mass is a poor impostor for this pair. A better-chosen one
