@@ -5,8 +5,10 @@ Quarto wraps the two outputs in elements with the classes `light-content` and
 `dark-content`, and the site shows one at a time. This check parses the
 rendered HTML and requires, for every page:
 
+- exactly one wrapper per theme, and no element carrying both theme classes;
 - exactly one image in each wrapper, declared 750 pixels wide and the page's
-  expected height, with the two referenced files existing and different;
+  expected height, with the two referenced files existing inside the site and
+  different;
 - exactly one `figcaption` in each wrapper, with the same text in both.
 
 Images outside the two wrappers (committed GIFs and PNGs) are ignored.
@@ -22,12 +24,19 @@ from __future__ import annotations
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "site" / "_output"
 
 THEMES = ("light", "dark")
 EXPECTED_WIDTH = 750
+
+# Elements with no end tag; one of these carrying a theme class wraps nothing.
+_VOID_TAGS = frozenset(
+    {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta"}
+    | {"source", "track", "wbr"}
+)
 
 # Page (relative to the output directory) -> declared image height in pixels.
 EXPECTED_PAGES: dict[str, int] = {
@@ -44,52 +53,60 @@ EXPECTED_PAGES: dict[str, int] = {
 
 
 class _Wrapper:
-    """One light-content or dark-content element and what it contains."""
+    """One element carrying a theme class, and what it contains."""
 
-    def __init__(self, theme: str) -> None:
-        self.theme = theme
+    def __init__(self, tag: str, themes: list[str]) -> None:
+        self.tag = tag
+        self.themes = themes
         self.depth = 1
         self.images: list[dict[str, str | None]] = []
         self.captions: list[str] = []
 
 
 class _FigureParser(HTMLParser):
-    """Collect images and captions inside each light/dark wrapper."""
+    """Collect images and captions inside each light/dark wrapper.
+
+    Any element whose class list names `light-content` or `dark-content` is a
+    wrapper. Its end is found by counting that element's own tag, so a
+    `section` wrapper with `div`s inside closes at its own `</section>`.
+    Contents belong to the innermost open wrapper.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.wrappers: list[_Wrapper] = []
-        self._open: _Wrapper | None = None
-        self._caption_parts: list[str] | None = None
+        self._open: list[_Wrapper] = []
+        self._caption: tuple[_Wrapper, list[str]] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if self._open is not None and tag == "div":
-            self._open.depth += 1
-        elif self._open is None and tag == "div":
-            classes = (dict(attrs).get("class") or "").split()
-            for theme in THEMES:
-                if f"{theme}-content" in classes:
-                    self._open = _Wrapper(theme)
-                    self.wrappers.append(self._open)
-        elif self._open is not None and tag == "img":
-            self._open.images.append(dict(attrs))
-        elif self._open is not None and tag == "figcaption":
-            self._caption_parts = []
+        for wrapper in self._open:
+            if wrapper.tag == tag:
+                wrapper.depth += 1
+        classes = (dict(attrs).get("class") or "").split()
+        themes = [theme for theme in THEMES if f"{theme}-content" in classes]
+        if themes:
+            wrapper = _Wrapper(tag, themes)
+            self.wrappers.append(wrapper)
+            if tag not in _VOID_TAGS:
+                self._open.append(wrapper)
+        elif self._open and tag == "img":
+            self._open[-1].images.append(dict(attrs))
+        elif self._open and tag == "figcaption":
+            self._caption = (self._open[-1], [])
 
     def handle_endtag(self, tag: str) -> None:
-        if self._open is None:
-            return
-        if tag == "figcaption" and self._caption_parts is not None:
-            self._open.captions.append(" ".join("".join(self._caption_parts).split()))
-            self._caption_parts = None
-        elif tag == "div":
-            self._open.depth -= 1
-            if self._open.depth == 0:
-                self._open = None
+        if tag == "figcaption" and self._caption is not None:
+            wrapper, parts = self._caption
+            wrapper.captions.append(" ".join("".join(parts).split()))
+            self._caption = None
+        for wrapper in self._open:
+            if wrapper.tag == tag:
+                wrapper.depth -= 1
+        self._open = [wrapper for wrapper in self._open if wrapper.depth > 0]
 
     def handle_data(self, data: str) -> None:
-        if self._caption_parts is not None:
-            self._caption_parts.append(data)
+        if self._caption is not None:
+            self._caption[1].append(data)
 
 
 def figure_failures(output_dir: Path) -> list[str]:
@@ -100,27 +117,37 @@ def figure_failures(output_dir: Path) -> list[str]:
         if not path.is_file():
             failures.append(f"{page}: page is missing from {output_dir}")
             continue
-        failures.extend(_page_failures(page, path, height))
+        failures.extend(_page_failures(page, path, height, output_dir))
     return failures
 
 
-def _page_failures(page: str, path: Path, height: int) -> list[str]:
+def _page_failures(page: str, path: Path, height: int, output_dir: Path) -> list[str]:
     parser = _FigureParser()
     parser.feed(path.read_text(encoding="utf-8"))
+    ambiguous = [w for w in parser.wrappers if len(w.themes) > 1]
+    if ambiguous:
+        # Such an element counts for neither theme, so per-theme checks would
+        # only repeat the same fault.
+        return [f"{page}: <{w.tag}> wrapper has both theme classes" for w in ambiguous]
     failures: list[str] = []
     files: dict[str, Path] = {}
     captions: dict[str, str] = {}
     for theme in THEMES:
-        wrappers = [w for w in parser.wrappers if w.theme == theme]
-        images = [img for w in wrappers for img in w.images]
-        texts = [c for w in wrappers for c in w.captions]
         label = f"{page}: {theme}-content"
-        if len(images) != 1:
-            failures.append(f"{label}: expected 1 image, found {len(images)}")
-        else:
-            failures.extend(
-                _image_failures(label, path, images[0], theme, height, files)
-            )
+        wrappers = [w for w in parser.wrappers if w.themes == [theme]]
+        if len(wrappers) != 1:
+            failures.append(f"{label}: expected 1 wrapper, found {len(wrappers)}")
+            continue
+        wrapper = wrappers[0]
+        failures.extend(_image_failures(label, wrapper.images, height))
+        if len(wrapper.images) == 1:
+            src = wrapper.images[0].get("src") or ""
+            problem = _source_problem(src, path, output_dir)
+            if problem:
+                failures.append(f"{label}: {problem}")
+            else:
+                files[theme] = (path.parent / src).resolve()
+        texts = wrapper.captions
         if len(texts) != 1:
             failures.append(f"{label}: expected 1 figcaption, found {len(texts)}")
         elif not texts[0]:
@@ -137,24 +164,32 @@ def _page_failures(page: str, path: Path, height: int) -> list[str]:
 
 
 def _image_failures(
-    label: str,
-    page_path: Path,
-    img: dict[str, str | None],
-    theme: str,
-    height: int,
-    files: dict[str, Path],
+    label: str, images: list[dict[str, str | None]], height: int
 ) -> list[str]:
+    if len(images) != 1:
+        return [f"{label}: expected 1 image, found {len(images)}"]
     failures: list[str] = []
     for name, expected in (("width", EXPECTED_WIDTH), ("height", height)):
-        if img.get(name) != str(expected):
-            failures.append(f"{label}: {name} {img.get(name)}, expected {expected}")
-    src = img.get("src") or ""
-    resolved = (page_path.parent / src).resolve()
-    if not src or not resolved.is_file():
-        failures.append(f"{label}: image {src!r} does not exist")
-    else:
-        files[theme] = resolved
+        if images[0].get(name) != str(expected):
+            value = images[0].get(name)
+            failures.append(f"{label}: {name} {value}, expected {expected}")
     return failures
+
+
+def _source_problem(src: str, page_path: Path, output_dir: Path) -> str | None:
+    """Say what is wrong with an image ``src``, or return None if it is fine.
+
+    The file must be referenced relative to the page and lie inside the site,
+    so the deployed page can load it.
+    """
+    if src.startswith("/") or urlsplit(src).scheme:
+        return f"image is outside the site: {src!r}"
+    resolved = (page_path.parent / src).resolve()
+    if not resolved.is_relative_to(output_dir.resolve()):
+        return f"image is outside the site: {src!r}"
+    if not src or not resolved.is_file():
+        return f"image {src!r} does not exist"
+    return None
 
 
 def main() -> int:

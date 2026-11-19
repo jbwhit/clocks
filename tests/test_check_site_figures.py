@@ -18,7 +18,12 @@ CAPTION = "Rate of <code>x</code> versus distance."
 
 
 def _wrapper(
-    theme: str, images: list[tuple[str, int]], captions: list[str], height: int
+    theme: str,
+    images: list[tuple[str, int]],
+    captions: list[str],
+    height: int,
+    tag: str = "div",
+    extra_class: str = "",
 ) -> str:
     imgs = "".join(
         f'<p><img src="{src}" width="{width}" height="{height}" '
@@ -26,10 +31,11 @@ def _wrapper(
         for src, width in images
     )
     caps = "".join(f"<figcaption>{c}</figcaption>\n" for c in captions)
+    classes = f"cell-output cell-output-display {theme}-content{extra_class}"
     return (
-        f'<div class="cell-output cell-output-display {theme}-content">\n'
+        f'<{tag} class="{classes}">\n'
         '<div class="quarto-figure quarto-figure-center">\n'
-        f'<figure class="figure">\n{imgs}{caps}</figure>\n</div>\n</div>\n'
+        f'<figure class="figure">\n{imgs}{caps}</figure>\n</div>\n</{tag}>\n'
     )
 
 
@@ -40,7 +46,11 @@ def _build(
     dark: list[tuple[str, int]] | None = None,
     light_captions: list[str] | None = None,
     dark_captions: list[str] | None = None,
+    light_height: int = 420,
     dark_height: int = 420,
+    dark_extra_class: str = "",
+    tag: str = "div",
+    extra: str = "",
 ) -> Path:
     for name in ("light.png", "dark.png", "plot.png"):
         (tmp_path / "story" / "demo_files").mkdir(parents=True, exist_ok=True)
@@ -51,8 +61,9 @@ def _build(
     dc = dark_captions if dark_captions is not None else [CAPTION]
     body = (
         '<p><img src="demo_files/light.png" width="1" height="1"></p>\n'  # ignored
-        + _wrapper("light", light, lc, 420)
-        + _wrapper("dark", dark, dc, dark_height)
+        + _wrapper("light", light, lc, light_height, tag)
+        + _wrapper("dark", dark, dc, dark_height, tag, dark_extra_class)
+        + extra
     )
     (tmp_path / "story" / "demo.html").write_text(
         f"<html><body>{body}</body></html>", encoding="utf-8"
@@ -143,6 +154,59 @@ def test_captions_differing_only_inside_nested_code(tmp_path: Path) -> None:
 
 def test_empty_caption_in_dark_wrapper(tmp_path: Path) -> None:
     _single_failure(_build(tmp_path, dark_captions=[""]), "dark-content: empty caption")
+
+
+def test_a_well_formed_page_with_section_wrappers_passes(tmp_path: Path) -> None:
+    # The committed image after the wrappers is ignored only if each wrapper's
+    # end is found at its own </section>, not at the last </div> inside it.
+    later = '<div><p><img src="demo_files/plot.png" width="1" height="1"></p></div>\n'
+    site = _build(tmp_path, tag="section", extra=later)
+    assert check_site_figures.figure_failures(site) == []
+
+
+def test_a_dark_caption_in_a_second_dark_wrapper(tmp_path: Path) -> None:
+    second = _wrapper("dark", [], [CAPTION], 420)
+    _single_failure(
+        _build(tmp_path, dark_captions=[], extra=second),
+        "dark-content: expected 1 wrapper, found 2",
+    )
+
+
+def test_a_wrapper_with_both_theme_classes(tmp_path: Path) -> None:
+    _single_failure(
+        _build(tmp_path, dark_extra_class=" light-content"),
+        "wrapper has both theme classes",
+    )
+
+
+def test_an_absolute_image_path_is_outside_the_site(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    target = site / "story" / "demo_files" / "dark.png"
+    _single_failure(
+        _build(site, dark=[(str(target), 750)]), "image is outside the site"
+    )
+    assert target.is_file()
+
+
+def test_an_image_path_escaping_the_site_is_outside_it(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    (tmp_path / "outside.png").write_bytes(b"outside")
+    _single_failure(
+        _build(site, dark=[("../../outside.png", 750)]), "image is outside the site"
+    )
+
+
+def test_a_well_formed_tall_page_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site = _build(tmp_path, light_height=540, dark_height=540)
+    monkeypatch.setattr(check_site_figures, "EXPECTED_PAGES", {PAGE: 540})
+    assert check_site_figures.figure_failures(site) == []
+    monkeypatch.setattr(check_site_figures, "EXPECTED_PAGES", {PAGE: 420})
+    failures = check_site_figures.figure_failures(site)
+    assert len(failures) == 2, failures
+    for theme, failure in zip(("light", "dark"), failures, strict=True):
+        assert f"{PAGE}: {theme}-content: height 540, expected 420" == failure
 
 
 def test_a_missing_page_is_a_failure(tmp_path: Path) -> None:
