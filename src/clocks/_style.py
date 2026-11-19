@@ -7,6 +7,7 @@ font; ``show`` displays a finished figure at its authored size.
 """
 
 import io
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib import cycler, font_manager
+from matplotlib import cycler, font_manager, ft2font
 from matplotlib.figure import Figure
 
 THEMES: tuple[str, str] = ("light", "dark")
@@ -75,6 +76,7 @@ def palette(theme: str) -> Palette:
 _FONT_DIR = Path(__file__).parent / "_fonts"
 _FONT_FILES = ("SourceSans3-Regular.ttf", "SourceSans3-Semibold.ttf")
 _fonts_registered = False
+_fonts_lock = threading.Lock()
 
 _BASE_RC = {
     "font.family": "Source Sans 3",
@@ -156,22 +158,22 @@ def show(fig: Figure) -> None:
 
 
 def _register_fonts() -> None:
-    """Add the bundled fonts to matplotlib once, all or none."""
+    """Add the bundled fonts to matplotlib once, all or none.
+
+    Every file is checked to exist and to parse as a font before any is added,
+    so a bad file raises with nothing registered. The lock stops two first
+    calls from both registering.
+    """
     global _fonts_registered
-    if _fonts_registered:
-        return
-    paths = [_FONT_DIR / name for name in _FONT_FILES]
-    for path in paths:
-        if not path.is_file():
-            raise FileNotFoundError(f"bundled font missing: {path}")
-    # addfont appends to ttflist at once, so a failure part-way through would
-    # leave the earlier files registered; roll the list back before re-raising.
-    ttflist = font_manager.fontManager.ttflist
-    before = len(ttflist)
-    try:
+    with _fonts_lock:
+        if _fonts_registered:
+            return
+        paths = [_FONT_DIR / name for name in _FONT_FILES]
+        for path in paths:
+            if not path.is_file():
+                raise FileNotFoundError(f"bundled font missing: {path}")
+        for path in paths:
+            ft2font.FT2Font(str(path))
         for path in paths:
             font_manager.fontManager.addfont(str(path))
-    except BaseException:
-        del ttflist[before:]
-        raise
-    _fonts_registered = True
+        _fonts_registered = True

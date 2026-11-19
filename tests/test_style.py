@@ -3,6 +3,8 @@ import io
 import re
 import shutil
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -231,8 +233,22 @@ def _bundled_entries() -> list[font_manager.FontEntry]:
 
 
 def test_a_font_that_fails_to_load_registers_nothing(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    regular = clocks._style._FONT_DIR / "SourceSans3-Regular.ttf"
+    shutil.copy(regular, tmp_path / regular.name)
+    (tmp_path / "SourceSans3-Semibold.ttf").write_bytes(b"not a font\n" * 64)
+    monkeypatch.setattr(clocks._style, "_FONT_DIR", tmp_path)
+    monkeypatch.setattr(clocks._style, "_fonts_registered", False)
+    before = len(font_manager.fontManager.ttflist)
+    # matplotlib 3.10's FT2Font raises RuntimeError for a file FreeType cannot load.
+    with pytest.raises(RuntimeError, match="Can not load face"):
+        with style("light"):
+            pass
+    assert len(font_manager.fontManager.ttflist) == before
+
+
+def test_concurrent_first_use_registers_once(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = font_manager.fontManager
     # Start from a registry without the bundled fonts, as in a fresh process;
     # monkeypatch puts the real list back afterwards.
@@ -240,23 +256,35 @@ def test_a_font_that_fails_to_load_registers_nothing(
     without_bundled = [entry for entry in manager.ttflist if entry not in bundled]
     monkeypatch.setattr(manager, "ttflist", without_bundled)
     monkeypatch.setattr(clocks._style, "_fonts_registered", False)
-    real_addfont = manager.addfont
+    real_ft2font = clocks._style.ft2font.FT2Font
 
-    def addfont_failing_on_semibold(path: str) -> None:
-        if Path(path).name == "SourceSans3-Semibold.ttf":
-            raise RuntimeError("bad font")
-        real_addfont(path)
+    def slow_ft2font(path: str) -> object:
+        # Widen the gap between checking the flag and setting it, so an
+        # unguarded first use is caught every time, not only when unlucky.
+        time.sleep(0.02)
+        return real_ft2font(path)
 
-    monkeypatch.setattr(manager, "addfont", addfont_failing_on_semibold)
-    before = len(manager.ttflist)
-    with pytest.raises(RuntimeError, match="bad font"):
-        with style("light"):
-            pass
-    assert len(manager.ttflist) == before
+    monkeypatch.setattr(clocks._style.ft2font, "FT2Font", slow_ft2font)
+    barrier = threading.Barrier(8)
+    errors: list[BaseException] = []
 
-    monkeypatch.setattr(manager, "addfont", real_addfont)
-    with style("light"):
-        pass
+    def first_use() -> None:
+        try:
+            barrier.wait()
+            with style("light"):
+                pass
+        except BaseException as error:  # reported by the assertion below
+            errors.append(error)
+
+    # rc_context is not thread-safe: threads leaving their style blocks out of
+    # order can leave a theme applied, so the outer context restores rcParams.
+    with matplotlib.rc_context():
+        threads = [threading.Thread(target=first_use) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    assert errors == []
     assert len(_bundled_entries()) == 2
 
 
