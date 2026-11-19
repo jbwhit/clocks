@@ -281,8 +281,11 @@ stay outside the loop, so they happen once.
 relies on was verified only on 1.9.32, so that is the stated minimum: the
 Getting Started page's prerequisites gain a line saying the site is rendered
 with Quarto 1.9.32 or later. The site workflows pin Quarto 1.11.9, and a pull
-request that touches the site is rendered and checked on the runner before it
-can merge; the rendered-site check below also runs on every deployment.
+request that touches the site is rendered and checked on the runner when it is
+marked ready. The repository's merge rule (a human or the coordinating agent
+waits for that run to conclude success) is what holds the merge; nothing in
+GitHub enforces it. The rendered-site check below also runs on every
+deployment.
 
 ### Per-plot colour assignments
 
@@ -381,23 +384,35 @@ pages. Then, per page, looking only inside executable Python cells:
 
 - the plotting cell has `renderings: [light, dark]`, a two-entry `fig-cap`
   whose entries are identical, a call to `style(` and a call to `show(`;
-- it contains no `plt.show(`, no `cmap` keyword (whitespace-tolerant), and no
-  quoted matplotlib colour name: any `tab:` colour, or `steelblue`,
-  `lightcoral`, `red`, `black`, `gray` or `grey` as a quoted string.
+- the test parses the cell and reports any call to `plt.show`, a `cmap`
+  keyword, a string-literal colour (alone, or inside a list or tuple) in any
+  colour keyword (`color`, `c`, `facecolor(s)`, `edgecolor(s)`,
+  `markerfacecolor`, `markeredgecolor`, `ecolor`; `"none"` is allowed), a
+  string `fmt` keyword, and positional string arguments to plot-family calls
+  (`plot`, `semilogy`, `semilogx`, `loglog`, `step`, `errorbar`) that do not
+  pass `data=`, since such strings are format strings that can carry a colour.
 
-These are string checks, as the repository's other page contracts are. They
-stop a new or edited plot from bypassing the conventions; they do not prove a
-plot looks right or that the style block encloses the drawing.
+The first bullet's checks match text; the second reads the cell's syntax
+tree, so comments and ordinary strings such as an axis label are not
+mistaken for violations. Both are a convention guard: they stop a new or
+edited plot from bypassing the conventions; they do not prove a plot looks
+right or that the style block encloses the drawing.
 
 ### Rendered-site check (`scripts/check_site_figures.py`)
 
 A script in the manner of `scripts/check_site_links.py`, run on `site/_output`
 after rendering. For each of the nine pages it parses the HTML and asserts:
 
-- exactly one plot image inside a `light-content` wrapper and exactly one
-  inside a `dark-content` wrapper, each declared 750 by 420 pixels unless the
-  page's entry in the script names a different height, and the two image
-  files differ;
+- exactly one `light-content` wrapper and exactly one `dark-content` wrapper;
+  a wrapper may be any element, must carry exactly one of the two theme
+  classes, and must not be nested inside another wrapper;
+- exactly one plot image inside each wrapper, each declared 750 by 420 pixels
+  unless the page's entry in the script names a different height, and the two
+  image files differ;
+- each image URL resolves to a file inside the rendered site: it is relative
+  to the page, its path (query and fragment dropped, percent-escapes decoded)
+  names an existing file, and it has no scheme or host and does not climb out
+  of the output directory;
 - exactly one `<figcaption>` inside each wrapper, with the same text in both.
 
 The deploy workflow runs this script and `scripts/check_site_links.py` after
@@ -427,9 +442,11 @@ expected sets.
 
 - The phone harness from PR #21 (a 390-pixel iframe): no page wider than the
   viewport, no plot wider than its container.
-- A contact sheet of all nine plots in both themes at full width and at 390
-  pixels is produced, looked at against each cell's source for swapped series
-  or wrong units, and attached to the pull request.
+- Contact sheets of all nine plots in both themes, at full width and at 390
+  pixels, are produced and inspected at both widths against each cell's source
+  for swapped series or wrong units. One full-width sheet per theme is
+  committed under `docs/plans/2026-11-18-figure-style/` as the record that
+  accompanies the pull request.
 
 ## Risks
 
