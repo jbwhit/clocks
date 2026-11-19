@@ -1,6 +1,7 @@
 """Contracts for the corrected generated evidence shipped by Task 11."""
 
 import json
+import re
 from hashlib import sha256
 from pathlib import Path
 from statistics import median
@@ -94,6 +95,21 @@ def _certified_range_summary() -> tuple[str, str, str]:
     )
 
 
+def _states_number(text: str, number: str) -> bool:
+    """Whether text contains number as a whole token, not inside a longer one."""
+    return re.search(rf"(?<![\d.]){re.escape(number)}(?!\.?\d)", text) is not None
+
+
+def test_whole_number_matching_rejects_longer_numbers() -> None:
+    assert _states_number("passed 46/72 cases overall", "46/72")
+    assert _states_number("ratio was 66.524, above", "66.524")
+    assert _states_number("were 12, 12, 11, 8, 3, 0. The", "12, 12, 11, 8, 3, 0")
+    assert not _states_number("passed 46/720 cases", "46/72")
+    assert not _states_number("ratio was 166.524", "66.524")
+    assert not _states_number("ratio was 66.5241", "66.524")
+    assert not _states_number("were 12, 12, 11, 8, 3, 0.5", "12, 12, 11, 8, 3, 0")
+
+
 def test_current_prose_identifies_corrected_assets_and_honest_model_results() -> None:
     report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
     echo_story = (ROOT / "site/story/gravitational-echolocation.qmd").read_text()
@@ -121,10 +137,10 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     # computed from the certification artifact, so prose cannot drift from it.
     pass_counts, total, std_ratio = _certified_range_summary()
     assert pass_counts == "12, 12, 11, 8, 3, 0"
-    assert pass_counts in echo_story
-    assert pass_counts in provenance
-    assert total in provenance
-    assert std_ratio in provenance
+    assert _states_number(echo_story, pass_counts)
+    assert _states_number(provenance, pass_counts)
+    assert _states_number(provenance, total)
+    assert _states_number(provenance, std_ratio)
     assert "12/12 far-range" in provenance
     assert "population reliability" in provenance
     assert "K=2: 0.3990" in provenance

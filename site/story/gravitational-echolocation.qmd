@@ -94,7 +94,7 @@ eight, and at each distance run the whole experiment twelve times with
 different random seeds. A run passes if it recovers the position to within
 1.0, the spacing between neighboring clocks, and the mass to within 0.04.
 
-![Resolution against range. Top: position error; bottom: mass error. Dots are individual runs, solid lines are medians, and dashed lines are the filter's own uncertainty (posterior standard deviation).](../assets/echolocation_range_study.png)
+![Resolution against range. Top: position error; bottom: mass error. Dots are individual runs, solid lines are median errors, and dashed lines are the filter's own uncertainty (median posterior standard deviation).](../assets/echolocation_range_study.png)
 
 Pass counts out of twelve, from closest to farthest: 12, 12, 11, 8, 3, 0.
 Close in, the sense is sharp; at eight circumradii none of the twelve runs

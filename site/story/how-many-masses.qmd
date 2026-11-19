@@ -16,8 +16,8 @@ by-product of running, and that estimate carries sampling noise of its own.
 
 One mass is all but ruled out by the first observation. Three masses lead at
 first, two take over around the tenth observation, and from about the
-twentieth three stay narrowly ahead: the run ends at about 40% for two masses
-and 60% for three, leaning toward the wrong answer. That is one run's
+twentieth three stay ahead: the run ends at about 40% for two masses and 60%
+for three, leaning toward the wrong answer. That is one run's
 estimate from finite data and a finite particle cloud, a weak preference
 rather than a verdict.
 
