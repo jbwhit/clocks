@@ -20,29 +20,51 @@ identical particle filter on top.
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "A point mass vs Gaussian profiles of equal total mass at two widths. Spreading the mass flattens and broadens the dip in tick rates."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "A point mass vs Gaussian profiles of equal total mass at two widths. Spreading the mass flattens and broadens the dip in tick rates."
+#|   - "A point mass vs Gaussian profiles of equal total mass at two widths. Spreading the mass flattens and broadens the dip in tick rates."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import ClockArray, MassConfig, clock_rates, clock_rates_density_gaussian
+from clocks.viz import THEMES, show, style
 
 xs = np.linspace(-8, 8, 200).reshape(-1, 1)
 dense = ClockArray(positions=xs, track_offset=1.0)
 total_mass = 0.02
 
-fig, ax = plt.subplots()
 point = MassConfig(positions=np.array([[1.5]]), masses=np.array([total_mass]))
-ax.plot(xs[:, 0], clock_rates(point, dense), label="point mass", color="black")
-for sigma, color in [(0.5, "steelblue"), (2.0, "lightcoral")]:
+point_rates = clock_rates(point, dense)
+sigmas = (0.5, 2.0)
+gaussian_rates = []
+for sigma in sigmas:
     amplitude = total_mass / (sigma * np.sqrt(2 * np.pi))
-    rates = clock_rates_density_gaussian(
+    gaussian_rates.append(clock_rates_density_gaussian(
         np.array([1.5, sigma, amplitude]), dense
-    )
-    ax.plot(xs[:, 0], rates, label=f"Gaussian, σ = {sigma}", color=color)
-ax.set_xlabel("clock position")
-ax.set_ylabel("tick rate")
-ax.legend()
-plt.close(fig)
-fig
+    ))
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, ax = plt.subplots()
+        ax.plot(xs[:, 0], point_rates, color=colors.ink)
+        lowest = np.argmin(point_rates)
+        ax.annotate(
+            "point mass",
+            xy=(xs[lowest, 0], point_rates[lowest]),
+            xytext=(12, 0),
+            textcoords="offset points",
+            ha="left",
+            va="center",
+            color=colors.ink,
+        )
+        for sigma, rates, color in zip(
+            sigmas, gaussian_rates, (colors.ordered[0], colors.ordered[2])
+        ):
+            ax.plot(xs[:, 0], rates, label=f"Gaussian, σ = {sigma}", color=color)
+        ax.set_xlabel("clock position")
+        ax.set_ylabel("tick rate")
+        ax.legend()
+        show(fig)
 ```
 
 ## A new degeneracy

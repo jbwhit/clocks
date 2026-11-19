@@ -42,13 +42,17 @@ parameter estimation.)
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "Posterior probability of each mass count as observations arrive, in a smaller run executed on this page: 25 observations, 400 particles. Truth is K=2."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "Posterior probability of each mass count as observations arrive, in a smaller run executed on this page: 25 observations, 400 particles. Truth is K=2."
+#|   - "Posterior probability of each mass count as observations arrive, in a smaller run executed on this page: 25 observations, 400 particles. Truth is K=2."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import (
     ClockArray, InferenceConfig, MassConfig, NoiseConfig,
     PriorConfig, SimulationConfig, infer, simulate,
 )
+from clocks.viz import THEMES, show, style
 
 clock_array = ClockArray(
     positions=np.array([[-6.0], [-3.0], [0.0], [3.0], [6.0]]), track_offset=1.0
@@ -68,16 +72,31 @@ result = infer(sim.observations, InferenceConfig(
 print(f"Posterior over K: { {k: round(v, 3) for k, v in result.posterior_by_model.items()} }")
 print(f"Best model: K = {result.best_model}")
 
-fig, ax = plt.subplots()
 steps = np.arange(1, len(result.history) + 1)
-for k in sorted(result.posterior_by_model):
-    ax.plot(steps, [h[k] for h in result.history], label=f"K = {k}")
-ax.set_xlabel("observation #")
-ax.set_ylabel("posterior probability")
-ax.set_ylim(-0.05, 1.05)
-ax.legend()
-plt.close(fig)
-fig
+models = sorted(result.posterior_by_model)
+posteriors = [np.array([h[k] for h in result.history]) for k in models]
+labels = [
+    f"K = {k} (true model)" if k == len(truth.masses) else f"K = {k}"
+    for k in models
+]
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, ax = plt.subplots()
+        for label, posterior, color in zip(labels, posteriors, colors.ordered):
+            ax.plot(steps, posterior, color=color)
+            ax.annotate(
+                label, xy=(steps[-1], posterior[-1]),
+                xytext=(6, 0), textcoords="offset points",
+                ha="left", va="center", color=color,
+                bbox={"facecolor": colors.background, "linewidth": 0, "pad": 1.5},
+            )
+        ax.set_xlabel("observation #")
+        ax.set_ylabel("posterior probability")
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlim(right=steps[-1] + 6.5)
+        ax.set_xticks(np.arange(0, steps[-1] + 1, 5))
+        show(fig)
 ```
 
 ::: {.callout-note title="Two runs, two answers"}

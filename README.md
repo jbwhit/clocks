@@ -105,7 +105,8 @@ src/clocks/
     physics.py     Strict weak-field forward models
     noise.py       Gaussian noise model and log-likelihood
     inference.py   Adaptive tempered resample-move SMC
-    viz.py         Plotting and animation facade (_panels.py, _panels3d.py, _animate.py)
+    viz.py         Plotting and animation facade (_panels.py, _panels3d.py, _animate.py, _style.py)
+    _style.py      Shared figure style: palette, theme context, bundled font (_fonts/)
     _support.py    Conditional prior support and rejection sampling
     _panels3d.py   3D plotting primitives for the echolocation dashboard
     _scenarios.py  Shared scenario builders for demos/scan harnesses/tests

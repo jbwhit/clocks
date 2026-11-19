@@ -28,7 +28,7 @@ because hardcoded counts go stale.
 
 ## CI
 
-Two workflows run on GitHub Actions:
+Three workflows run on GitHub Actions:
 
 - [`ci.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/ci.yml)
   runs tests and lint on pushes to `main` and on non-draft pull requests
@@ -38,6 +38,10 @@ Two workflows run on GitHub Actions:
   executed-cell figure you see is regenerated from source at deploy time. The
   demo GIFs, the density PNG, and the echolocation range-study PNG are the
   exceptions: they are committed files, described in the next section.
+- [`site-check.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site-check.yml)
+  renders this site and runs the link and figure checks on non-draft pull
+  requests targeting `main` that touch the site or the library, so a broken
+  page is caught before it merges.
 
 ## Where the committed figures come from {#sec-figures}
 
@@ -122,6 +126,6 @@ deterministic exact integral.
 `uv.lock` is committed; CI enforces the Python package resolution with
 `--locked` in `ci.yml` and `--frozen` in the site build. The lock covers
 package versions for its supported Python-version markers. It does **not** pin
-the Python interpreter's patch release or the separately installed Quarto
-binary, so the repository does not claim a fully bit-reproducible rendering
-toolchain.
+the Python interpreter's patch release; Quarto is pinned separately, in the
+site workflows. So the repository does not claim a fully bit-reproducible
+rendering toolchain.

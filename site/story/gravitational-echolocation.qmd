@@ -34,7 +34,10 @@ purest form.
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "The differential signal an exterior mass leaves on the head, vs range. The dashed line is the per-observation noise floor; the sense must work in the shrinking gap above it."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "The differential signal an exterior mass leaves on the head, vs range. The dashed line is the noise of a single observation, and the shaded region lies below it; the sense must work in the shrinking gap above."
+#|   - "The differential signal an exterior mass leaves on the head, vs range. The dashed line is the noise of a single observation, and the shaded region lies below it; the sense must work in the shrinking gap above."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import clock_rates
@@ -44,6 +47,7 @@ from clocks._scenarios import (
     contrast_matrix,
     echo_mass_config,
 )
+from clocks.viz import THEMES, show, style
 
 head = build_head_lattice()
 ranges = np.linspace(2.0, 10.0, 60)  # from the validated exterior minimum
@@ -53,16 +57,31 @@ for r in ranges:
     rates = clock_rates(echo_mass_config(float(r)), head)
     signal.append(np.max(np.abs(q @ rates)))
 
-fig, ax = plt.subplots()
-ax.semilogy(ranges, signal, color="steelblue", label="differential signal")
-ax.axhline(
-    ECHO_NOISE_STD, color="lightcoral", linestyle="--", label="noise floor"
-)
-ax.set_xlabel("range (circumradii)")
-ax.set_ylabel("max orthonormal contrast")
-ax.legend()
-plt.close(fig)
-fig
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, ax = plt.subplots()
+        ax.semilogy(ranges, signal, color=colors.ink)
+        ax.axhline(ECHO_NOISE_STD, color=colors.threshold, linestyle="--")
+        lower, upper = ax.get_ylim()
+        ax.axhspan(
+            lower, ECHO_NOISE_STD, color=colors.threshold, alpha=0.12,
+            linewidth=0,
+        )
+        ax.set_ylim(lower, upper)
+        # Labelled at its near end, in the open space above the noise.
+        ax.annotate(
+            "differential signal", xy=(ranges[0], signal[0]),
+            xytext=(8, 0), textcoords="offset points",
+            ha="left", va="center", color=colors.ink,
+        )
+        ax.annotate(
+            "noise of one observation", xy=(ax.get_xlim()[1], ECHO_NOISE_STD),
+            xytext=(-2, 3), textcoords="offset points",
+            ha="right", va="bottom", color=colors.threshold,
+        )
+        ax.set_xlabel("range (circumradii)")
+        ax.set_ylabel("max orthonormal contrast")
+        show(fig)
 ```
 
 The display subtracts the channel mean, but the likelihood uses an exact

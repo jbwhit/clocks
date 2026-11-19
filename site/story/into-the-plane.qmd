@@ -29,13 +29,17 @@ observations:
 
 ```{python}
 #| code-fold: true
-#| fig-cap: "The surviving hypotheses after 25 observations, colored by weight. The red × is the true mass position."
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "The surviving hypotheses after 25 observations. Dots are particles; the ring and crosshair mark the true mass position."
+#|   - "The surviving hypotheses after 25 observations. Dots are particles; the ring and crosshair mark the true mass position."
 import matplotlib.pyplot as plt
 import numpy as np
 from clocks import (
     ClockArray, InferenceConfig, MassConfig, NoiseConfig,
     PriorConfig, SimulationConfig, infer, simulate,
 )
+from clocks.viz import THEMES, show, style
 
 clock_positions = np.array([
     [-4.0, 0.0], [-2.0, 3.0], [1.0, 4.0], [4.0, 2.0],
@@ -55,20 +59,38 @@ result = infer(sim.observations, InferenceConfig(
 ))
 
 particles = result.particle_state.particles
-weights = result.particle_state.weights
-fig, ax = plt.subplots()
-ax.scatter(particles[:, 0], particles[:, 1], c=weights, cmap="viridis", s=8, alpha=0.7)
-ax.scatter(1.5, -1.0, marker="x", s=120, color="red", linewidths=2, label="True")
-ax.scatter(
-    clock_positions[:, 0], clock_positions[:, 1],
-    marker="s", s=60, color="steelblue", label="Clocks",
-)
-ax.set_xlabel("x")
-ax.set_ylabel("y")
-ax.set_aspect("equal")
-ax.legend(fontsize=8)
-plt.close(fig)
-fig
+true_x, true_y = truth.positions[0]
+
+for theme in THEMES:
+    with style(theme) as colors:
+        fig, ax = plt.subplots(figsize=(7.5, 5.4))
+        cloud = ax.scatter(
+            particles[:, 0], particles[:, 1],
+            s=10, alpha=0.35, linewidths=0, color=colors.belief,
+        )
+        ring = ax.scatter(
+            true_x, true_y, marker="o", s=300,
+            facecolors="none", edgecolors=colors.truth, linewidths=1.3,
+        )
+        crosshair = ax.scatter(
+            true_x, true_y, marker="+", s=300,
+            color=colors.truth, linewidths=1.3,
+        )
+        clock_marks = ax.scatter(
+            clock_positions[:, 0], clock_positions[:, 1],
+            marker="s", s=50, color=colors.ink,
+        )
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_aspect("equal")
+        legend = ax.legend(
+            [cloud, (ring, crosshair), clock_marks],
+            ["particles", "true position", "clocks"],
+        )
+        # The cloud's own dots are too small and faint to read as a key.
+        legend.legend_handles[0].set_sizes([40])
+        legend.legend_handles[0].set_alpha(0.8)
+        show(fig)
 ```
 
 The cloud has collapsed from a uniform smear over a 16×16 box to a tight

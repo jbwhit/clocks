@@ -29,8 +29,11 @@ from clocks._panels3d import (
     plot_centered_rates,
     plot_scene_3d,
 )
+from clocks._style import THEMES, Palette, palette, show, style
 
 __all__ = [
+    "THEMES",
+    "Palette",
     "animate_echolocation",
     "animate_inference",
     "animate_inference_2d",
@@ -49,5 +52,8 @@ __all__ = [
     "plot_particle_cloud_2d",
     "plot_particle_cloud_multi_1d",
     "plot_particle_cloud_multi_2d",
+    "palette",
     "plot_scene_3d",
+    "show",
+    "style",
 ]
