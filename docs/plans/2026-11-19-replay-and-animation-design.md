@@ -545,9 +545,9 @@ and 80 in both themes, and at 390 pixels (measured, M7).
 
 - **Close view**, a 3D scene on one fixed cube: the smallest cube holding the
   head, the truth, and each coordinate's mean ± four standard deviations for
-  every k ≥ 1, padded by 0.3 and rounded outward to 0.1 (after rounding to six
-  decimals, so that 1.4 held as 1.4000000000000001 stays 1.4). For this run
-  that is -1.3 to 4.8. It shows the head wireframe (`muted`), clocks (`ink`), the cloud
+  every k ≥ 1, padded by 0.3 and rounded outward to 0.1. The value is multiplied by
+  10 and that product rounded to six decimals before the floor or ceiling, so
+  that 14.000000000000002 stays 14. For this run that is -1.3 to 4.8. It shows the head wireframe (`muted`), clocks (`ink`), the cloud
   (`belief`) and the truth as a ring with a drop-line to the floor. The ring is
   open and several times wider than the final cloud, which is visible inside
   it in the drawn frames.
