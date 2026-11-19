@@ -1,3 +1,4 @@
+import dataclasses
 import io
 import re
 import shutil
@@ -30,17 +31,13 @@ def _contrast(a: str, b: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-_STR_FIELDS = (
-    "background",
-    "ink",
-    "muted",
-    "rule",
-    "grid",
-    "truth",
-    "belief",
-    "belief_alt",
-    "threshold",
+_STR_FIELDS = tuple(
+    field.name for field in dataclasses.fields(Palette) if field.name != "ordered"
 )
+
+
+def test_themes_are_light_then_dark() -> None:
+    assert THEMES == ("light", "dark")
 
 
 @pytest.mark.parametrize("theme", THEMES)
@@ -132,6 +129,15 @@ def test_style_applies_theme_and_restores(theme: str) -> None:
             assert rc["figure.figsize"] == [7.5, 4.2]
             assert rc["figure.autolayout"] is False
             assert rc["axes.prop_cycle"].by_key()["color"] == [colors.ink]
+            assert rc["axes.axisbelow"] is True
+            assert rc["axes.facecolor"] == colors.background
+            assert rc["savefig.facecolor"] == colors.background
+            assert rc["axes.labelcolor"] == colors.muted
+            assert rc["xtick.color"] == colors.muted
+            assert rc["ytick.color"] == colors.muted
+            assert rc["grid.color"] == colors.grid
+            assert rc["figure.constrained_layout.use"] is True
+            assert rc["font.size"] == 10.5
         _assert_sentinels()
 
 

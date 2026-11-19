@@ -1,7 +1,9 @@
-"""Fixed colour roles shared by every figure on the site.
+"""Shared figure style: a fixed palette, a theme context and a display helper.
 
-Each role has one value per theme, so a plot reads the same wherever it
-appears. Contrast against the page is checked in ``tests/test_style.py``.
+Each colour role has one value per theme, so a plot reads the same wherever it
+appears; contrast against the page is checked in ``tests/test_style.py``.
+``style`` applies a theme's rcParams and registers the bundled Source Sans 3
+font; ``show`` displays a finished figure at its authored size.
 """
 
 import io
@@ -22,16 +24,16 @@ THEMES: tuple[str, str] = ("light", "dark")
 class Palette:
     """One theme's colours, as ``#rrggbb`` strings."""
 
-    background: str
-    ink: str
-    muted: str
-    rule: str
-    grid: str
-    truth: str
-    belief: str
-    belief_alt: str
-    threshold: str
-    ordered: tuple[str, str, str]
+    background: str  # the page colour
+    ink: str  # instruments, observed data, neutral curves; primary text
+    muted: str  # axis labels, tick labels, secondary text
+    rule: str  # axis lines
+    grid: str  # grid lines
+    truth: str  # the true configuration, or what it predicts
+    belief: str  # an estimate or a candidate: the filter's posterior
+    belief_alt: str  # the second of two candidates
+    threshold: str  # noise levels, targets, limits; always dashed
+    ordered: tuple[str, str, str]  # an ordered family, least to most contrast
 
 
 _LIGHT = Palette(
@@ -86,6 +88,7 @@ _BASE_RC = {
     "axes.spines.right": False,
     "axes.linewidth": 0.8,
     "axes.grid": True,
+    "axes.axisbelow": True,
     "grid.linewidth": 0.8,
     "xtick.major.size": 3,
     "ytick.major.size": 3,
@@ -126,7 +129,7 @@ def show(fig: Figure) -> None:
     """Display ``fig`` at its authored size, sharp on retina screens, then close it.
 
     The PNG is rendered at twice the figure's dpi and never cropped, so a
-    7.5 by 4.2 inch figure is declared 750 by 420 pixels wide in the page.
+    7.5 by 4.2 inch figure is declared 750 CSS pixels wide and 420 tall in the page.
     """
     try:
         from IPython.display import Image, display

@@ -2,12 +2,16 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+import test_site_figure_style as site_style
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
 _SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 check_site_figures = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check_site_figures)
+
+# Captured before the autouse fixture below replaces the constant.
+REAL_EXPECTED_PAGES = dict(check_site_figures.EXPECTED_PAGES)
 
 PAGE = "story/demo.html"
 CAPTION = "Rate of <code>x</code> versus distance."
@@ -137,5 +141,19 @@ def test_captions_differing_only_inside_nested_code(tmp_path: Path) -> None:
     )
 
 
+def test_empty_caption_in_dark_wrapper(tmp_path: Path) -> None:
+    _single_failure(_build(tmp_path, dark_captions=[""]), "dark-content: empty caption")
+
+
 def test_a_missing_page_is_a_failure(tmp_path: Path) -> None:
     _single_failure(tmp_path, "page is missing")
+
+
+def test_expected_pages_match_the_plot_pages_and_their_heights() -> None:
+    plot_pages = {page.replace(".qmd", ".html") for page in site_style.PLOT_PAGES}
+    assert len(plot_pages) == 9 and len(REAL_EXPECTED_PAGES) == 9
+    assert set(REAL_EXPECTED_PAGES) == plot_pages
+    for page, height in REAL_EXPECTED_PAGES.items():
+        cell = site_style._only_plot_cell(page.replace(".html", ".qmd"))
+        cell_height = 540 if "figsize=(7.5, 5.4)" in cell else 420
+        assert height == cell_height, page

@@ -118,9 +118,13 @@ def _page_failures(page: str, path: Path, height: int) -> list[str]:
         if len(images) != 1:
             failures.append(f"{label}: expected 1 image, found {len(images)}")
         else:
-            failures.extend(_image_failures(label, path, images[0], height, files))
+            failures.extend(
+                _image_failures(label, path, images[0], theme, height, files)
+            )
         if len(texts) != 1:
             failures.append(f"{label}: expected 1 figcaption, found {len(texts)}")
+        elif not texts[0]:
+            failures.append(f"{label}: empty caption")
         else:
             captions[theme] = texts[0]
     if len(files) == 2 and files["light"] == files["dark"]:
@@ -136,11 +140,11 @@ def _image_failures(
     label: str,
     page_path: Path,
     img: dict[str, str | None],
+    theme: str,
     height: int,
     files: dict[str, Path],
 ) -> list[str]:
     failures: list[str] = []
-    theme = label.rsplit(": ", 1)[1].removesuffix("-content")
     for name, expected in (("width", EXPECTED_WIDTH), ("height", height)):
         if img.get(name) != str(expected):
             failures.append(f"{label}: {name} {img.get(name)}, expected {expected}")

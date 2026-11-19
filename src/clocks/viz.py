@@ -52,8 +52,8 @@ __all__ = [
     "plot_particle_cloud_2d",
     "plot_particle_cloud_multi_1d",
     "plot_particle_cloud_multi_2d",
-    "plot_scene_3d",
     "palette",
+    "plot_scene_3d",
     "show",
     "style",
 ]

@@ -31,6 +31,8 @@ _FORBIDDEN = (
     r"\bcmap\s*=",
     r"[\"']tab:\w+[\"']",
     r"[\"'](steelblue|lightcoral|red|black|gray|grey)[\"']",
+    r"\b(?:color|c|facecolors?|edgecolors?|markerfacecolor|markeredgecolor)"
+    r"\s*=\s*[\"'](?!none[\"'])",
 )
 
 
@@ -106,3 +108,15 @@ def test_cell_has_no_unstyled_colour_or_display(page: str) -> None:
     cell = _only_plot_cell(page)
     matches = [pattern for pattern in _FORBIDDEN if re.search(pattern, cell)]
     assert matches == [], f"{page}: forbidden patterns {matches}"
+
+
+@pytest.mark.parametrize(
+    "source",
+    ['color="blue"', "c='C0'", 'color="#123456"', 'color="k"'],
+)
+def test_literal_colour_pattern_catches_string_colours(source: str) -> None:
+    assert any(re.search(pattern, source) for pattern in _FORBIDDEN)
+
+
+def test_literal_colour_pattern_allows_none_faces() -> None:
+    assert not any(re.search(p, 'facecolors="none"') for p in _FORBIDDEN)
