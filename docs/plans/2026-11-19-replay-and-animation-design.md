@@ -294,6 +294,17 @@ The model-comparison archive's per-candidate final estimates
 only, and are compared with the public API only at recording time, by
 `tests/test_demo_records.py`.
 
+Four invariants tie the arrays the drawings use to the rest of each archive:
+the echolocation close view to `close_view` of the recorded rows, the weight
+in view to the displayed dots, the final predictions to the forward model at
+the final mean, and the covariance's correlations to the dots' within 0.4.
+The last is partial: a reversed tilt is caught only where |r| exceeds about
+0.2 (an axis ratio below about 0.82), so the near-round final ellipses of
+`demo_1d` and `demo_2d` are not tied. A tighter bound was tried and does not
+separate an edited row from the two-mass 2D archive's own unedited rows
+(measured: Fisher z of 6.13 for the edit against 6.00 for the worst unedited
+row).
+
 - **Calibration.** Each bound is eight times the standard deviation of that
   quantity over inference seeds with the data fixed, the largest over the
   components it covers, rounded up: 20 seeds, 8 for density (measured, M6). A
