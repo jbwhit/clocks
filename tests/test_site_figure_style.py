@@ -136,17 +136,27 @@ def _style_violations(cell: str) -> list[str]:
         for keyword in node.keywords:
             if keyword.arg == "cmap":
                 violations.append("passes cmap")
-            elif keyword.arg in _COLOUR_KEYWORDS and _is_string(keyword.value):
-                if keyword.value.value != "none":
+            elif keyword.arg == "fmt" and _is_string(keyword.value):
+                violations.append("format string")
+            elif keyword.arg in _COLOUR_KEYWORDS:
+                if any(text != "none" for text in _string_constants(keyword.value)):
                     violations.append(f"literal colour in {keyword.arg}")
         if isinstance(func, ast.Attribute) and func.attr in _FORMAT_STRING_CALLS:
-            if any(_is_string(arg) for arg in node.args):
+            # With data=, positional strings are column names, not formats.
+            has_data = any(keyword.arg == "data" for keyword in node.keywords)
+            if not has_data and any(_is_string(arg) for arg in node.args):
                 violations.append("positional format string")
     return violations
 
 
 def _is_string(node: ast.expr) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _string_constants(node: ast.expr) -> list[str]:
+    """Return the string constants a value is or, as a list or tuple, holds."""
+    elements = node.elts if isinstance(node, (ast.List, ast.Tuple)) else [node]
+    return [element.value for element in elements if _is_string(element)]
 
 
 @pytest.mark.parametrize("page", PLOT_PAGES)
@@ -164,6 +174,8 @@ def test_cell_has_no_unstyled_colour_or_display(page: str) -> None:
         ("ax.scatter(x, y, c='C0')", "literal colour in c"),
         ('ax.scatter(x, y, cmap="viridis")', "passes cmap"),
         ("plt.show ()", "calls plt.show()"),
+        ('ax.scatter(x, y, c=["red", "black"])', "literal colour in c"),
+        ('ax.errorbar(x, y, fmt="r-")', "format string"),
     ],
 )
 def test_style_violations_reports_unstyled_calls(source: str, violation: str) -> None:
@@ -177,6 +189,7 @@ def test_style_violations_reports_unstyled_calls(source: str, violation: str) ->
         'ax.scatter(x, y, facecolors="none", edgecolors=colors.truth)',
         "ax.plot(x, y, color=colors.ink)",
         "# do not call plt.show()",
+        'ax.plot("step", "rate", data=frame, color=colors.ink)',
     ],
 )
 def test_style_violations_allows_styled_calls(source: str) -> None:
