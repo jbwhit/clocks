@@ -1,7 +1,6 @@
 """Contracts for the corrected generated evidence shipped by Task 11."""
 
 import json
-import re
 from hashlib import sha256
 from pathlib import Path
 from statistics import median
@@ -95,24 +94,11 @@ def _certified_range_summary() -> tuple[str, str, str]:
     )
 
 
-def _states_number(text: str, number: str) -> bool:
-    """Whether text contains number as a whole token, not inside a longer one."""
-    return re.search(rf"(?<![\d.]){re.escape(number)}(?!\.?\d)", text) is not None
-
-
-def test_whole_number_matching_rejects_longer_numbers() -> None:
-    assert _states_number("passed 46/72 cases overall", "46/72")
-    assert _states_number("ratio was 66.524, above", "66.524")
-    assert _states_number("were 12, 12, 11, 8, 3, 0. The", "12, 12, 11, 8, 3, 0")
-    assert not _states_number("passed 46/720 cases", "46/72")
-    assert not _states_number("ratio was 166.524", "66.524")
-    assert not _states_number("ratio was 66.5241", "66.524")
-    assert not _states_number("were 12, 12, 11, 8, 3, 0.5", "12, 12, 11, 8, 3, 0")
-
-
 def test_current_prose_identifies_corrected_assets_and_honest_model_results() -> None:
     report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
-    echo_story = (ROOT / "site/story/gravitational-echolocation.qmd").read_text()
+    echo_story = " ".join(
+        (ROOT / "site/story/gravitational-echolocation.qmd").read_text().split()
+    )
     model_story = (ROOT / "site/story/how-many-masses.qmd").read_text()
     provenance = " ".join(
         (ROOT / "site/reproduce/reproducibility.qmd").read_text().split()
@@ -133,22 +119,36 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     for expected_hash in EXPECTED_VISUAL_HASHES.values():
         assert expected_hash in report
     # The exact protocol record lives on the Reproducibility page; the story
-    # pages state the results in plain words and link there. The numbers are
-    # computed from the certification artifact, so prose cannot drift from it.
+    # pages state the results in plain words and link there. Each result is
+    # matched as a whole sentence, with its numbers computed from the
+    # certification artifact, so an edit inside the sentence cannot pass.
     pass_counts, total, std_ratio = _certified_range_summary()
     assert pass_counts == "12, 12, 11, 8, 3, 0"
-    assert _states_number(echo_story, pass_counts)
-    assert _states_number(provenance, pass_counts)
-    assert _states_number(provenance, total)
-    assert _states_number(provenance, std_ratio)
-    assert "12/12 far-range" in provenance
-    assert "population reliability" in provenance
-    assert "K=2: 0.3990" in provenance
-    assert "K=3: 0.6010" in provenance
-    assert "K=2: 0.740" in provenance
-    assert "K=3: 0.260" in provenance
-    assert "finite data horizon" in provenance
-    assert "finite-particle" in provenance
+    assert (
+        f"Pass counts out of twelve, from closest to farthest: {pass_counts}. "
+        in echo_story
+    )
+    assert (
+        f"The frozen cell passed {total} cases overall; pass counts from close "
+        f"to far were {pass_counts}. The close range passed 12/12. The far/close "
+        f"median position-standard-deviation ratio was {std_ratio}, above the "
+        "frozen factor 20 gate, and the 12/12 far-range three-standard-deviation "
+        "coverage is retained as a diagnostic rather than promoted after "
+        "inspection into a new gate."
+    ) in provenance
+    assert (
+        "It does not estimate population reliability or justify a universal "
+        "pass probability."
+    ) in provenance
+    assert (
+        "With K=2 truth, its final estimate is K=2: 0.3990 and K=3: 0.6010. "
+    ) in provenance
+    assert "calculation that ends near K=2: 0.740 and K=3: 0.260. " in provenance
+    assert (
+        "A different finite data horizon changes the evidence supplied by the "
+        "noisy realization, and a different finite-particle budget changes the "
+        "Monte Carlo estimate of that evidence."
+    ) in provenance
     assert "as the verdict shows" not in model_story
     for page in current_asset_pages:
         text = page.read_text().casefold()
