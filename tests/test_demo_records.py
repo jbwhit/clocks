@@ -544,3 +544,128 @@ def test_density_record_agrees_with_an_unrecorded_filter(density_replay):
         density_replay.arrays["mean"][-1],
         rtol=1e-12,
     )
+
+
+# --- model comparison --------------------------------------------------------
+
+
+def _model():
+    return importlib.import_module("clocks._demos.demo_model_comparison")
+
+
+def _model_config(n_particles=64):
+    module = _model()
+    scenario = module.scenario()
+    return InferenceConfig(
+        clock_array=scenario.clock_array,
+        noise=NoiseConfig(module.NOISE_STD),
+        prior=PriorConfig((-8.0, 8.0), (0.005, 0.15)),
+        n_particles=n_particles,
+        n_masses=(1, 2, 3),
+        seed=module.SEED,
+    )
+
+
+def _model_observations(n_observations=3):
+    module = _model()
+    return simulate(
+        SimulationConfig(
+            clock_array=module.scenario().clock_array,
+            ground_truth=MassConfig(
+                np.array([[module.TRUE_X1], [module.TRUE_X2]]),
+                np.array([module.TRUE_M1, module.TRUE_M2]),
+            ),
+            noise=NoiseConfig(module.NOISE_STD),
+            n_observations=n_observations,
+            seed=module.SEED,
+        )
+    ).observations
+
+
+@pytest.fixture(scope="module")
+def model_replay():
+    return _model().record(n_observations=3, n_particles=64)
+
+
+@pytest.fixture(scope="module")
+def model_result():
+    return infer(_model_observations(), _model_config())
+
+
+def test_model_scenario_values():
+    module = _model()
+    scenario = module.scenario()
+    assert scenario.demo == "demo_model_comparison"
+    assert scenario.param_names == ("x₁", "x₂", "M₁", "M₂")
+    assert scenario.prior_ranges == ((-8.0, 8.0), (0.005, 0.15))
+    assert np.array_equal(
+        scenario.true_params,
+        np.array([module.TRUE_X1, module.TRUE_X2, module.TRUE_M1, module.TRUE_M2]),
+    )
+    assert scenario.seed == module.SEED
+    assert scenario.n_observations == module.N_OBSERVATIONS
+    assert scenario.n_particles == module.N_PARTICLES
+
+
+def test_model_record_is_valid(model_replay):
+    validate_replay(model_replay)
+    assert model_replay.meta["kind"] == "model_comparison"
+    assert model_replay.meta["true_k"] == 2
+    assert type(model_replay.meta["true_k"]) is int
+    assert json.loads(json.dumps(model_replay.meta)) == model_replay.meta
+    assert "cloud" not in model_replay.arrays
+    ks = model_replay.arrays["model_ks"]
+    assert ks.dtype == np.int64
+    assert np.array_equal(ks, np.array([1, 2, 3]))
+    assert np.array_equal(model_replay.arrays["model_prior"], np.full(3, 1.0 / 3))
+
+
+def test_model_record_row_zero_is_the_prior():
+    arrays = _model().record(n_observations=2, n_particles=80).arrays
+    assert np.array_equal(arrays["model_posterior"][0], arrays["model_prior"])
+    assert np.array_equal(arrays["model_log_evidence"][0], np.zeros(3))
+    assert np.array_equal(arrays["model_ess"][0], np.full(3, 80.0))
+
+
+def test_model_record_agrees_with_the_public_api(model_replay, model_result):
+    expected = np.array([[row[k] for k in (1, 2, 3)] for row in model_result.history])
+    posterior = model_replay.arrays["model_posterior"]
+    np.testing.assert_allclose(posterior[1:], expected, rtol=1e-12)
+    final = [model_result.posterior_by_model[k] for k in (1, 2, 3)]
+    np.testing.assert_allclose(posterior[-1], final, rtol=1e-12)
+
+
+def test_model_record_final_estimates_match_the_public_api(model_replay, model_result):
+    for k in (1, 2, 3):
+        estimate = model_result.result_by_model[k]
+        np.testing.assert_allclose(
+            model_replay.arrays[f"final_mean_k{k}"], estimate.posterior_mean, rtol=1e-12
+        )
+        np.testing.assert_allclose(
+            model_replay.arrays[f"final_std_k{k}"], estimate.posterior_std, rtol=1e-12
+        )
+    mean_k3 = model_replay.arrays["final_mean_k3"]
+    assert mean_k3.shape == (6,)
+    assert np.all(np.diff(mean_k3[:3]) > 0)
+
+
+def test_model_posterior_follows_the_evidence(model_replay):
+    from scipy.special import logsumexp
+
+    arrays = model_replay.arrays
+    joint = np.log(arrays["model_prior"]) + arrays["model_log_evidence"]
+    expected = np.exp(joint - logsumexp(joint, axis=1, keepdims=True))
+    np.testing.assert_allclose(
+        arrays["model_posterior"], expected, rtol=1e-9, atol=1e-12
+    )
+
+
+def test_model_record_inputs_match_the_scenario(model_replay):
+    scenario = _model().scenario()
+    arrays = model_replay.arrays
+    assert np.array_equal(arrays["clock_positions"], scenario.clock_array.positions)
+    assert np.array_equal(arrays["true_params"], scenario.true_params)
+    assert np.array_equal(arrays["true_rates"], scenario.true_rates)
+    assert np.array_equal(
+        arrays["observations"], np.stack([o.rates for o in _model_observations()])
+    )

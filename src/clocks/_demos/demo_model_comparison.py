@@ -13,9 +13,18 @@ matplotlib.use("Agg")
 import numpy as np
 
 from clocks._demos._common import add_common_arguments
+from clocks._replay import (
+    Replay,
+    Scenario,
+    filter_controls,
+    scenario_meta,
+    validate_replay,
+)
 from clocks.api import build_model_comparison, infer, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
-from clocks.types import ClockArray, MassConfig
+from clocks.inference import ModelComparison
+from clocks.physics import clock_rates
+from clocks.types import ClockArray, MassConfig, Observation
 from clocks.viz import animate_model_comparison
 
 TRUE_X1 = -2.0
@@ -28,7 +37,114 @@ N_OBSERVATIONS = 80
 NOISE_STD = 0.005
 N_PARTICLES = 2000
 SEED = 42
+MODEL_KS = (1, 2, 3)
 OUTPUT_PATH = Path("output/demo_model_comparison.gif")
+
+
+def scenario() -> Scenario:
+    """The packaged inputs of this demo, read from the module constants."""
+    clock_array = _clock_array()
+    params = np.array([TRUE_X1, TRUE_X2, TRUE_M1, TRUE_M2])
+    return Scenario(
+        demo="demo_model_comparison",
+        clock_array=clock_array,
+        true_params=params,
+        true_rates=clock_rates(
+            MassConfig(params[:2].reshape(2, 1), params[2:]), clock_array
+        ),
+        param_names=("x₁", "x₂", "M₁", "M₂"),
+        prior_ranges=((-8.0, 8.0), (0.005, 0.15)),
+        seed=SEED,
+        noise_std=NOISE_STD,
+        n_observations=N_OBSERVATIONS,
+        n_particles=N_PARTICLES,
+    )
+
+
+def record(
+    *, n_observations: int = N_OBSERVATIONS, n_particles: int = N_PARTICLES
+) -> Replay:
+    """Run the three-candidate comparison once and return it as a replay."""
+    packaged = scenario()
+    simulation = simulate(
+        SimulationConfig(
+            clock_array=packaged.clock_array,
+            ground_truth=MassConfig(
+                packaged.true_params[:2].reshape(2, 1), packaged.true_params[2:]
+            ),
+            noise=NoiseConfig(NOISE_STD),
+            n_observations=n_observations,
+            seed=SEED,
+        )
+    )
+    comparison = build_model_comparison(
+        InferenceConfig(
+            clock_array=packaged.clock_array,
+            noise=NoiseConfig(NOISE_STD),
+            prior=PriorConfig(*packaged.prior_ranges),
+            n_particles=n_particles,
+            n_masses=MODEL_KS,
+            seed=SEED,
+        )
+    )
+    arrays = _model_arrays(comparison, simulation.observations, n_particles)
+    arrays.update(
+        clock_positions=packaged.clock_array.positions,
+        true_params=packaged.true_params,
+        true_rates=packaged.true_rates,
+        observations=np.stack([o.rates for o in simulation.observations]),
+    )
+    replay = Replay(
+        meta=scenario_meta(
+            packaged,
+            kind="model_comparison",
+            n_observations=n_observations,
+            n_particles=n_particles,
+            controls=filter_controls(comparison.filters[1]),
+            true_k=2,
+        ),
+        arrays=arrays,
+    )
+    validate_replay(replay)
+    return replay
+
+
+def _model_arrays(
+    comparison: ModelComparison, observations: list[Observation], n_particles: int
+) -> dict[str, np.ndarray]:
+    """Update ``comparison`` observation by observation and collect its history.
+
+    Row 0 of each per-observation array is the prior, written as exact values.
+    """
+    ks = comparison.k_values
+    prior = np.array([comparison.model_prior[k] for k in ks])
+    posterior, log_evidence = [prior], [np.zeros(len(ks))]
+    ess = [np.full(len(ks), float(n_particles))]
+    for observation in observations:
+        comparison.update(observation)
+        evidence = comparison.evidence()
+        posterior.append(np.array([evidence["posterior"][k] for k in ks]))
+        log_evidence.append(np.array([evidence["log_evidence"][k] for k in ks]))
+        ess.append(np.array([comparison.estimate(k)["ess"] for k in ks]))
+    arrays = {
+        "model_ks": np.array(ks, dtype=np.int64),
+        "model_prior": prior,
+        "model_posterior": np.stack(posterior),
+        "model_log_evidence": np.stack(log_evidence),
+        "model_ess": np.stack(ess),
+    }
+    for k in ks:
+        estimate = comparison.estimate(k)
+        arrays[f"final_mean_k{k}"] = np.asarray(estimate["mean"], dtype=np.float64)
+        arrays[f"final_std_k{k}"] = np.asarray(estimate["std"], dtype=np.float64)
+    return arrays
+
+
+def _clock_array() -> ClockArray:
+    return ClockArray(
+        np.array([[position] for position in CLOCK_POSITIONS]),
+        track_offset=TRACK_OFFSET,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
