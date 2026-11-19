@@ -70,7 +70,10 @@ def _current_prose_files(root: Path = ROOT) -> list[Path]:
     files.extend(
         path
         for path in (root / "docs").rglob("*.md")
-        if not ({"plans", "superpowers"} & set(path.relative_to(root / "docs").parts))
+        if not (
+            {"plans", "superpowers", "audits"}
+            & set(path.relative_to(root / "docs").parts)
+        )
     )
     files.extend((root / "site").rglob("*.qmd"))
     files.extend((root / "src" / "clocks").rglob("*.py"))
