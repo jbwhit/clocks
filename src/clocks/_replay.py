@@ -13,6 +13,7 @@ import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import scipy
@@ -84,6 +85,79 @@ def load_replay(path: Path) -> Replay:
     replay = Replay(meta, arrays)
     validate_replay(replay, str(path))
     return replay
+
+
+class Difference(NamedTuple):
+    """Where two replays first differ.
+
+    ``row`` is the first index along axis 0 outside tolerance, or ``None`` when
+    the difference is not in a row (meta, key sets, shape, dtype). ``largest`` is
+    the largest absolute difference in the array, or NaN when there is no
+    numeric difference to measure.
+    """
+
+    key: str
+    row: int | None
+    largest: float
+
+
+# The report's tolerances (the gate's tighter ones for inputs live in the tests).
+_FLOAT_TOLERANCE = (1e-9, 1e-12)  # rtol, atol
+_CLOUD_TOLERANCE = (1e-5, 1e-6)
+_INPUT_ORDER = (
+    "clock_positions",
+    "true_params",
+    "true_rates",
+    "observations",
+    "filter_observations",
+    "model_ks",
+    "model_prior",
+)
+
+
+def first_difference(reference: Replay, other: Replay) -> Difference | None:
+    """Compare two replays in full; name the first difference, or return None.
+
+    Order: ``meta`` (without ``created_with``), the key sets, then the arrays,
+    inputs first, then the rest alphabetically. Does not validate: a shape or
+    dtype mismatch is a difference to report.
+    """
+    if _comparable_meta(reference.meta) != _comparable_meta(other.meta):
+        return Difference("meta", None, math.nan)
+    if set(reference.arrays) != set(other.arrays):
+        return Difference("keys", None, math.nan)
+    for key in _comparison_order(reference.arrays):
+        found = _array_difference(key, reference.arrays[key], other.arrays[key])
+        if found is not None:
+            return found
+    return None
+
+
+def _comparable_meta(meta: Mapping[str, object]) -> dict[str, object]:
+    return {key: value for key, value in meta.items() if key != "created_with"}
+
+
+def _comparison_order(arrays: Mapping[str, NDArray]) -> list[str]:
+    inputs = [key for key in _INPUT_ORDER if key in arrays]
+    return inputs + sorted(set(arrays) - set(inputs))
+
+
+def _array_difference(key: str, ref: NDArray, other: NDArray) -> Difference | None:
+    if ref.shape != other.shape or ref.dtype != other.dtype:
+        return Difference(key, None, math.nan)
+    if ref.size == 0:
+        return None
+    gap = np.abs(other.astype(np.float64) - ref.astype(np.float64))
+    if ref.dtype.kind == "f":
+        rtol, atol = _CLOUD_TOLERANCE if key == "cloud" else _FLOAT_TOLERANCE
+        # `not <=` so a NaN gap counts as a difference
+        outside = ~(gap <= atol + rtol * np.abs(ref.astype(np.float64)))
+    else:
+        outside = other != ref
+    if not outside.any():
+        return None
+    rows = outside.reshape(len(outside), -1).any(axis=1)
+    return Difference(key, int(np.argmax(rows)), float(np.max(gap)))
 
 
 def thin(particles: NDArray, weights: NDArray, size: int) -> NDArray[np.float32]:

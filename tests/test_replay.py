@@ -13,6 +13,7 @@ from clocks._replay import (
     SPATIAL_DIMENSIONS,
     VERSION,
     Replay,
+    first_difference,
     load_replay,
     provenance,
     record_filter,
@@ -792,3 +793,146 @@ def test_cloud_is_capped_at_500_particles() -> None:
     pf = ScriptedFilter([prior], [], [])
     replay = record_filter(pf, [], meta={}, arrays={})
     assert replay.arrays["cloud"].shape == (1, CLOUD_SIZE, 1)
+
+
+# --- first_difference --------------------------------------------------------
+
+
+def _pair(make=filter_fixture):
+    meta, arrays = make()
+    return Replay(meta, arrays), Replay(
+        dict(meta), {k: v.copy() for k, v in arrays.items()}
+    )
+
+
+def _scaled(replay: Replay, key: str, index: tuple, factor: float) -> None:
+    replay.arrays[key][index] = replay.arrays[key][index] * factor
+
+
+def test_equal_replays_have_no_difference() -> None:
+    reference, other = _pair()
+    assert first_difference(reference, other) is None
+    other.meta["created_with"] = {k: "elsewhere" for k in CREATED}
+    assert first_difference(reference, other) is None
+    reference, other = _pair(model_fixture)
+    assert first_difference(reference, other) is None
+
+
+def test_meta_difference_is_reported_first() -> None:
+    reference, other = _pair()
+    other.meta["seed"] = 8
+    other.arrays["mean"][0, 0] += 1.0
+    found = first_difference(reference, other)
+    assert found is not None
+    assert (found.key, found.row) == ("meta", None)
+
+
+def test_key_set_difference() -> None:
+    reference, other = _pair()
+    del other.arrays["ess"]
+    found = first_difference(reference, other)
+    assert found is not None
+    assert (found.key, found.row) == ("keys", None)
+    found = first_difference(other, reference)
+    assert found is not None
+    assert found.key == "keys"
+
+
+def test_shape_difference() -> None:
+    reference, other = _pair()
+    other.arrays["mean"] = other.arrays["mean"][:-1]
+    found = first_difference(reference, other)
+    assert found is not None
+    assert (found.key, found.row) == ("mean", None)
+
+
+def test_dtype_difference() -> None:
+    reference, other = _pair()
+    other.arrays["mean"] = other.arrays["mean"].astype(np.float32)
+    found = first_difference(reference, other)
+    assert found is not None
+    assert (found.key, found.row) == ("mean", None)
+
+
+def test_integer_arrays_compare_exactly() -> None:
+    reference, other = _pair()
+    other.arrays["mh_proposals"][1] += 1
+    found = first_difference(reference, other)
+    assert found == ("mh_proposals", 1, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("factor", "different"),
+    [
+        pytest.param(1 + 1e-10, False, id="inside"),
+        pytest.param(1 + 1e-8, True, id="outside"),
+    ],
+)
+def test_float_tolerance(factor: float, different: bool) -> None:
+    reference, other = _pair()
+    _scaled(other, "mean", (2, 0), factor)
+    found = first_difference(reference, other)
+    if not different:
+        assert found is None
+        return
+    assert found is not None
+    assert (found.key, found.row) == ("mean", 2)
+
+
+@pytest.mark.parametrize(
+    ("factor", "different"),
+    [
+        pytest.param(1 + 1e-10, False, id="inside"),
+        pytest.param(1 + 1e-8, True, id="outside"),
+    ],
+)
+def test_inputs_use_the_same_tolerance(factor: float, different: bool) -> None:
+    reference, other = _pair()
+    _scaled(other, "observations", (1, 0), factor)
+    found = first_difference(reference, other)
+    if not different:
+        assert found is None
+        return
+    assert found is not None
+    assert (found.key, found.row) == ("observations", 1)
+
+
+@pytest.mark.parametrize(
+    ("factor", "different"),
+    [
+        pytest.param(1 + 1e-6, False, id="inside"),
+        pytest.param(1 + 1e-4, True, id="outside"),
+    ],
+)
+def test_cloud_tolerance(factor: float, different: bool) -> None:
+    reference, other = _pair()
+    _scaled(other, "cloud", (1, 0, 0), factor)
+    found = first_difference(reference, other)
+    if not different:
+        assert found is None
+        return
+    assert found is not None
+    assert (found.key, found.row) == ("cloud", 1)
+
+
+def test_the_earliest_row_is_reported() -> None:
+    reference, other = _pair()
+    other.arrays["mean"][1, 0] += 0.25
+    other.arrays["mean"][2, 1] += 0.5
+    found = first_difference(reference, other)
+    assert found is not None
+    assert (found.key, found.row) == ("mean", 1)
+    assert found.largest == pytest.approx(0.5)
+
+
+def test_keys_are_compared_in_a_fixed_order() -> None:
+    reference, other = _pair()
+    other.arrays["cov"][1, 0, 0] += 1.0
+    other.arrays["mean"][1, 0] += 1.0
+    found = first_difference(reference, other)
+    assert found is not None
+    assert found.key == "cov"
+    other.arrays["observations"][0, 0] += 1.0
+    found = first_difference(reference, other)
+    assert found is not None
+    assert found.key == "observations"
