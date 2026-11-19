@@ -21,7 +21,7 @@ from numpy.typing import NDArray
 from scipy.special import logsumexp
 
 from clocks._demos.demo_echolocation_3d import close_view
-from clocks._replay import DEMOS, Replay, Scenario, load_replay
+from clocks._replay import DEMOS, PARAM_NAMES, Replay, Scenario, load_replay
 from clocks._scenarios import contrast_matrix
 from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig
@@ -224,6 +224,11 @@ def test_archive_matches_its_scenario(name: str) -> None:
     np.testing.assert_allclose(
         arrays["true_rates"], scenario.true_rates, rtol=1e-12, atol=1e-12
     )
+
+
+@pytest.mark.parametrize("name", DEMOS)
+def test_scenario_names_are_the_documented_ones(name: str) -> None:
+    assert _scenario(name).param_names == PARAM_NAMES[name]
 
 
 @pytest.mark.parametrize("name", DEMOS)

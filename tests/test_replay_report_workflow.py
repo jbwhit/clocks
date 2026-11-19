@@ -61,20 +61,49 @@ def test_the_report_job_is_a_three_way_matrix() -> None:
     assert "fail-fast: false" in text
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "src/clocks/**",
-        "assets/replays/**",
-        "scripts/record_replays.py",
-        "uv.lock",
-        "pyproject.toml",
-        _OWN_PATH,
-    ],
-)
+_TRIGGER_PATHS = [
+    "src/clocks/**",
+    "assets/replays/**",
+    "scripts/record_replays.py",
+    "uv.lock",
+    "pyproject.toml",
+    _OWN_PATH,
+]
+
+
+def _assert_listed_once_per_trigger(text: str, path: str) -> None:
+    """Assert ``path`` is listed exactly once under push and once under pull_request."""
+    triggers = text.split("\non:\n", 1)[1].split("\nconcurrency:", 1)[0]
+    push, pull_request = triggers.split("\n  pull_request:\n", 1)
+    for trigger, section in (("push", push), ("pull_request", pull_request)):
+        entries = [
+            line for line in section.splitlines() if line.strip() == f'- "{path}"'
+        ]
+        assert len(entries) == 1, (
+            f"{path} is listed {len(entries)} times under {trigger}"
+        )
+
+
+@pytest.mark.parametrize("path", _TRIGGER_PATHS)
 def test_triggers_are_filtered_to_what_can_change_a_replay(path: str) -> None:
-    entries = [line for line in _text().splitlines() if line.strip() == f'- "{path}"']
-    assert len(entries) == 2, f"{path} must be listed under push and pull_request"
+    _assert_listed_once_per_trigger(_text(), path)
+
+
+def test_a_path_moved_from_pull_request_to_push_is_caught() -> None:
+    entry = '      - "uv.lock"\n'
+    text = _text()
+    push, pull_request = text.split("\n  pull_request:\n", 1)
+    assert entry in push and entry in pull_request
+    moved = (
+        push.replace(entry, entry + entry, 1)
+        + "\n  pull_request:\n"
+        + pull_request.replace(entry, "", 1)
+    )
+    # Two entries in all, which a count over the whole file would accept.
+    assert moved.count(entry) == 2
+
+    with pytest.raises(AssertionError, match="listed 2 times under push"):
+        _assert_listed_once_per_trigger(moved, "uv.lock")
 
 
 def test_drafts_are_skipped_and_jobs_time_out() -> None:

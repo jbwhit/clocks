@@ -13,6 +13,7 @@ from clocks._replay import (
     CLOUD_SIZE,
     DEMOS,
     FORMAT,
+    PARAM_NAMES,
     SPATIAL_DIMENSIONS,
     VERSION,
     Replay,
@@ -238,6 +239,15 @@ def test_module_constants() -> None:
         "demo_multi_mass_2d": 2,
         "demo_echolocation_3d": 3,
     }
+    assert PARAM_NAMES == {
+        "demo_1d": ("x", "M"),
+        "demo_2d": ("x", "y", "M"),
+        "demo_multi_mass": ("x₁", "x₂", "M₁", "M₂"),
+        "demo_multi_mass_2d": ("x₁", "y₁", "x₂", "y₂", "M₁", "M₂"),
+        "demo_model_comparison": ("x₁", "x₂", "M₁", "M₂"),
+        "demo_density": ("μ", "σ", "A"),
+        "demo_echolocation_3d": ("x", "y", "z", "M"),
+    }
 
 
 def test_provenance_names_its_four_fields() -> None:
@@ -330,6 +340,37 @@ def test_clock_count_must_agree(name: str) -> None:
     _invalid(meta, arrays, re.escape("true_rates: expected shape (3)"))
 
 
+def _with_clocks(name: str, count: int):
+    """The fixture with ``count`` clocks and every clock-sized axis to match."""
+    meta, arrays = FIXTURES[name]()
+    rows = meta["n_observations"]
+    dimensions = arrays["clock_positions"].shape[1]
+    arrays["clock_positions"] = np.linspace(-1.0, 1.0, count * dimensions).reshape(
+        count, dimensions
+    )
+    arrays["true_rates"] = np.full(count, 0.97)
+    arrays["observations"] = np.zeros((rows, count))
+    if "filter_observations" in arrays:
+        arrays["filter_observations"] = np.zeros((rows, count - 1))
+    for key in ("predicted_mean", "predicted_std"):
+        if key in arrays:
+            arrays[key] = np.full((rows + 1, count), 0.01)
+    return meta, arrays
+
+
+@pytest.mark.parametrize(
+    ("name", "too_few", "enough"),
+    [
+        pytest.param("demo_1d", 0, 1, id="demo_1d"),
+        pytest.param("demo_model_comparison", 0, 1, id="demo_model_comparison"),
+        pytest.param("demo_echolocation_3d", 1, 2, id="demo_echolocation_3d"),
+    ],
+)
+def test_too_few_clocks_are_rejected(name: str, too_few: int, enough: int) -> None:
+    validate_replay(Replay(*_with_clocks(name, enough)))
+    _invalid(*_with_clocks(name, too_few), r"clock_positions: expected at least")
+
+
 def test_candidate_count_must_agree() -> None:
     meta, arrays = model_fixture()
     arrays["model_ks"] = np.array([1, 2, 3], I8)
@@ -351,11 +392,12 @@ def test_true_k_must_be_a_candidate() -> None:
 
 
 def test_true_params_must_hold_true_k_masses() -> None:
+    # The names (and so true_params' shape) are fixed by PARAM_NAMES; a true
+    # count of 1 against that two-mass truth is what this check alone catches.
     meta, arrays = model_fixture()
-    meta["param_names"] = ["x₁", "x₂", "M₁"]
-    arrays["true_params"] = arrays["true_params"][:3]
+    meta["true_k"] = 1
     _invalid(
-        meta, arrays, re.escape("true_params: expected 4 values for true_k = 2, got 3")
+        meta, arrays, re.escape("true_params: expected 2 values for true_k = 1, got 4")
     )
 
 
@@ -378,6 +420,15 @@ BAD_META = [
     ("demo_1d", "param_names", [], "meta.param_names"),
     ("demo_1d", "param_names", ["x", 1], "meta.param_names"),
     ("demo_1d", "param_names", "xM", "meta.param_names"),
+    ("demo_1d", "param_names", ["M", "x"], "meta.param_names"),
+    ("demo_1d", "param_names", ["x", "y"], "meta.param_names"),
+    ("demo_echolocation_3d", "param_names", ["y", "x", "z", "M"], "meta.param_names"),
+    (
+        "demo_model_comparison",
+        "param_names",
+        ["x₁", "M₁", "x₂", "M₂"],
+        "meta.param_names",
+    ),
     ("demo_1d", "prior_ranges", [[-8.0, 8.0]], "meta.prior_ranges"),
     ("demo_1d", "prior_ranges", [[-8.0, 8.0], [0.15, 0.005]], "meta.prior_ranges"),
     ("demo_1d", "prior_ranges", [[-8.0, 8.0], [0.005, 0.005]], "meta.prior_ranges"),
@@ -940,6 +991,14 @@ def test_integer_arrays_compare_exactly() -> None:
     other.arrays["mh_proposals"][1] += 1
     found = first_difference(reference, other)
     assert found == ("mh_proposals", 1, 1.0)
+
+
+def test_an_integer_gap_is_measured_in_integers() -> None:
+    reference, other = _pair()
+    reference.arrays["mh_proposals"][0] = 2**53
+    other.arrays["mh_proposals"][0] = 2**53 + 1
+    found = first_difference(reference, other)
+    assert found == ("mh_proposals", 0, 1.0)
 
 
 @pytest.mark.parametrize(

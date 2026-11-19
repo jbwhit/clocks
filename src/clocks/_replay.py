@@ -49,6 +49,20 @@ SPATIAL_DIMENSIONS: dict[str, int] = {
     "demo_echolocation_3d": 3,
 }
 
+# Each demo's parameters, in the column order of mean, cov and cloud.
+PARAM_NAMES: dict[str, tuple[str, ...]] = {
+    "demo_1d": ("x", "M"),
+    "demo_2d": ("x", "y", "M"),
+    "demo_multi_mass": ("x₁", "x₂", "M₁", "M₂"),
+    "demo_multi_mass_2d": ("x₁", "y₁", "x₂", "y₂", "M₁", "M₂"),
+    "demo_model_comparison": ("x₁", "x₂", "M₁", "M₂"),
+    "demo_density": ("μ", "σ", "A"),
+    "demo_echolocation_3d": ("x", "y", "z", "M"),
+}
+
+# Echolocation's readings are contrasts between clocks, which need two.
+_MINIMUM_CLOCKS = {"demo_echolocation_3d": 2}
+
 
 @dataclass(frozen=True, eq=False)  # eq=False: comparing dicts of arrays raises
 class Replay:
@@ -152,8 +166,8 @@ def _array_difference(key: str, ref: NDArray, other: NDArray) -> Difference | No
         return Difference(key, None, math.nan)
     if ref.size == 0:
         return None
-    gap = np.abs(other.astype(np.float64) - ref.astype(np.float64))
     if ref.dtype.kind == "f":
+        gap = np.abs(other.astype(np.float64) - ref.astype(np.float64))
         rtol, atol = _CLOUD_TOLERANCE if key == "cloud" else _FLOAT_TOLERANCE
         # `not <=` so a NaN gap counts as a difference
         outside = ~(gap <= atol + rtol * np.abs(ref.astype(np.float64)))
@@ -161,15 +175,23 @@ def _array_difference(key: str, ref: NDArray, other: NDArray) -> Difference | No
         outside = other != ref
     if not outside.any():
         return None
+    if ref.dtype.kind == "f":
+        largest = float(np.max(gap))
+    else:
+        # In Python integers: as float64, 2**53 and 2**53 + 1 are one value.
+        pairs = zip(ref[outside].tolist(), other[outside].tolist())
+        largest = float(max(abs(a - b) for a, b in pairs))
     rows = outside.reshape(len(outside), -1).any(axis=1)
-    return Difference(key, int(np.argmax(rows)), float(np.max(gap)))
+    return Difference(key, int(np.argmax(rows)), largest)
 
 
 def thin(particles: NDArray, weights: NDArray, size: int) -> NDArray[np.float32]:
     """Pick ``min(size, N)`` particles to display, deterministically.
 
     Targets are evenly spaced quantiles of the normalised cumulative weight,
-    offset by φ so no target lands on a step exactly; no random numbers.
+    offset by φ so no target lands on a step exactly; no random numbers. A
+    target that does equal a cumulative step picks the left side: the
+    particle whose cumulative weight ends there.
     """
     weights = np.asarray(weights, dtype=np.float64)
     if np.any(weights < 0) or not weights.sum() > 0:
@@ -535,6 +557,9 @@ def _check_names_and_ranges(meta: Mapping[str, object], source: str) -> None:
         or not all(isinstance(name, str) for name in names)
     ):
         _fail(source, "meta.param_names", "a non-empty list of strings", repr(names))
+    documented = PARAM_NAMES[meta["demo"]]
+    if tuple(names) != documented:
+        _fail(source, "meta.param_names", repr(list(documented)), repr(names))
     ranges = meta["prior_ranges"]
     want = len(names) if meta["kind"] == "filter" else 2
     if not isinstance(ranges, (list, tuple)) or len(ranges) != want:
@@ -606,6 +631,10 @@ def _check_clocks_and_candidates(
     _check_array(
         arrays["clock_positions"], "clock_positions", (None, dimensions), _F8, source
     )
+    clocks = len(arrays["clock_positions"])
+    minimum = _MINIMUM_CLOCKS.get(meta["demo"], 1)
+    if clocks < minimum:
+        _fail(source, "clock_positions", f"at least {minimum} clocks", clocks)
     if meta["kind"] != "model_comparison":
         return []
     _require(arrays, "model_ks", source)
