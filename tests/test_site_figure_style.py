@@ -142,9 +142,11 @@ def _style_violations(cell: str) -> list[str]:
                 if any(text != "none" for text in _string_constants(keyword.value)):
                     violations.append(f"literal colour in {keyword.arg}")
         if isinstance(func, ast.Attribute) and func.attr in _FORMAT_STRING_CALLS:
-            # With data=, positional strings are column names, not formats.
+            # With data=, the first two positional strings are column names;
+            # any further one is a format string.
             has_data = any(keyword.arg == "data" for keyword in node.keywords)
-            if not has_data and any(_is_string(arg) for arg in node.args):
+            strings = [arg for arg in node.args if _is_string(arg)]
+            if len(strings) > (2 if has_data else 0):
                 violations.append("positional format string")
     return violations
 
@@ -176,6 +178,7 @@ def test_cell_has_no_unstyled_colour_or_display(page: str) -> None:
         ("plt.show ()", "calls plt.show()"),
         ('ax.scatter(x, y, c=["red", "black"])', "literal colour in c"),
         ('ax.errorbar(x, y, fmt="r-")', "format string"),
+        ('ax.plot("step", "rate", "r-", data=frame)', "positional format string"),
     ],
 )
 def test_style_violations_reports_unstyled_calls(source: str, violation: str) -> None:
