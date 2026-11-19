@@ -71,14 +71,16 @@ plt.close(fig)
 fig
 ```
 
-The curves are close by eye, yet the clocks separate them quickly: at
-$x = 0$ the two configurations differ by nearly three noise standard
-deviations in a single reading, and repeated independent observations
-compound that information.
+The curves are close by eye, yet at $x = 0$ this pair and this combined
+mass differ by nearly three noise standard deviations in a single reading. A
+better-placed single mass comes closer, so one noisy reading need not settle
+the question; repeated independent observations compound the difference
+until it does.
 
 ::: {.callout-note title="The question behind the question"}
-One mass turns out to be a poor impostor for two. But could three pose as
-two? How would you ever know *how many* masses are out there? Fixing the
-number in advance was quietly cheating.
+This combined mass is a poor impostor for this pair. A better-chosen one
+would be harder to catch, and so would three masses posing as two. How would
+you ever know *how many* masses are out there? Fixing the number in advance
+was quietly cheating.
 The [next page](how-many-masses.qmd) stops cheating.
 :::

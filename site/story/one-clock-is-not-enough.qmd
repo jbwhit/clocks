@@ -67,8 +67,8 @@ the masses sit, disagree about five times more strongly. The
 disagreement carries the information.
 
 ::: {.callout-note title="The noise floor"}
-With [observation noise $\sigma$](../method/notation-and-glossary.qmd#term-sigma-obs), the array can only distinguish
-configurations whose rate profiles differ by more than roughly $\sigma$.
+With [observation noise $\sigma$](../method/notation-and-glossary.qmd#term-sigma-obs), rate differences smaller than $\sigma$ are hard to see in a single
+reading.
 That is why every demo on this site feeds the filter *many* noisy
 observations rather than one perfect one: each new reading shrinks the set
 of worlds consistent with the data. How to do that shrinking honestly is

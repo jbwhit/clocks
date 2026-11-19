@@ -71,10 +71,12 @@ fig
 
 ## What to notice
 
-The two estimates tighten together. After the first reading each is known
-to about 10%; after twenty-five, to about 2%, which is the
-one-over-root-$N$ improvement you would expect from averaging independent
-noise. Neither unknown is the hard one here: three clocks at three different
-distances fix position and mass at once. The bands are the filter's own
-statement of what the data have and have not settled, and they matter more
-when we add [a second dimension](into-the-plane.qmd).
+The two estimates tighten together. Relative to the true values, the
+posterior standard deviation of each is about 10% after the first reading
+and about 2% after twenty-five: close to the improvement you would expect
+from averaging independent noise, one over the square root of the number of
+readings. Neither unknown is the hard one here. The rate profile across the
+three clock positions constrains both at once, its shape fixing position and
+its depth fixing mass. The bands are the filter's own statement of what the
+data have and have not settled, and they matter more when we add
+[a second dimension](into-the-plane.qmd).
