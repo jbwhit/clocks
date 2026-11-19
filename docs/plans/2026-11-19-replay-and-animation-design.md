@@ -289,6 +289,10 @@ Bounds on |fresh − archive|, per component:
 For `demo_model_comparison`: P(K=1) ≤ 1e-5 after observation 1 and ≤ 1e-20
 after observation 8 and at the end; |P(K=2) − archive| ≤ 0.45 after
 observation 1. The split between two and three masses is not bounded later.
+The model-comparison archive's per-candidate final estimates
+(`final_mean_k<K>`, `final_std_k<K>`) are checked for shape and finiteness
+only, and are compared with the public API only at recording time, by
+`tests/test_demo_records.py`.
 
 - **Calibration.** Each bound is eight times the standard deviation of that
   quantity over inference seeds with the data fixed, the largest over the
