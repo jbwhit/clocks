@@ -199,12 +199,16 @@ A new private module `src/clocks/_replay.py` holds `Replay`, a frozen pair of
 `meta` and `arrays`, and:
 
 ```python
-def record_filter(pf, observations, *, meta, predict=None) -> Replay: ...
+def record_filter(pf, observations, *, meta, arrays, predict=None) -> Replay: ...
 def thin(particles, weights, size: int) -> NDArray[np.float32]: ...
+def validate_replay(replay: Replay, source: str = "<memory>") -> None: ...
 def save_replay(path: Path, replay: Replay) -> None: ...
 def load_replay(path: Path) -> Replay: ...
-def first_difference(a: Replay, b: Replay) -> Difference | None: ...
+def first_difference(reference: Replay, other: Replay) -> Difference | None: ...
 ```
+
+`arrays` carries what the scenario supplies (clocks, truth, true rates, and for
+echolocation the two forms of the readings); the recorder adds the rest.
 
 - `record_filter` raises before touching the filter if it has already seen an
   observation. `predict` maps particles to predicted readings and receives no
@@ -541,8 +545,9 @@ and 80 in both themes, and at 390 pixels (measured, M7).
 
 - **Close view**, a 3D scene on one fixed cube: the smallest cube holding the
   head, the truth, and each coordinate's mean ± four standard deviations for
-  every k ≥ 1, padded by 0.3 and rounded outward to 0.1. For this run that is
-  -1.3 to 4.8. It shows the head wireframe (`muted`), clocks (`ink`), the cloud
+  every k ≥ 1, padded by 0.3 and rounded outward to 0.1 (after rounding to six
+  decimals, so that 1.4 held as 1.4000000000000001 stays 1.4). For this run
+  that is -1.3 to 4.8. It shows the head wireframe (`muted`), clocks (`ink`), the cloud
   (`belief`) and the truth as a ring with a drop-line to the floor. The ring is
   open and several times wider than the final cloud, which is visible inside
   it in the drawn frames.
