@@ -2,9 +2,9 @@
 
 **Date:** 2026-11-19
 
-**Status:** Draft, in review. Revised after review round 1 (Codex xhigh on
-`5edbcb5`: "NOT SOUND ENOUGH TO IMPLEMENT", nine findings). "Changes since
-round 1" at the end lists what moved.
+**Status:** Draft, in review. Revised after review rounds 1 and 2 (Codex xhigh
+on `5edbcb5` and `8ada3a4`, both "NOT SOUND ENOUGH TO IMPLEMENT"). "Changes
+since round 2" at the end lists what moved.
 
 **Source:** findings V1, V5 and C6 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), the visual reviewer's critique
@@ -14,7 +14,7 @@ in the audit's "Decisions" section. Everything an implementer needs is restated
 here.
 
 Claims are marked. **Measured** means a command was run for this spec and its
-output is in "Measurements" (M1 to M14). **Read** means it rests on reading
+output is in "Measurements" (M1 to M15). **Read** means it rests on reading
 code or a document. **Believed** means neither.
 
 ## Purpose
@@ -30,7 +30,8 @@ mass share an axis, so mass is a flat line; three panels show the same plane;
 the weight colouring encodes nothing after resampling.
 
 This track commits **replay data** instead: what each demo run produced, in
-numbers. A reference comparison on the CI runner pins the data to the code. The
+numbers. Tests pin the data to the code by its inputs and by bounded summaries
+of what a reader sees. The
 site draws its animations and two static figures from the data when it is
 built, in the figure style of the first track
 (`docs/plans/2026-11-18-figure-style-design.md`), in both themes. The
@@ -77,15 +78,15 @@ round-trip without pickle, M2), and arrays.
   "controls": {"ess_target": 0.8, "rejuvenation_steps": 2,
                "proposal_scale": 2.38, "resampling": "systematic"},
   "cloud_size": 500,
-  "created_with": {"python": "3.12.16", "numpy": "2.4.2", "scipy": "1.17.1",
-                   "platform": "Linux-...-x86_64", "cpu": "...",
-                   "image": "ubuntu-26.04 20261111.196.1"}
+  "created_with": {"python": "3.14.0", "numpy": "2.4.2", "scipy": "1.17.1",
+                   "platform": "macOS-27.2.1-arm64"}
 }
 ```
 
 `kind` is `"filter"` or `"model_comparison"`. The model-comparison `meta` also
-carries `true_k` and `model_prior`. `created_with` is provenance; only its
-platform and Python version are tested (section 3).
+carries `true_k`. `created_with` records the platform, the resolved Python
+version and the NumPy and SciPy versions of whatever machine ran the recorder.
+It is provenance and no test reads it.
 
 **The truth lives in the `true_params` array, not in `meta`.** Parameter order,
 which is also the column order of `mean`, `cov` and `cloud`:
@@ -98,11 +99,11 @@ which is also the column order of `mean`, `cov` and `cloud`:
 | `demo_multi_mass_2d` | x₁, y₁, x₂, y₂, M₁, M₂ |
 | `demo_density` | μ, σ, A |
 | `demo_echolocation_3d` | x, y, z, M |
-| `demo_model_comparison` | `true_params` is x₁, x₂, M₁, M₂ of the K = 2 truth |
+| `demo_model_comparison` | `true_params` is x₁, x₂, M₁, M₂ of the K = 2 truth; `final_mean_k<K>` is x₁…x_K, M₁…M_K |
 
 Arrays, with T observations, C clocks, P parameters, m displayed particles.
 Every array is consumed by a drawing, by the command's printed output, or by
-the reference comparison.
+the gate or report of section 3.
 
 | Key | Shape, type | Meaning | Demos |
 |---|---|---|---|
@@ -113,23 +114,26 @@ the reference comparison.
 | `filter_observations` | (T, C-1) float64 | the contrasts the likelihood consumed | echolocation |
 | `mean` | (T+1, P) float64 | weighted posterior mean; row 0 is the prior | filter |
 | `cov` | (T+1, P, P) float64 | weighted covariance, no bias correction | filter |
-| `ess` | (T+1,) float64 | 1 / sum of squared weights; row 0 is N | filter |
-| `log_evidence` | (T+1,) float64 | cumulative; row 0 is 0 | filter |
+| `ess` | (T+1,) float64 | 1 / sum of squared weights; row 0 is exactly N | filter |
+| `log_evidence` | (T+1,) float64 | cumulative; row 0 is exactly 0 | filter |
 | `tempering_stages`, `mh_proposals`, `mh_acceptances` | (T,) int64 | per-update diagnostics | filter |
 | `cloud` | (T+1, m, P) float32 | equal-weight display sample | filter |
 | `predicted_mean`, `predicted_std` | (T+1, C) float64 | weighted mean and s.d., over all particles, of each particle's predicted reading at each clock | `demo_1d`, `demo_multi_mass`, echolocation (centred) |
 | `view_bounds` | (2,) float64 | the close view's cube | echolocation |
 | `weight_in_view` | (T+1,) float64 | posterior weight inside that cube, from all particles | echolocation |
-| `model_ks` | (K,) int64 | candidate counts | model comparison |
-| `model_posterior` | (T+1, K) float64 | row 0 is the model prior | model comparison |
-| `model_log_evidence`, `model_ess` | (T+1, K) float64 | row 0 is 0 and N | model comparison |
+| `model_ks` | (K,) int64 | candidate counts, ascending | model comparison |
+| `model_prior` | (K,) float64 | prior over counts, aligned with `model_ks` | model comparison |
+| `model_posterior` | (T+1, K) float64 | columns aligned with `model_ks`; row 0 equals `model_prior` | model comparison |
+| `model_log_evidence`, `model_ess` | (T+1, K) float64 | row 0 is exactly 0 and N | model comparison |
 | `final_mean_k<K>`, `final_std_k<K>` | (P_K,) float64 | each candidate's final estimate | model comparison |
 
 Decisions:
 
 - **Row 0 is the prior.** `ParticleFilter.history[0]` holds it (read). Today
   `_precompute_filter_states` drops it, which is why every animation opens
-  after the first observation.
+  after the first observation. Row-0 sentinels (`ess`, `log_evidence`, the
+  model rows) are written as exact values, not computed: 1 / Σw² for 3,000
+  uniform weights is 3000.0000000000005 (measured, M5).
 - **Predictions are recorded at the clocks only.** Round 1 proposed a dense
   tick-rate profile along the track for the two 1D clips. That cannot be
   computed: the prior is valid at the clocks, not between them, and on a
@@ -168,7 +172,9 @@ depends on particle order, which is the filter's own. The irrational offset
 matters: with offset 0.5 and uniform weights the targets land exactly on steps
 and rounding decides each pick (strides of 4 and 5 mixed for N = 2000), where φ
 gives one stride with at least 5% of a weight to spare (measured, M5). The
-sample uses no random numbers.
+sample uses no random numbers. It is still a discrete choice: moving 5.55e-17
+of weight between two particles changed a pick in a constructed case (M5),
+which is one reason the sample is reported on and not gated (section 3).
 
 **One file, not two.** A JSON file of summaries beside a binary file of clouds
 would diff readably, but could fall out of step; the comparison tool prints a
@@ -177,8 +183,30 @@ can be fed by an export the build makes from the archive.
 
 **Loading validates**: format and version; the exact key set for the `kind` and
 demo, with no extra keys; each key's dtype and number of dimensions; row counts
-of T+1 and T; inner dimensions against C, P, m and K; finite values. A failure
-raises `ValueError` naming the file, the key and what was expected.
+of T+1 and T; inner dimensions against C, P, m and K; finite values; ascending
+`model_ks`. A failure raises `ValueError` naming the file, the key and what was
+expected.
+
+**A literal model-comparison fixture** fixes what the table leaves open. With
+one observation, two clocks and candidates K = 1 and 2:
+
+```python
+meta = {"format": "clocks-replay", "version": 1, "kind": "model_comparison",
+        "demo": "fixture", "seed": 0, "n_observations": 1, "n_particles": 16,
+        "noise_std": 0.005, "track_offset": 1.0, "true_k": 2,
+        "prior_ranges": [[-8.0, 8.0], [0.005, 0.15]], ...}
+model_ks = [1, 2]
+model_prior = [0.5, 0.5]
+model_posterior = [[0.5, 0.5], [0.2, 0.8]]
+model_log_evidence = [[0.0, 0.0], [-3.0, -1.6137056388801094]]
+model_ess = [[16.0, 16.0], [12.5, 14.0]]
+true_params = [-2.0, 3.0, 0.045, 0.030]          # x1, x2, M1, M2
+final_mean_k1 = [0.4, 0.07]                      # x1, M1
+final_mean_k2 = [-2.1, 3.2, 0.044, 0.031]        # x1, x2, M1, M2
+```
+
+`prior_ranges` here is the position range and the mass range, shared by every
+candidate. The format test builds this archive from these literals.
 
 ### 2. Recording
 
@@ -190,144 +218,187 @@ class Replay:
     meta: Mapping[str, object]
     arrays: Mapping[str, NDArray]
 
-def record_filter(pf, observations: Iterable[Observation], *, meta,
-                  predict=None) -> Replay: ...
+def record_filter(pf, observations, *, meta, predict=None) -> Replay: ...
 def thin(particles, weights, size: int) -> NDArray[np.float32]: ...
 def save_replay(path: Path, replay: Replay) -> None: ...
 def load_replay(path: Path) -> Replay: ...
-def first_divergence(reference: Replay, other: Replay) -> Divergence | None: ...
-def diff_summary(reference: Replay, other: Replay) -> str: ...
+def first_difference(a: Replay, b: Replay) -> Difference | None: ...
 ```
 
 - `record_filter` raises before touching the filter if it has already seen an
-  observation.
-- **Observations are consumed lazily, one per update.** The density demo draws
-  each reading from the same generator the filter uses, between updates.
-  Drawing the readings first changes them: the second reading differs by up to
-  0.018 (measured, M4). The recorder takes an iterator and captures each
-  reading as it is consumed, so the existing draw order is kept.
-- `predict` maps particles to predicted readings; it receives no generator.
-- Each demo module gains `record(*, n_observations=..., n_particles=...) ->
-  Replay`, which draws nothing. The model-comparison demo runs its comparison
-  once (today it runs twice, once to print and once to animate) and records the
-  model prior as row 0.
-- `scripts/record_replays.py --out DIR [--compare DIR2]` records all seven
-  demos at their packaged defaults into `DIR`. With `--compare` it prints, per
-  demo, either "matches" or the first divergence (frame, key, largest
-  difference) and a summary of final estimates before and after, writes the
-  same text to `DIR/replay-diff.md`, and exits non-zero on any divergence.
+  observation. `predict` maps particles to predicted readings and receives no
+  generator.
+- Each demo module gains two functions. `scenario()` is the packaged builder:
+  it returns the clocks, the truth and the settings, and is the one source of
+  geometry. The two-mass 2D demo generates its clocks from its seed there, so
+  no module constant holds them. `record(*, n_observations=..., n_particles=...)
+  -> Replay` runs the scenario and draws nothing.
+- The model-comparison demo runs its comparison once; today it runs twice, once
+  to print and once to animate.
+- **The density demo's readings get their own generator.** Today it draws each
+  reading from the generator the filter is using, between updates, so the data
+  depend on how many random numbers the sampler happened to consume: drawing
+  the readings first changes the second one by 0.018 (measured, M4). Readings
+  that depend on the sampler are not scenario inputs and could not be compared
+  across machines. The demo will draw all its readings first from
+  `study_generator(SEED)` and give the filter a second `study_generator(SEED)`,
+  which is the arrangement the other six demos already have (read). This
+  changes the density run: its final estimate moves from (1.375, 1.985,
+  0.0101) to (1.502, 2.136, 0.0095) against a truth of (1.5, 2.0, 0.010)
+  (measured, M4). No prose quotes the old numbers (read), and the figure they
+  appear in is redrawn by this work.
+- `scripts/record_replays.py --out DIR` records all seven demos at their
+  packaged defaults. Run with `--out assets/replays`, on whatever machine, it
+  is how the committed archives are made. With `--compare DIR2` it also writes
+  a report (section 3).
 
 ### 3. What tests pin
 
-The byte hashes go. Their replacement has three layers.
+The byte hashes go. A fresh recording of the same code is **not** required to
+match the committed archive value for value, because that cannot be relied on:
 
-**Layer 1: a reference comparison on the CI runner.** The committed archives
-are recorded on the runner, and every pull request's CI run records them again
-and compares:
+- The CI runner is not one numerical environment. Five deploy builds on one
+  image, Python and lock, with no change to numerical code, printed the same
+  posterior in two variants 1.1e-13 apart, and this Mac prints a third
+  (measured, M1).
+- The filter and the display sample make discrete choices. A change of one ulp
+  in a weight can change a resampled or displayed index (the reviewer's probe
+  for both rules; reproduced for the display sample, M5), after which two runs
+  differ at the level of Monte Carlo noise.
+
+So the gate is built from quantities that do not depend on which valid
+trajectory a machine takes, and full comparison is reported, not required.
+
+**The gate**, the same on every platform. A test calls the demo's `record()`
+and compares it with the committed archive:
+
+1. **Schema and inputs, exactly.** Key set, shapes and dtypes; `meta` except
+   `created_with`; `clock_positions` and `true_params`. The inputs that are
+   computed in floating point (`true_rates`, `observations`,
+   `filter_observations`) are compared at `rtol=1e-12`, since a library's last
+   digit is not the scenario.
+2. **Summaries a reader sees, within bounds**, after observations 1 and 8 and
+   at the end: each component of the posterior mean, and each posterior
+   standard deviation, within a stated absolute distance of the archive's. The
+   early checkpoints are there so a materially different animation cannot hide
+   behind a matching final frame.
+
+Bounds on |fresh − archive|, per component:
+
+| Demo | After | Mean: positions | Mean: masses | S.d.: positions | S.d.: masses |
+|---|---|---|---|---|---|
+| `demo_1d` | 1 | 0.095 | 0.0025 | 0.063 | 0.0027 |
+| | 8 | 0.024 | 0.00091 | 0.015 | 0.00079 |
+| | last | 0.0085 | 0.00034 | 0.0045 | 0.00026 |
+| `demo_2d` | 1 | 0.48 | 0.0054 | 0.28 | 0.0020 |
+| | 8 | 0.11 | 0.00059 | 0.062 | 0.00052 |
+| | last | 0.025 | 0.00025 | 0.018 | 0.00014 |
+| `demo_multi_mass` | 1 | 0.87 | 0.0095 | 0.19 | 0.0065 |
+| | 8 | 0.060 | 0.0013 | 0.063 | 0.00079 |
+| | last | 0.0079 | 0.00015 | 0.0058 | 0.00012 |
+| `demo_multi_mass_2d` | 1 | 1.6 | 0.011 | 0.85 | 0.0071 |
+| | 8 | 4.2† | 0.026† | 2.9 | 0.0096 |
+| | last | 0.46 | 0.0027 | 0.47 | 0.0014 |
+| `demo_echolocation_3d` | 1 | 0.28† | 0.021† | 0.043 | 0.0029 |
+| | 8 | 0.012 | 0.00077 | 0.0097 | 0.00059 |
+| | last | 0.0073 | 0.00047 | 0.0044 | 0.00027 |
+| `demo_density` | 1 | μ 0.49, σ 0.38 | A 0.00050 | μ 0.38, σ 0.15 | A 0.00069 |
+| | 8 | μ 0.067, σ 0.22 | A 0.0016† | μ 0.039, σ 0.20 | A 0.0031 |
+| | last | μ 0.019, σ 0.027 | A 0.00011 | μ 0.014, σ 0.021 | A 0.000083 |
+
+For `demo_model_comparison`: P(K=1) ≤ 1e-5 after observation 1 and ≤ 1e-20
+after observation 8 and at the end; |P(K=2) − archive| ≤ 0.45 after
+observation 1. The split between two and three masses is not bounded later.
+
+- **Calibration.** Each bound is eight times the standard deviation of that
+  quantity over inference seeds with the data held fixed, the largest over the
+  components it covers, rounded up to two figures: 20 seeds, 8 for density
+  (measured, M6). A different seed is what a diverged trajectory looks like.
+  The largest deviation any seed showed from the demo's own was at most half
+  its bound.
+- **The `demo_2d` row holds at both truths.** It is calibrated at M = 0.10,
+  where every spread is the larger; the archive stays at 0.15 until pull
+  request 3 (section 8).
+- **† marks a bound no tighter than the posterior's own width there.** The
+  two-mass 2D cloud wanders between modes early, the echolocation cloud is
+  still settling after one reading, and the density's σ–A ridge is not yet
+  resolved after eight. At those cells the gate says little and the other
+  checkpoints carry it.
+- **Model comparison is bounded only where it is stable.** Over 20 seeds
+  P(K=2) ran from 0.27 to 0.45 after one observation, 0.38 to 0.70 after
+  eight, and 0.18 to 0.84 at the end (M6; audit finding C2), so later bounds
+  would say nothing. One mass is excluded at every checkpoint in every seed.
+- **What the early checkpoints buy.** With the likelihood's noise doubled for
+  the first three updates of `demo_1d` only, the final summaries move by
+  2.3e-4 against a bound of 0.0085 and pass; the standard deviation after
+  observation 1 moves by 0.86 against 0.063 and fails (measured, M15).
+
+**Invariants on the committed archive**, with no inference:
+
+- the files are exactly the seven names; each loads; `meta` and the geometry
+  equal the demo's `scenario()`;
+- `true_rates` equals the forward model at `true_params` (1e-12). This holds
+  for the density demo too, and involves no readings;
+- each echolocation reading sums to zero (1e-12) and `filter_observations =
+  Q @ observations` (1e-12);
+- the truth meets the existing 0.08 weak-field margin at the clocks, and
+  x₁ < x₂ where there are two masses;
+- sentinels, exactly: `log_evidence[0] = 0`, `ess[0] = N`,
+  `model_log_evidence[0] = 0`, `model_ess[0] = N`, `model_posterior[0] =
+  model_prior`;
+- with roundoff allowed: 0 < `ess` ≤ N(1 + 1e-12); `cov` symmetric within
+  1e-12 of its largest entry, with no eigenvalue below −1e-12 times its trace;
+  `model_posterior` rows sum to 1 within 1e-12; `weight_in_view` in
+  [0, 1 + 1e-12]; acceptances ≤ proposals;
+- the dots agree with the summaries: in every row, the display sample lies
+  inside `prior_ranges`, its mean is within 6 s.d./√m of `mean`, and its
+  standard deviation is within 0.6 to 1.5 of the recorded one. The candidates
+  reach 3.0 and 0.78 to 1.29 (measured, M6).
+
+**The report, which never fails the job.** A CI step records all seven on the
+runner, compares each with the committed archive in full, and uploads a short
+report:
 
 ```yaml
-- name: Replay reference
-  run: uv run python scripts/record_replays.py --out recorded --compare assets/replays
+- name: Replay report
+  continue-on-error: true
+  run: uv run python scripts/record_replays.py --out recorded --compare assets/replays --report replay-report.md
 - uses: actions/upload-artifact@v4
-  if: always()
-  with: {name: "replays-${{ github.sha }}", path: recorded, retention-days: 7}
+  with: {name: "replay-report-${{ github.run_id }}", path: replay-report.md}
 ```
 
-- **How files get committed.** The step's artifact is the recording. When the
-  comparison fails because the code legitimately changed, the author downloads
-  it (`gh run download <run> -n replays-<sha>`), commits the archives, and
-  pastes `replay-diff.md` into the pull request, where it is reviewed. A lock
-  bump that changes the output goes through the same path, so it cannot land
-  without that summary. Nothing else writes `assets/replays/`.
-- **Why an artifact and not a container.** No container tool is installed on
-  the development machine (measured, M13), and an arm64 host could not match
-  the x86-64 runner anyway. A manually dispatched workflow was the alternative;
-  it cannot be dispatched until it is on `main`, and it would duplicate a job
-  that CI must run regardless.
-- **The environment is declared.** A committed `.python-version` pins Python
-  3.12 for CI, the site build and local work, and `ci.yml` installs it with
-  `uv python install` as the site workflows do. Today the CI job uses the
-  image's Python 3.14.4 while the site jobs install 3.12.16 (measured, M13). A
-  test requires each committed archive's `created_with` to name Linux and
-  Python 3.12, so a locally recorded file cannot be committed unnoticed, and a
-  text test requires `ci.yml` to contain the step.
-- **What is compared.**
+For each demo it says either "reproduced" (integers equal, float64 arrays
+within `rtol=1e-9`, `cloud` within 1e-5) or the first differing key and row
+with the largest difference. It records the run ID, the pull request's head
+SHA, the SHA checked out, the platform, the resolved Python version, the NumPy
+and SciPy versions and NumPy's BLAS. The CI test job keeps the Python it has
+(3.14.4 today; M13).
 
-  | Compared | How |
-  |---|---|
-  | key set, shapes, dtypes; `meta` except `created_with` | exactly |
-  | integer arrays | exactly |
-  | `clock_positions`, `true_params`, `true_rates`, `observations`, `filter_observations` | `rtol=1e-12, atol=1e-12` |
-  | other float64 arrays | `rtol=1e-9, atol=1e-12` |
-  | `cloud` | `rtol=1e-5, atol=1e-6` |
-
-- **Why a tolerance even there.** The runner is not one numerical environment.
-  Five deploy builds on the same image, Python and lock, with no change to
-  numerical code, printed the Getting Started posterior in two variants that
-  differ by 1.1e-13 relative; this Mac prints a third (measured, M1). None of
-  the three diverged. The filter makes discrete decisions (tempering steps,
-  resampling indices, accept or reject), so a last-digit difference could flip
-  one, after which runs differ at about 1e-3. The tolerance sits four orders
-  above the difference observed and six below a divergence. The exact integer
-  diagnostics are the sharpest detector.
-
-**Layer 2: portable invariants on the committed archives**, in every
-environment, with no inference:
-
-- the files are exactly the seven names and each loads;
-- scenario: `meta`, `true_params` and `clock_positions` equal the demo module's
-  constants exactly;
-- observations: for the six demos that simulate through `simulate()` or the
-  echolocation helper, `observations` equals a fresh simulation from the seed
-  and `true_rates` equals the forward model at the truth (1e-12); each
-  echolocation reading sums to zero and `filter_observations = Q @
-  observations`;
-- physics: the truth meets the existing 0.08 weak-field margin at the clocks,
-  and x₁ < x₂ where there are two masses;
-- internal: `log_evidence[0] = 0`; `ess[0] = N` and 0 < `ess` ≤ N; every
-  `cloud` row lies inside `prior_ranges`; `cov` is symmetric with no negative
-  eigenvalue; acceptances ≤ proposals; `model_posterior` rows sum to 1 and row
-  0 equals `model_prior`; `weight_in_view` lies in [0, 1].
-
-**Layer 3: explicit bounds on a fresh recording**, in every environment. The
-test calls `record()` and requires the final posterior mean to lie within a
-stated distance of the committed one, and each final standard deviation within
-a factor of 0.75 to 1.33:
-
-| Demo | Positions | Other |
-|---|---|---|
-| `demo_1d` | 0.008 | M 0.0003 |
-| `demo_2d` | 0.02 | M 0.0002 |
-| `demo_multi_mass` | 0.008 | M 0.00015 |
-| `demo_multi_mass_2d` | 0.35 | M 0.002 |
-| `demo_density` | μ 0.008, σ 0.025 | A 0.0001 |
-| `demo_echolocation_3d` | 0.006 | M 0.0004 |
-| `demo_model_comparison` | | P(K=1) ≤ 1e-6; P(K=2) and P(K=3) each in [0.05, 0.95] |
-
-Each bound is at least six times the spread of that quantity over inference
-seeds with the data held fixed (measured, M6), so a run that takes a different
-but valid trajectory passes and a changed scenario, noise level or likelihood
-does not. For model comparison the bound is deliberately wide: over 20 seeds
-P(K=2) ran from 0.18 to 0.84 (M6; audit finding C2). The existing acceptance
-gates are untouched.
-
-**On macOS** layers 2 and 3 gate. Layer 1 is run by hand
-(`record_replays.py --compare`), and pull request 1 reports its result per
-demo: whether this machine reproduces the runner's recording and, if not, the
-first divergence.
+Pull request 1's description carries this report from at least three
+independent runs of the job, and the same comparison run on macOS. If a demo
+reproduces in all of them, a later change may promote its full comparison to a
+gate. This spec does not.
 
 **Cost.** Inference takes 0.2 s (1D), 0.4 s (2D), 0.8 s (two masses 1D), 1.4 s
 (model comparison), 2.3 s (two masses 2D), 4.1 s (echolocation) and 33 s
-(density) (measured, M2). The four cheapest layer-3 tests run in the default
-suite, which takes 32 s today (M13); the other three are marked `slow`. The CI
-step adds about a minute.
+(density) (measured, M2). The four cheapest gate tests run in the default
+suite, which takes 32 s today (M13); the other three are marked `slow`. The
+report step adds under a minute.
 
-**The old hashes.** The calibration report keeps its asset table as the record
-of the August release and gains a dated note that the files it names were
-removed and can be found in git history. The row for
-`echolocation_range_study.json` is unaffected: that file stays, hash-pinned.
-`EXPECTED_VISUAL_HASHES` loses its two PNG rows in pull request 2 and the rest
-in pull request 3.
+**Against the old hashes.** The hashes caught any change to the committed
+bytes, including corruption, a wrong file under a right name, and drift between
+the two copies. They caught nothing about the code. Here git holds the bytes,
+the second copy is gone, a wrong archive under a right name fails the exact
+input comparison, and a stale or edited archive fails the bounds when the
+change is one a reader could see. An edit smaller than seed-to-seed variation
+passes the gate and shows in the report. I found no loss that matters to a
+reader of the site.
+
+**The hash table itself.** The calibration report keeps it as the record of
+the August release and gains a dated note that the files it names were removed
+and are in git history. The row for `echolocation_range_study.json` is
+unaffected: that file stays, hash-pinned. `EXPECTED_VISUAL_HASHES` loses its
+two PNG rows in pull request 2 and the rest in pull request 3.
 
 ### 4. How and when media is rendered
 
