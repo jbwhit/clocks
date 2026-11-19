@@ -104,6 +104,18 @@ def _posterior_from_evidence(
     return np.exp(log_joint - logsumexp(log_joint, axis=1, keepdims=True))
 
 
+def _assert_follows_evidence(
+    model_posterior: NDArray, model_prior: NDArray, model_log_evidence: NDArray
+) -> None:
+    """Assert each posterior row is its evidence's, at the one tolerance for this."""
+    np.testing.assert_allclose(
+        model_posterior,
+        _posterior_from_evidence(model_prior, model_log_evidence),
+        rtol=1e-9,
+        atol=1e-12,
+    )
+
+
 def _checkpoints(n_observations: int) -> tuple[int, ...]:
     """The rows the gate compares: after observation 1, 8 and the last."""
     return tuple(sorted({1, min(8, n_observations), n_observations}))
@@ -240,11 +252,8 @@ def test_model_archive_rows() -> None:
 def test_model_posterior_follows_evidence() -> None:
     arrays = _archive("demo_model_comparison").arrays
 
-    np.testing.assert_allclose(
-        arrays["model_posterior"],
-        _posterior_from_evidence(arrays["model_prior"], arrays["model_log_evidence"]),
-        rtol=1e-9,
-        atol=1e-12,
+    _assert_follows_evidence(
+        arrays["model_posterior"], arrays["model_prior"], arrays["model_log_evidence"]
     )
 
 
@@ -252,13 +261,12 @@ def test_a_posterior_row_that_keeps_its_sum_is_caught() -> None:
     arrays = _archive("demo_model_comparison").arrays
     corrupted = arrays["model_posterior"].copy()
     corrupted[-1] = [0.0, 0.99, 0.01]
-    expected = _posterior_from_evidence(
-        arrays["model_prior"], arrays["model_log_evidence"]
-    )
 
     np.testing.assert_allclose(corrupted.sum(axis=1), 1.0, rtol=0, atol=1e-12)
     with pytest.raises(AssertionError):
-        np.testing.assert_allclose(corrupted, expected, rtol=1e-9, atol=1e-12)
+        _assert_follows_evidence(
+            corrupted, arrays["model_prior"], arrays["model_log_evidence"]
+        )
 
 
 def test_an_underflowed_candidate_gives_zero() -> None:
