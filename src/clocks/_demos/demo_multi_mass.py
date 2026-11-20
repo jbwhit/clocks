@@ -13,8 +13,14 @@ matplotlib.use("Agg")
 import numpy as np
 
 from clocks._demos._common import add_common_arguments
+from clocks._replay import (
+    Replay,
+    Scenario,
+    record_point_masses,
+)
 from clocks.api import build_particle_filter, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
+from clocks.physics import clock_rates
 from clocks.types import ClockArray, MassConfig
 from clocks.viz import animate_inference_multi_1d
 
@@ -29,6 +35,41 @@ NOISE_STD = 0.005
 N_PARTICLES = 3000
 SEED = 42
 OUTPUT_PATH = Path("output/demo_multi_mass.gif")
+
+
+def scenario() -> Scenario:
+    """The packaged inputs of this demo, read from the module constants."""
+    clock_array = ClockArray(
+        np.array([[position] for position in CLOCK_POSITIONS]),
+        track_offset=TRACK_OFFSET,
+    )
+    params = np.array([TRUE_X1, TRUE_X2, TRUE_M1, TRUE_M2])
+    return Scenario(
+        demo="demo_multi_mass",
+        clock_array=clock_array,
+        true_params=params,
+        true_rates=clock_rates(
+            MassConfig(params[:2].reshape(2, 1), params[2:]), clock_array
+        ),
+        param_names=("x₁", "x₂", "M₁", "M₂"),
+        prior_ranges=((-8.0, 8.0), (-8.0, 8.0), (0.005, 0.15), (0.005, 0.15)),
+        seed=SEED,
+        noise_std=NOISE_STD,
+        n_observations=N_OBSERVATIONS,
+        n_particles=N_PARTICLES,
+    )
+
+
+def record(
+    *, n_observations: int = N_OBSERVATIONS, n_particles: int = N_PARTICLES
+) -> Replay:
+    """Run the packaged inference once and return it as a validated replay."""
+    return record_point_masses(
+        scenario(),
+        n_observations=n_observations,
+        n_particles=n_particles,
+        predictions=True,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

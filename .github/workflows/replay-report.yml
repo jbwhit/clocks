@@ -1,0 +1,77 @@
+name: Replay report
+
+# Reports whether the runner reproduces each committed replay value for value.
+# No step's failure fails the check; a job that hits its ten-minute timeout is
+# cancelled and shows as such. The tests that gate a merge are in ci.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/clocks/**"
+      - "assets/replays/**"
+      - "scripts/record_replays.py"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/replay-report.yml"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "src/clocks/**"
+      - "assets/replays/**"
+      - "scripts/record_replays.py"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/replay-report.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.pull_request.draft && 'draft' || 'ready' }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3]
+    env:
+      REPLAY_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        continue-on-error: true
+      - uses: astral-sh/setup-uv@v8.2.0
+        continue-on-error: true
+      - name: Install dependencies
+        continue-on-error: true
+        run: uv sync --locked
+      - name: Record and compare
+        continue-on-error: true
+        run: uv run --locked python scripts/record_replays.py --out recorded --compare assets/replays --report replay-report.md
+      - name: Upload the report
+        id: upload
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.sample }}
+          path: replay-report.md
+          if-no-files-found: error
+      - name: Show the report, or say what is missing
+        continue-on-error: true
+        if: always()
+        env:
+          SAMPLE: ${{ matrix.sample }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          if [ -s replay-report.md ]; then
+            cat replay-report.md >> "$GITHUB_STEP_SUMMARY" || echo "::warning title=Replay report::the report for sample $SAMPLE could not be added to the summary"
+          else
+            echo "::warning title=Replay report::no report was written for sample $SAMPLE"
+          fi
+          if [ "$UPLOAD_OUTCOME" != "success" ]; then
+            echo "::warning title=Replay report::the report for sample $SAMPLE was not uploaded ($UPLOAD_OUTCOME)"
+          fi
