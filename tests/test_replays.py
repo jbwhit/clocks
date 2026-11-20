@@ -75,13 +75,17 @@ DENSITY_BOUNDS = (
 # ratio 0.892 to 1.109 in every row but one.
 PREDICTION_MEAN_BOUND = 6.0
 PREDICTION_SPREAD = (0.6, 1.5)
-# The exception: echolocation's prior row, where the ratio runs from 0.019
-# (centre clock) to 1.425. One of the 6,000 prior particles, inside the head,
-# carries 99.8% of the centre clock's predicted variance, and no 500-dot sample
-# holds it, so the recorded s.d. there is not something the dots can estimate.
-# These are the tightest round bounds leaving a factor of 1.5 on that row. The
-# row is not drawn: the observed-against-fitted panel is empty at k = 0.
-ECHOLOCATION_PRIOR_SPREAD = (0.01, 2.2)
+# The exception: the spread is not checked on echolocation's prior row (its
+# mean is, and measures 1.49). This recording's display sample omits the one
+# prior particle, inside the head, that carries 99.8% of the centre clock's
+# predicted variance, so the ratio there (0.019) says which particles were
+# sampled, not whether the archive is right; recordings with 5,999 and 6,001
+# particles gave 2.82 and 0.008 (the reviewer's runs). The row is not drawn:
+# the observed-against-fitted panel is empty at k = 0. Also: a valid float64
+# particle can cross the weak-field limit once rounded to float32, which would
+# make the forward model raise at that dot. The committed dots have margin; a
+# re-recording that hits this must account for the rounding in the evaluation
+# here.
 
 
 def _params(names: Sequence[str]) -> list[object]:
@@ -206,14 +210,14 @@ def _assert_predictions_match_dots(
     predicted_mean: NDArray,
     predicted_std: NDArray,
     dot_readings: NDArray,
-    spreads: Sequence[tuple[float, float]],
+    spreads: Sequence[tuple[float, float] | None],
 ) -> None:
     """Assert, row by row, the recorded predictions summarise the dots' readings.
 
     ``dot_readings`` (rows, m, C) is the forward model at each displayed dot.
     Per clock, the dots' mean is within ``PREDICTION_MEAN_BOUND`` predicted
     s.d. / sqrt(m) of ``predicted_mean``, and their s.d. over ``predicted_std``
-    lies in that row's ``spreads`` range.
+    lies in that row's ``spreads`` range, unless that entry is None.
     """
     m = dot_readings.shape[1]
     for row, readings in enumerate(dot_readings):
@@ -225,6 +229,8 @@ def _assert_predictions_match_dots(
             f"{deviation[worst] * np.sqrt(m):.3g} s.d./sqrt(m) from predicted_mean"
         )
         ratio = readings.std(axis=0) / sd
+        if spreads[row] is None:
+            continue
         low, high = spreads[row]
         outside = int(np.argmax((ratio < low) | (ratio > high)))
         assert np.all((low <= ratio) & (ratio <= high)), (
@@ -430,11 +436,11 @@ def _dot_readings(name: str) -> NDArray[np.float64]:
     )
 
 
-def _spreads(name: str) -> list[tuple[float, float]]:
+def _spreads(name: str) -> list[tuple[float, float] | None]:
     rows = len(_archive(name).arrays["cloud"])
-    spreads = [PREDICTION_SPREAD] * rows
+    spreads: list[tuple[float, float] | None] = [PREDICTION_SPREAD] * rows
     if name == "demo_echolocation_3d":
-        spreads[0] = ECHOLOCATION_PRIOR_SPREAD
+        spreads[0] = None  # see the comment on PREDICTION_SPREAD
     return spreads
 
 
@@ -452,7 +458,9 @@ def test_archive_predictions_match_the_dots(name: str) -> None:
 
 @pytest.mark.parametrize("name", PREDICTING_DEMOS)
 @pytest.mark.parametrize(
-    ("row", "shift"), [(1, 0.02), (-1, 0.002)], ids=["first_update", "final"]
+    ("row", "shift"),
+    [(0, 0.02), (1, 0.02), (-1, 0.002)],
+    ids=["prior", "first_update", "final"],
 )
 def test_a_shifted_prediction_is_caught(name: str, row: int, shift: float) -> None:
     arrays = _archive(name).arrays

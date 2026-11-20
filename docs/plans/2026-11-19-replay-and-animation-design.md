@@ -306,10 +306,12 @@ Five invariants tie the arrays the drawings use to the rest of each archive.
   echolocation, as recorded). At each clock the dots' mean reading is within
   6 `predicted_std`/√m of `predicted_mean`, and their standard deviation is
   0.6 to 1.5 times `predicted_std`. The worst rows reach 3.4 and 0.89 to 1.11
-  (measured). The exception is echolocation's prior row, which is bounded at
-  0.01 to 2.2: there the ratio runs from 0.019 to 1.43, because one of the
-  6,000 prior particles, inside the head, carries 99.8% of the centre clock's
-  predicted variance and no 500-dot sample holds it (measured). That row is
+  (measured). The exception is echolocation's prior row, whose spread is not
+  checked (its mean is, at 1.49). There the ratio runs from 0.019 to 1.43,
+  because one of the 6,000 prior particles, inside the head, carries 99.8% of
+  the centre clock's predicted variance and this display sample omits it
+  (measured). Whether a sample holds it is chance: recordings with 5,999 and
+  6,001 particles gave 2.82 and 0.008 (reviewer's measurement). That row is
   not drawn. Shifting the first update's predictions by 0.02, or multiplying
   the final predicted standard deviations by ten, fails. The forward model is
   defined at every prior dot.
