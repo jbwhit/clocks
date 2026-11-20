@@ -233,6 +233,17 @@ def _assert_predictions_match_dots(
         )
 
 
+def _assert_prediction_matches(
+    predicted_mean: NDArray, predicted_std: NDArray, model: NDArray
+) -> None:
+    """Assert one row's predicted readings are within half an s.d. of ``model``."""
+    gap = np.abs(predicted_mean - model) / predicted_std
+    assert np.all(gap <= 0.5), (
+        f"predicted_mean differs from the model at the mean by {gap.max():.3g} "
+        f"predicted s.d. at clock {int(np.argmax(gap))}"
+    )
+
+
 def _assert_dots_share_orientation(cloud: NDArray, cov: NDArray) -> None:
     """Assert, in every row, the dots' correlations are near the covariance's."""
     off_diagonal = ~np.eye(cov.shape[-1], dtype=bool)
@@ -468,6 +479,59 @@ def test_widened_final_prediction_bars_are_caught(name: str) -> None:
     with pytest.raises(AssertionError, match=f"row {last}, clock .* of predicted_std"):
         _assert_predictions_match_dots(
             arrays["predicted_mean"], corrupted, _dot_readings(name), _spreads(name)
+        )
+
+
+def _model_at_final_mean(name: str, mean: NDArray) -> NDArray[np.float64]:
+    """The forward model at the last row of ``mean``, as the demo predicts.
+
+    Echolocation predicts centred readings, so the mean over clocks is removed.
+    This ties the predictions to the displayed estimate, which the dots check
+    cannot: the dots and the mean are each within their own tolerance.
+    """
+    meta, arrays = _archive(name).meta, _archive(name).arrays
+    return _readings_at(
+        mean[-1][None, :],
+        arrays["clock_positions"],
+        meta["track_offset"],
+        centred=name == "demo_echolocation_3d",
+    )[0]
+
+
+@pytest.mark.parametrize("name", PREDICTING_DEMOS)
+def test_archive_predictions_match_the_final_estimate(name: str) -> None:
+    arrays = _archive(name).arrays
+
+    _assert_prediction_matches(
+        arrays["predicted_mean"][-1],
+        arrays["predicted_std"][-1],
+        _model_at_final_mean(name, arrays["mean"]),
+    )
+
+
+def test_a_final_prediction_off_the_estimate_is_caught() -> None:
+    arrays = _archive("demo_1d").arrays
+
+    with pytest.raises(AssertionError):
+        _assert_prediction_matches(
+            arrays["predicted_mean"][-1] + 0.002,
+            arrays["predicted_std"][-1],
+            _model_at_final_mean("demo_1d", arrays["mean"]),
+        )
+
+
+def test_a_final_estimate_off_the_predictions_is_caught() -> None:
+    # The reviewer's edit: the final mean mass lowered by 0.00045. The dots and
+    # every other invariant pass it; here it is 1.19 predicted s.d. at clock 12.
+    arrays = _archive("demo_echolocation_3d").arrays
+    mean = arrays["mean"].copy()
+    mean[-1, 3] -= 0.00045
+
+    with pytest.raises(AssertionError, match=r"by 1\.19 predicted s\.d\. at clock 12"):
+        _assert_prediction_matches(
+            arrays["predicted_mean"][-1],
+            arrays["predicted_std"][-1],
+            _model_at_final_mean("demo_echolocation_3d", mean),
         )
 
 

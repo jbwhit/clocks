@@ -294,7 +294,7 @@ The model-comparison archive's per-candidate final estimates
 only, and are compared with the public API only at recording time, by
 `tests/test_demo_records.py`.
 
-Four invariants tie the arrays the drawings use to the rest of each archive.
+Five invariants tie the arrays the drawings use to the rest of each archive.
 
 - The echolocation close view equals `close_view` of the recorded rows.
 - In every row, the weight in view is within max(0.01, 6√(p(1 − p)/m)) of
@@ -312,9 +312,12 @@ Four invariants tie the arrays the drawings use to the rest of each archive.
   predicted variance and no 500-dot sample holds it (measured). That row is
   not drawn. Shifting the first update's predictions by 0.02, or multiplying
   the final predicted standard deviations by ten, fails. The forward model is
-  defined at every prior dot. This replaces a check of the final predictions
-  against the model at the final mean; the replacement caught every edit
-  tried on the old check, and more.
+  defined at every prior dot.
+- For the same three demos, the final predictions are within half a
+  `predicted_std` of the forward model at the final mean. This ties the
+  predictions to the displayed estimate, which the dots check cannot:
+  lowering echolocation's final mean mass by 0.00045 passes every other
+  invariant and is 1.19 predicted s.d. here (measured).
 - The covariance's correlations are within 0.4 of the dots'.
 
 The last is partial: a reversed tilt is caught only where |r| exceeds about
