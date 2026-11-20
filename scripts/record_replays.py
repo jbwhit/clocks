@@ -63,14 +63,59 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     # No default: Python 3.12 rejects a tuple default as one invalid choice.
     parser.add_argument("demos", nargs="*", choices=DEMOS, metavar="demo")
     args = parser.parse_args(argv)
-    # Recording saves before comparing, so one directory would compare a fresh
-    # archive with itself and report it reproduced.
-    if args.compare is not None and args.compare.resolve() == args.out.resolve():
-        parser.error(
+    collision = _path_collision(args, args.demos or DEMOS)
+    if collision is not None:
+        parser.error(collision)
+    return args
+
+
+def _path_collision(args: argparse.Namespace, names: Sequence[str]) -> str | None:
+    """Say which two arguments name one file or directory, or return None.
+
+    Recording saves before comparing and the report is renamed into place last,
+    so a baseline that is also an output, or a report that is an archive, would
+    be overwritten and then compared with or lost.
+    """
+    if args.compare is not None and _same_file(args.out, args.compare):
+        return (
             "the comparison directory must differ from the output directory, "
             f"got --out {args.out} and --compare {args.compare}"
         )
-    return args
+    groups = {"--out": [args.out / f"{name}.npz" for name in names]}
+    if args.compare is not None:
+        groups["--compare"] = [args.compare / f"{name}.npz" for name in names]
+    if args.report is not None:
+        groups["--report"] = [args.report]
+    labels = list(groups)
+    for i, first in enumerate(labels):
+        for second in labels[i + 1 :]:
+            for a in groups[first]:
+                for b in groups[second]:
+                    if _same_file(a, b):
+                        return f"{first} and {second} name the same file: {a} and {b}"
+    return None
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two paths name one file or directory, now or once written.
+
+    When both exist, ``samefile`` sees through symlinks, hard links and
+    case-variant spellings. When one does not exist yet, its parent is compared
+    by ``samefile`` and its name with ``casefold()``: this refuses a few
+    legitimate pairs on a case-sensitive filesystem (names differing only in
+    case) rather than let a case-insensitive one through.
+    """
+    a, b = a.resolve(), b.resolve()
+    if a == b:
+        return True
+    if a.exists() and b.exists():
+        return a.samefile(b)
+    return (
+        a.parent.exists()
+        and b.parent.exists()
+        and a.parent.samefile(b.parent)
+        and a.name.casefold() == b.name.casefold()
+    )
 
 
 def _record_and_compare(name: str, out: Path, committed_dir: Path | None) -> str | None:

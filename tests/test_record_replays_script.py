@@ -97,6 +97,97 @@ def test_comparing_with_the_output_directory_is_a_usage_error(
     assert {p.name: p.read_bytes() for p in committed.iterdir()} == before
 
 
+def _is_case_insensitive(directory: Path) -> bool:
+    probe = directory / "case-probe"
+    probe.touch()
+    try:
+        return (directory / "CASE-PROBE").exists()
+    finally:
+        probe.unlink()
+
+
+def _snapshot(root: Path) -> dict[str, tuple[str, bytes | str]]:
+    """Every entry under ``root``: a symlink's target, a file's bytes, or a dir."""
+    entries: dict[str, tuple[str, bytes | str]] = {}
+    for path in sorted(root.rglob("*")):
+        key = str(path.relative_to(root))
+        if path.is_symlink():
+            entries[key] = ("link", str(path.readlink()))
+        elif path.is_file():
+            entries[key] = ("file", path.read_bytes())
+        else:
+            entries[key] = ("dir", "")
+    return entries
+
+
+# Each case: (--out, --compare, --report) relative to tmp_path. The committed
+# archive is a/demo_1d.npz; "b" exists, and holds an earlier output only where
+# a link to it is the alias, so the report cases name files not yet written.
+_COLLISIONS = {
+    "case_variant_directory": ("A", "a", None),
+    "hard_linked_baseline": ("b", "a", None),
+    "symlinked_baseline": ("b", "a", None),
+    "symlinked_baseline_to_an_unwritten_output": ("b", "a", None),
+    "report_is_a_baseline": ("b", "a", "a/demo_1d.npz"),
+    "report_is_an_output": ("c", "a", "c/demo_1d.npz"),
+    "report_is_an_output_through_a_case_variant_directory": ("b", "a", "B/demo_1d.npz"),
+    "report_is_an_output_in_another_case": ("b", "a", "b/DEMO_1D.npz"),
+}
+_NEEDS_CASE_INSENSITIVE = {
+    "case_variant_directory",
+    "report_is_an_output_through_a_case_variant_directory",
+}
+
+
+@pytest.mark.parametrize("case", list(_COLLISIONS))
+def test_paths_that_name_one_file_are_a_usage_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+) -> None:
+    if case in _NEEDS_CASE_INSENSITIVE and not _is_case_insensitive(tmp_path):
+        pytest.skip("a case-variant spelling names another directory here")
+    small = demo_1d.record(n_observations=1, n_particles=16)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    baseline, output = tmp_path / "a" / "demo_1d.npz", tmp_path / "b" / "demo_1d.npz"
+    if case == "hard_linked_baseline":
+        save_replay(output, small)
+        baseline.hardlink_to(output)
+    elif case == "symlinked_baseline":
+        save_replay(output, small)
+        baseline.symlink_to(output)
+    elif case == "symlinked_baseline_to_an_unwritten_output":
+        baseline.symlink_to(output)
+    else:
+        save_replay(baseline, small)
+    before = _snapshot(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(record_replays, "record_demo", calls.append)
+    monkeypatch.chdir(tmp_path)
+    out, compare, report = _COLLISIONS[case]
+    report_args = ["--report", report] if report is not None else []
+
+    with pytest.raises(SystemExit) as raised:
+        record_replays.main(
+            ["--out", out, "--compare", compare, *report_args, "demo_1d"]
+        )
+
+    assert raised.value.code == 2
+    err = capsys.readouterr().err
+    assert "must differ from the output directory" in err or "same file" in err
+    assert calls == []
+    assert _snapshot(tmp_path) == before
+
+
+def test_a_report_beside_the_archives_is_not_a_collision(tmp_path: Path) -> None:
+    a, b = tmp_path / "a", tmp_path / "b"
+    _record_into(a)
+
+    assert _compare(a, b, b / "report.md") == 0
+
+
 def test_compare_reports_a_reproduced_demo(tmp_path: Path) -> None:
     a, b, report = tmp_path / "a", tmp_path / "b", tmp_path / "report.md"
     _record_into(a)
