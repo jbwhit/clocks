@@ -234,7 +234,7 @@ def test_the_report_replaces_a_link_without_touching_its_target(
     link: str,
 ) -> None:
     target, report = tmp_path / "archive.bin", tmp_path / "report.md"
-    target.write_bytes(b"not the report")
+    target.write_bytes(b"run: local\nan earlier report\n")
     if link == "symlink":
         report.symlink_to(target)
     else:
@@ -246,9 +246,58 @@ def test_the_report_replaces_a_link_without_touching_its_target(
     )
 
     assert status == 0
-    assert target.read_bytes() == b"not the report"
+    assert target.read_bytes() == b"run: local\nan earlier report\n"
     assert not report.is_symlink()
     assert report.read_text(encoding="utf-8") == capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "case", ["absent", "previous_report", "other_text", "empty", "unreadable"]
+)
+def test_the_report_replaces_only_a_previous_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+) -> None:
+    if case == "unreadable" and os.geteuid() == 0:
+        pytest.skip("permissions do not bind a process running as root")
+    report = tmp_path / "report.md"
+    existing = {
+        "absent": None,
+        "previous_report": b"run: local\nan earlier report\n",
+        "other_text": b"notes I wrote\n",
+        "empty": b"",
+    }
+    if case == "unreadable":
+        save_replay(tmp_path / "x.npz", _small())
+        (tmp_path / "x.npz").rename(report)
+        existing["unreadable"] = report.read_bytes()
+    elif existing[case] is not None:
+        report.write_bytes(existing[case])
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _small())
+    if case == "unreadable":
+        report.chmod(0o000)
+
+    try:
+        status = record_replays.main(
+            ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+        )
+    finally:
+        if report.exists():
+            report.chmod(0o644)
+
+    printed, errors = capsys.readouterr()
+    assert printed.startswith("run: ")
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []
+    if case in ("absent", "previous_report"):
+        assert status == 0
+        assert report.read_text(encoding="utf-8") == printed
+        return
+    assert status == 1
+    assert str(report) in errors
+    assert "is not a previous report" in errors
+    assert report.read_bytes() == existing[case]
 
 
 @pytest.mark.parametrize(
@@ -291,7 +340,7 @@ def test_the_report_never_replaces_an_archive(
     assert status == 1
     assert printed.startswith("run: ")
     assert str(report) in errors
-    assert "holds an archive" in errors
+    assert "is not a previous report" in errors
     assert load_replay(archive).meta == small.meta
     assert sorted(p.name for p in shared.iterdir()) == ["report.md"]
 
@@ -570,7 +619,7 @@ def test_a_failed_write_is_reported_and_leaves_the_previous_report(
 ) -> None:
     report = tmp_path / "reports" / "report.md"
     report.parent.mkdir()
-    report.write_text("the previous report\n", encoding="utf-8")
+    report.write_text("run: local\nthe previous report\n", encoding="utf-8")
     monkeypatch.setattr(record_replays, "record_demo", lambda name: _small())
 
     def interrupted(source: object, target: object) -> None:
@@ -588,7 +637,7 @@ def test_a_failed_write_is_reported_and_leaves_the_previous_report(
     assert errors == (
         f"the report could not be written to {report}: interrupted before the rename\n"
     )
-    assert report.read_text(encoding="utf-8") == "the previous report\n"
+    assert report.read_text(encoding="utf-8") == "run: local\nthe previous report\n"
     assert [p.name for p in report.parent.iterdir()] == ["report.md"]
 
 

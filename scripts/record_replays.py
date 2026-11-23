@@ -5,11 +5,11 @@ With ``--compare DIR`` it also compares each fresh recording in full with
 ``DIR/<demo>.npz``, every one of which is read before anything is written, and
 prints a short report, writing it to ``--report FILE`` as well when given.
 ``DIR`` must not be the output directory, and ``FILE`` must not end in
-``.npz``. Whatever the name, the report is never written over a file that
-holds an archive (checked just before the rename, so an archive the run
-itself saved through a link is protected too): the report is printed, one
-line on standard error says it was not written, and the exit status is 1. A
-demo whose
+``.npz``. The report replaces only a previous report: just before the
+rename the destination must be absent or begin with this script's report
+header. Anything else there (an archive, an empty or unreadable file) is left
+untouched, the report is printed, one line on standard error says it was not
+written, and the exit status is 1. A demo whose
 recording fails gets a ``recording failed`` line, with or without
 ``--compare``, one whose comparison fails a ``comparison failed`` line, and
 the others still run. The exit status
@@ -29,7 +29,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -51,8 +50,11 @@ def record_demo(name: str) -> Replay:
     return importlib.import_module(f"clocks._demos.{name}").record()
 
 
-class _ArchiveInTheWay(Exception):
-    """The report's destination holds a replay archive, which it must not replace."""
+_REPORT_HEADER = "run: "  # how every report begins; _report_text and the guard agree
+
+
+class _NotAPreviousReport(Exception):
+    """The report's destination exists and is not a previous report."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -171,7 +173,7 @@ def _describe(difference: Difference | None) -> str:
 
 def _report_text(outcomes: Sequence[tuple[str, str]]) -> str:
     lines = [
-        f"run: {os.environ.get('GITHUB_RUN_ID', 'local')}",
+        f"{_REPORT_HEADER}{os.environ.get('GITHUB_RUN_ID', 'local')}",
         f"head: {os.environ.get('REPLAY_HEAD_SHA', 'unknown')}",
         f"checkout: {_checkout_sha()}",
         *(f"{key}: {value}" for key, value in provenance().items()),
@@ -208,7 +210,7 @@ def _emit(text: str, report: Path | None) -> bool:
     """Print the report, then write it; return False if the write failed.
 
     Printed first, so a failed write loses nothing; the failure is one line on
-    standard error. A destination that holds an archive is left as it is.
+    standard error. A destination that is not a previous report is left as it is.
     """
     print(text, end="")
     if report is None:
@@ -218,9 +220,10 @@ def _emit(text: str, report: Path | None) -> bool:
     except OSError as error:
         print(f"the report could not be written to {report}: {error}", file=sys.stderr)
         return False
-    except _ArchiveInTheWay:
+    except _NotAPreviousReport as error:
         print(
-            f"the report was not written because {report} holds an archive",
+            f"the report was not written because {report} exists and is not a "
+            f"previous report{error}; remove it or choose another path",
             file=sys.stderr,
         )
         return False
@@ -231,9 +234,9 @@ def _write_atomically(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` whole or not at all.
 
     The text goes to a temporary file beside ``path`` that is then renamed over
-    it, so a reader never sees a partial report. Raises ``_ArchiveInTheWay``,
-    leaving ``path`` untouched, when ``path`` is a ZIP file: every replay
-    archive is one, and no text report is.
+    it, so a reader never sees a partial report. Raises ``_NotAPreviousReport``,
+    leaving ``path`` untouched, unless ``path`` is absent or begins with the
+    report header.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
@@ -248,11 +251,22 @@ def _write_atomically(path: Path, text: str) -> None:
     try:
         with handle:
             handle.write(text)
-        if zipfile.is_zipfile(path):
-            raise _ArchiveInTheWay(str(path))
+        _require_absent_or_previous_report(path)
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)  # gone already once it has replaced path
+
+
+def _require_absent_or_previous_report(path: Path) -> None:
+    try:
+        with path.open("rb") as existing:
+            first_line = existing.readline(len(_REPORT_HEADER))
+    except FileNotFoundError:  # absent, or a link to nothing: create it
+        return
+    except OSError as error:
+        raise _NotAPreviousReport(f" (could not be read: {error})") from error
+    if not first_line.startswith(_REPORT_HEADER.encode()):
+        raise _NotAPreviousReport("")
 
 
 if __name__ == "__main__":
