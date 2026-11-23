@@ -432,6 +432,59 @@ def test_only_the_requested_names_are_checked_for_existing_outputs(
     assert record_replays.main(["--out", str(tmp_path), "demo_1d"]) == 0
 
 
+def test_an_output_that_appears_during_the_run_is_not_replaced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "out"
+
+    def record(name: str) -> Replay:
+        if name == "demo_1d":
+            out.mkdir(exist_ok=True)
+            (out / "demo_1d.npz").write_bytes(b"arrived while recording")
+            return _SMALL_1D
+        return _SMALL_2D
+
+    monkeypatch.setattr(record_replays, "record_demo", record)
+
+    status = record_replays.main(["--out", str(out), "demo_1d", "demo_2d"])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert status == 1
+    assert any(
+        line.startswith("demo_1d: recording failed: FileExistsError") for line in lines
+    )
+    assert (out / "demo_1d.npz").read_bytes() == b"arrived while recording"
+    assert load_replay(out / "demo_2d.npz").meta == _SMALL_2D.meta
+
+
+def test_a_demo_named_twice_is_recorded_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[str] = []
+
+    def record(name: str) -> Replay:
+        calls.append(name)
+        return _SMALL_1D
+
+    monkeypatch.setattr(record_replays, "record_demo", record)
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "out"), "--compare", str(tmp_path / "none")]
+        + ["demo_1d", "demo_1d"]
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert status == 1  # no committed archive; what matters is the count
+    assert calls == ["demo_1d"]
+    assert [line for line in lines if line.startswith("demo_1d:")] == [
+        "demo_1d: no committed archive"
+    ]
+
+
 def test_overwrite_replaces_an_existing_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -31,7 +31,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +40,7 @@ from clocks._replay import (
     DEMOS,
     Difference,
     Replay,
+    create_replay,
     first_difference,
     load_replay,
     provenance,
@@ -54,7 +55,7 @@ def record_demo(name: str) -> Replay:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    names = args.demos or DEMOS
+    names = args.demos
     # Every baseline is read before anything is written, and each comparison is
     # with the recording in memory, so no spelling of a path can make the run
     # compare against its own output. (Two outputs the user has linked to one
@@ -64,9 +65,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.compare is not None
         else {}
     )
+    write = save_replay if args.overwrite else create_replay
     outcomes: list[tuple[str, str]] = []
     for name in names:
-        outcome = _record_and_compare(name, args.out, baselines.get(name))
+        outcome = _record_and_compare(name, args.out, baselines.get(name), write)
         if outcome is not None:
             outcomes.append((name, outcome))
     written = _emit(_report_text(outcomes), args.report)
@@ -93,6 +95,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     # No default: Python 3.12 rejects a tuple default as one invalid choice.
     parser.add_argument("demos", nargs="*", choices=DEMOS, metavar="demo")
     args = parser.parse_args(argv)
+    args.demos = list(dict.fromkeys(args.demos or DEMOS))  # each demo once, in order
     if args.compare is not None and _same_directory(args.out, args.compare):
         parser.error(
             "the comparison directory must differ from the output directory, "
@@ -107,7 +110,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     if not args.overwrite:
         existing = [
             args.out / f"{name}.npz"
-            for name in args.demos or DEMOS
+            for name in args.demos
             if os.path.lexists(args.out / f"{name}.npz")
         ]
         if existing:
@@ -145,16 +148,21 @@ def _read_baseline(committed_dir: Path, name: str) -> Replay | str:
 
 
 def _record_and_compare(
-    name: str, out: Path, baseline: Replay | str | None
+    name: str,
+    out: Path,
+    baseline: Replay | str | None,
+    write: Callable[[Path, Replay], None],
 ) -> str | None:
     """One demo's report line after ``<name>: ``, or None when there is none.
 
     ``baseline`` is what was read before recording began, or None when the run
-    compares nothing. A demo whose recording or comparison fails is reported,
-    and the others still run.
+    compares nothing. ``write`` is ``create_replay`` (which refuses to replace
+    anything, even something that appeared during the run) or, with
+    ``--overwrite``, ``save_replay``. A demo whose recording or comparison
+    fails is reported, and the others still run.
     """
     try:
-        recorded = _record_and_save(name, out)
+        recorded = _record_and_save(name, out, write)
     # As in _read_baseline: reported with its type, counted as a failure.
     except Exception as error:
         return f"recording failed: {type(error).__name__}: {error}"
@@ -169,10 +177,12 @@ def _record_and_compare(
         return f"comparison failed: {type(error).__name__}: {error}"
 
 
-def _record_and_save(name: str, out: Path) -> Replay:
+def _record_and_save(
+    name: str, out: Path, write: Callable[[Path, Replay], None]
+) -> Replay:
     replay = record_demo(name)
     out.mkdir(parents=True, exist_ok=True)
-    save_replay(out / f"{name}.npz", replay)
+    write(out / f"{name}.npz", replay)
     return replay
 
 

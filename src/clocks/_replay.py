@@ -8,6 +8,7 @@ loads is shaped exactly as the format says.
 
 import json
 import math
+import os
 import platform
 import tempfile
 import zipfile
@@ -95,6 +96,27 @@ def save_replay(path: Path, replay: Replay) -> None:
     temporary file beside it and moved into place once complete, so a failed
     write (a full disk, say) cannot truncate an existing archive.
     """
+    _write_archive(path, replay, os.replace)
+
+
+def create_replay(path: Path, replay: Replay) -> None:
+    """Like ``save_replay``, but never replaces: ``FileExistsError`` if anything
+    (a file, a link, even a dangling one) is already at ``path``.
+
+    The finished temporary file is hard-linked into place, which fails
+    atomically when any directory entry exists.
+    """
+    _write_archive(path, replay, os.link)
+
+
+def _write_archive(
+    path: Path, replay: Replay, publish: Callable[[Path, Path], None]
+) -> None:
+    """Write ``replay`` to a temporary file beside ``path``, then ``publish`` it.
+
+    ``publish(temporary, path)`` puts the finished file in place. Whatever
+    happens, the temporary name is removed afterwards.
+    """
     validate_replay(replay, str(path))
     if path.suffix != ".npz":
         # np.savez_compressed would silently append the suffix and write elsewhere.
@@ -110,15 +132,16 @@ def save_replay(path: Path, replay: Replay) -> None:
     try:
         with handle:  # a file object, so NumPy appends no suffix of its own
             np.savez_compressed(handle, meta=np.array(text), **replay.arrays)
-        temporary.replace(path)
+        publish(temporary, path)
     except BaseException as error:
-        # The write or the move failed: remove the temporary file, and if that
-        # fails too, keep the original error and say what was left behind.
+        # The write or the publishing failed: remove the temporary file, and if
+        # that fails too, keep the original error and say what was left behind.
         try:
             temporary.unlink(missing_ok=True)
         except OSError as cleanup_error:
             error.add_note(f"{temporary} was left behind: {cleanup_error}")
         raise
+    temporary.unlink(missing_ok=True)  # still there after a link, gone after a move
 
 
 def load_replay(path: Path) -> Replay:

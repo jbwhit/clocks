@@ -19,6 +19,7 @@ from clocks._replay import (
     SPATIAL_DIMENSIONS,
     VERSION,
     Replay,
+    create_replay,
     first_difference,
     load_replay,
     provenance,
@@ -699,6 +700,46 @@ def test_a_failed_cleanup_does_not_mask_the_write_error(
     assert len(leftover) == 1
     assert any(str(leftover[0]) in note for note in raised.value.__notes__)
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("name", EACH_FIXTURE)
+def test_create_writes_a_loadable_archive_at_a_free_path(
+    name: str, tmp_path: Path
+) -> None:
+    meta, arrays = FIXTURES[name]()
+    path = tmp_path / "x.npz"
+
+    create_replay(path, Replay(meta, arrays))
+
+    replay = load_replay(path)
+    assert dict(replay.meta) == meta
+    for key, expected in arrays.items():
+        assert np.array_equal(replay.arrays[key], expected), key
+    assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink", "dangling_symlink"])
+def test_create_refuses_to_replace_anything(tmp_path: Path, kind: str) -> None:
+    path, target = tmp_path / "x.npz", tmp_path / "target.bin"
+    if kind == "file":
+        path.write_bytes(b"earlier")
+    elif kind == "symlink":
+        target.write_bytes(b"earlier")
+        path.symlink_to(target)
+    else:
+        path.symlink_to(target)
+    before = path.lstat().st_ino
+    contents = target.read_bytes() if target.exists() else None
+
+    with pytest.raises(FileExistsError):
+        create_replay(path, Replay(*filter_fixture()))
+
+    assert path.lstat().st_ino == before
+    assert path.is_symlink() == (kind != "file")
+    assert (target.read_bytes() if target.exists() else None) == contents
+    if kind == "file":
+        assert path.read_bytes() == b"earlier"
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []
 
 
 def test_save_replaces_an_existing_archive_whole(tmp_path: Path) -> None:
