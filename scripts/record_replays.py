@@ -345,10 +345,7 @@ def _create_atomically(path: Path, text: str) -> None:
             temporary.unlink(missing_ok=True)
         except OSError as error:
             # Not raised: it would mask the write error being propagated.
-            print(
-                f"the temporary file {temporary} could not be removed: {error}",
-                file=sys.stderr,
-            )
+            _warn(f"the temporary file {temporary} could not be removed: {error}")
 
 
 if __name__ == "__main__":

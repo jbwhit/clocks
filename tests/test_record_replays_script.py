@@ -1004,6 +1004,37 @@ def test_a_leftover_temporary_file_is_named_without_masking_the_write_error(
     leftover[0].unlink()
 
 
+def test_a_closed_standard_error_does_not_mask_the_publication_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = tmp_path / "report.md"
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _small())
+    real_unlink = Path.unlink
+
+    def interrupted(source: object, target: object) -> None:
+        raise OSError("interrupted before the link")
+
+    def cannot_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".tmp") and self.parent == tmp_path:
+            raise PermissionError("cannot remove")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "link", interrupted)
+    monkeypatch.setattr(Path, "unlink", cannot_unlink)
+    monkeypatch.setattr(
+        sys, "stderr", _FailingStream(ValueError("I/O operation on closed file."))
+    )
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+    )
+
+    assert status == 1  # returned, not raised
+    monkeypatch.undo()
+    for leftover in tmp_path.glob(".*.tmp"):
+        leftover.unlink()
+
+
 def test_a_numpy_without_build_config_gives_unknown_blas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
