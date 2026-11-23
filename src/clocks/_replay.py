@@ -524,6 +524,9 @@ def _check_meta(meta: Mapping[str, object], source: str) -> None:
         _check_int(meta[key], f"meta.{key}", source, minimum=0 if key == "seed" else 1)
     for key in ("noise_std", "track_offset"):
         _check_finite_number(meta[key], f"meta.{key}", source)
+    # track_offset may be any finite number (echolocation's is 0); noise may not.
+    if meta["noise_std"] <= 0:
+        _fail(source, "meta.noise_std", "a positive number", repr(meta["noise_std"]))
     _check_names_and_ranges(meta, source)
     for key in ("controls", "created_with"):
         if not isinstance(meta[key], Mapping):

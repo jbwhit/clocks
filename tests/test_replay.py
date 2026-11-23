@@ -415,6 +415,8 @@ BAD_META = [
     ("demo_1d", "n_particles", 0, "meta.n_particles"),
     ("demo_1d", "noise_std", NAN, "meta.noise_std"),
     ("demo_1d", "noise_std", HUGE, "meta.noise_std"),
+    ("demo_1d", "noise_std", 0.0, "meta.noise_std"),
+    ("demo_1d", "noise_std", -0.005, "meta.noise_std"),
     ("demo_1d", "track_offset", float("inf"), "meta.track_offset"),
     ("demo_1d", "track_offset", HUGE, "meta.track_offset"),
     ("demo_1d", "param_names", [], "meta.param_names"),
