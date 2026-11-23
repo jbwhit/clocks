@@ -2,8 +2,10 @@
 
 Writes ``<out>/<demo>.npz`` for each requested demo (all seven by default).
 With ``--compare DIR`` it also compares each fresh recording in full with
-``DIR/<demo>.npz`` and prints a short report, writing it to ``--report FILE``
-as well when given; ``DIR`` must not be the output directory. A demo whose
+``DIR/<demo>.npz``, every one of which is read before anything is written, and
+prints a short report, writing it to ``--report FILE`` as well when given.
+``DIR`` must not be the output directory, and ``FILE`` must not end in
+``.npz``. A demo whose
 recording fails gets a ``recording failed`` line, with or without
 ``--compare``, one whose comparison fails a ``comparison failed`` line, and
 the others still run. The exit status
@@ -21,6 +23,7 @@ import argparse
 import importlib
 import os
 import subprocess
+import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -29,6 +32,7 @@ import numpy as np
 
 from clocks._replay import (
     DEMOS,
+    Difference,
     Replay,
     first_difference,
     load_replay,
@@ -44,13 +48,24 @@ def record_demo(name: str) -> Replay:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    names = args.demos or DEMOS
+    # Every baseline is read before anything is written, and each comparison is
+    # with the recording in memory, so no spelling of a path can make the run
+    # compare against its own output. (Two outputs the user has linked to one
+    # file hold whatever the links make them; the report lines stay true.)
+    baselines = (
+        {name: _read_baseline(args.compare, name) for name in names}
+        if args.compare is not None
+        else {}
+    )
     outcomes: list[tuple[str, str]] = []
-    for name in args.demos or DEMOS:
-        outcome = _record_and_compare(name, args.out, args.compare)
+    for name in names:
+        outcome = _record_and_compare(name, args.out, baselines.get(name))
         if outcome is not None:
             outcomes.append((name, outcome))
-    _emit(_report_text(outcomes), args.report)
-    return 0 if all(line == "reproduced" for _, line in outcomes) else 1
+    written = _emit(_report_text(outcomes), args.report)
+    reproduced = all(line == "reproduced" for _, line in outcomes)
+    return 0 if written and reproduced else 1
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -63,77 +78,64 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     # No default: Python 3.12 rejects a tuple default as one invalid choice.
     parser.add_argument("demos", nargs="*", choices=DEMOS, metavar="demo")
     args = parser.parse_args(argv)
-    collision = _path_collision(args, args.demos or DEMOS)
-    if collision is not None:
-        parser.error(collision)
-    return args
-
-
-def _path_collision(args: argparse.Namespace, names: Sequence[str]) -> str | None:
-    """Say which two arguments name one file or directory, or return None.
-
-    Recording saves before comparing and the report is renamed into place last,
-    so a baseline that is also an output, or a report that is an archive, would
-    be overwritten and then compared with or lost.
-    """
-    if args.compare is not None and _same_file(args.out, args.compare):
-        return (
+    if args.compare is not None and _same_directory(args.out, args.compare):
+        parser.error(
             "the comparison directory must differ from the output directory, "
             f"got --out {args.out} and --compare {args.compare}"
         )
-    groups = {"--out": [args.out / f"{name}.npz" for name in names]}
-    if args.compare is not None:
-        groups["--compare"] = [args.compare / f"{name}.npz" for name in names]
-    if args.report is not None:
-        groups["--report"] = [args.report]
-    labels = list(groups)
-    for i, first in enumerate(labels):
-        for second in labels[i + 1 :]:
-            for a in groups[first]:
-                for b in groups[second]:
-                    if _same_file(a, b):
-                        return f"{first} and {second} name the same file: {a} and {b}"
-    return None
+    if args.report is not None and args.report.suffix.lower() == ".npz":
+        parser.error(f"--report must not be an archive (.npz), got {args.report}")
+    if args.report is not None and args.report.is_dir():
+        parser.error(f"--report must be a file, got the directory {args.report}")
+    return args
 
 
-def _same_file(a: Path, b: Path) -> bool:
-    """Whether two paths name one file or directory, now or once written.
+def _same_directory(out: Path, compare: Path) -> bool:
+    """Whether ``--out`` and ``--compare`` are one directory, as far as can be seen.
 
-    When both exist, ``samefile`` sees through symlinks, hard links and
-    case-variant spellings. When one does not exist yet, its parent is compared
-    by ``samefile`` and its name with ``casefold()``: this refuses a few
-    legitimate pairs on a case-sensitive filesystem (names differing only in
-    case) rather than let a case-insensitive one through.
+    A courtesy for the common mistake, with a clear message; correctness does
+    not rest on it, because every baseline is read before anything is written.
     """
-    a, b = a.resolve(), b.resolve()
-    if a == b:
+    if out.resolve() == compare.resolve():
         return True
-    if a.exists() and b.exists():
-        return a.samefile(b)
-    return (
-        a.parent.exists()
-        and b.parent.exists()
-        and a.parent.samefile(b.parent)
-        and a.name.casefold() == b.name.casefold()
-    )
+    return out.exists() and compare.exists() and out.samefile(compare)
 
 
-def _record_and_compare(name: str, out: Path, committed_dir: Path | None) -> str | None:
-    """One demo's report line after ``<name>: ``, or None when there is none.
-
-    A demo whose recording or comparison fails is reported, and the others
-    still run.
-    """
+def _read_baseline(committed_dir: Path, name: str) -> Replay | str:
+    """The committed replay for ``name``, or the report line saying why not."""
+    path = committed_dir / f"{name}.npz"
     try:
-        recorded = _record_and_save(name, out)
+        if not path.exists():
+            return "no committed archive"
+        return load_replay(path)
+    except ValueError as error:
+        return f"committed archive unreadable: {error}"
     # The report must be written when its surroundings are broken; this is the
     # outermost per-demo boundary, and the error is reported and fails the run.
     except Exception as error:
-        return f"recording failed: {type(error).__name__}: {error}"
-    if committed_dir is None:
-        return None
+        return f"comparison failed: {type(error).__name__}: {error}"
+
+
+def _record_and_compare(
+    name: str, out: Path, baseline: Replay | str | None
+) -> str | None:
+    """One demo's report line after ``<name>: ``, or None when there is none.
+
+    ``baseline`` is what was read before recording began, or None when the run
+    compares nothing. A demo whose recording or comparison fails is reported,
+    and the others still run.
+    """
     try:
-        return _compare_one(name, committed_dir, recorded)
+        recorded = _record_and_save(name, out)
+    # As in _read_baseline: reported with its type, counted as a failure.
+    except Exception as error:
+        return f"recording failed: {type(error).__name__}: {error}"
+    if baseline is None:
+        return None
+    if isinstance(baseline, str):
+        return baseline
+    try:
+        return _describe(first_difference(baseline, recorded))
     # As above: reported with its type, counted as a failure, others carry on.
     except Exception as error:
         return f"comparison failed: {type(error).__name__}: {error}"
@@ -146,16 +148,8 @@ def _record_and_save(name: str, out: Path) -> Replay:
     return replay
 
 
-def _compare_one(name: str, committed_dir: Path, recorded: Replay) -> str:
+def _describe(difference: Difference | None) -> str:
     """One demo's outcome: the text after ``<name>: `` in the report."""
-    path = committed_dir / f"{name}.npz"
-    if not path.exists():
-        return "no committed archive"
-    try:
-        committed = load_replay(path)
-    except ValueError as error:
-        return f"committed archive unreadable: {error}"
-    difference = first_difference(committed, recorded)
     if difference is None:
         return "reproduced"
     text = f"differs at {difference.key}"
@@ -201,11 +195,21 @@ def _blas() -> str:
         return "unknown"
 
 
-def _emit(text: str, report: Path | None) -> None:
-    """Print the report, then write it; printed first, a failed write loses nothing."""
+def _emit(text: str, report: Path | None) -> bool:
+    """Print the report, then write it; return False if the write failed.
+
+    Printed first, so a failed write loses nothing; the failure is one line on
+    standard error.
+    """
     print(text, end="")
-    if report is not None:
+    if report is None:
+        return True
+    try:
         _write_atomically(report, text)
+    except OSError as error:
+        print(f"the report could not be written to {report}: {error}", file=sys.stderr)
+        return False
+    return True
 
 
 def _write_atomically(path: Path, text: str) -> None:

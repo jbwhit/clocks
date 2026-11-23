@@ -68,35 +68,6 @@ def test_an_unknown_name_is_a_usage_error(tmp_path: Path) -> None:
     assert raised.value.code == 2
 
 
-@pytest.mark.parametrize("spelling", ["same", "relative", "symlink"])
-def test_comparing_with_the_output_directory_is_a_usage_error(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    spelling: str,
-) -> None:
-    committed = tmp_path / "a"
-    committed.mkdir()
-    save_replay(
-        committed / "demo_1d.npz", demo_1d.record(n_observations=1, n_particles=16)
-    )
-    before = {p.name: p.read_bytes() for p in committed.iterdir()}
-    calls: list[str] = []
-    monkeypatch.setattr(record_replays, "record_demo", calls.append)
-    monkeypatch.chdir(tmp_path)
-    if spelling == "symlink":
-        (tmp_path / "link").symlink_to(committed, target_is_directory=True)
-    out = {"same": str(committed), "relative": "a/", "symlink": "link"}[spelling]
-
-    with pytest.raises(SystemExit) as raised:
-        record_replays.main(["--out", out, "--compare", str(committed), "demo_1d"])
-
-    assert raised.value.code == 2
-    assert "must differ from the output directory" in capsys.readouterr().err
-    assert calls == []
-    assert {p.name: p.read_bytes() for p in committed.iterdir()} == before
-
-
 def _is_case_insensitive(directory: Path) -> bool:
     probe = directory / "case-probe"
     probe.touch()
@@ -120,65 +91,160 @@ def _snapshot(root: Path) -> dict[str, tuple[str, bytes | str]]:
     return entries
 
 
-# Each case: (--out, --compare, --report) relative to tmp_path. The committed
-# archive is a/demo_1d.npz; "b" exists, and holds an earlier output only where
-# a link to it is the alias, so the report cases name files not yet written.
-_COLLISIONS = {
-    "case_variant_directory": ("A", "a", None),
-    "hard_linked_baseline": ("b", "a", None),
-    "symlinked_baseline": ("b", "a", None),
-    "symlinked_baseline_to_an_unwritten_output": ("b", "a", None),
-    "report_is_a_baseline": ("b", "a", "a/demo_1d.npz"),
-    "report_is_an_output": ("c", "a", "c/demo_1d.npz"),
-    "report_is_an_output_through_a_case_variant_directory": ("b", "a", "B/demo_1d.npz"),
-    "report_is_an_output_in_another_case": ("b", "a", "b/DEMO_1D.npz"),
-}
-_NEEDS_CASE_INSENSITIVE = {
-    "case_variant_directory",
-    "report_is_an_output_through_a_case_variant_directory",
-}
+def _small() -> Replay:
+    return demo_1d.record(n_observations=1, n_particles=16)
 
 
-@pytest.mark.parametrize("case", list(_COLLISIONS))
-def test_paths_that_name_one_file_are_a_usage_error(
+@pytest.mark.parametrize("spelling", ["same", "relative", "symlink", "case_variant"])
+def test_comparing_with_the_output_directory_is_a_usage_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    case: str,
+    spelling: str,
 ) -> None:
-    if case in _NEEDS_CASE_INSENSITIVE and not _is_case_insensitive(tmp_path):
+    if spelling == "case_variant" and not _is_case_insensitive(tmp_path):
         pytest.skip("a case-variant spelling names another directory here")
-    small = demo_1d.record(n_observations=1, n_particles=16)
-    (tmp_path / "a").mkdir()
-    (tmp_path / "b").mkdir()
-    baseline, output = tmp_path / "a" / "demo_1d.npz", tmp_path / "b" / "demo_1d.npz"
-    if case == "hard_linked_baseline":
-        save_replay(output, small)
-        baseline.hardlink_to(output)
-    elif case == "symlinked_baseline":
-        save_replay(output, small)
-        baseline.symlink_to(output)
-    elif case == "symlinked_baseline_to_an_unwritten_output":
-        baseline.symlink_to(output)
-    else:
-        save_replay(baseline, small)
-    before = _snapshot(tmp_path)
+    committed = tmp_path / "a"
+    committed.mkdir()
+    save_replay(committed / "demo_1d.npz", _small())
     calls: list[str] = []
     monkeypatch.setattr(record_replays, "record_demo", calls.append)
     monkeypatch.chdir(tmp_path)
-    out, compare, report = _COLLISIONS[case]
-    report_args = ["--report", report] if report is not None else []
+    if spelling == "symlink":
+        (tmp_path / "link").symlink_to(committed, target_is_directory=True)
+    before = _snapshot(tmp_path)
+    out = {
+        "same": str(committed),
+        "relative": "a/",
+        "symlink": "link",
+        "case_variant": "A",
+    }[spelling]
+
+    with pytest.raises(SystemExit) as raised:
+        record_replays.main(["--out", out, "--compare", str(committed), "demo_1d"])
+
+    assert raised.value.code == 2
+    assert "must differ from the output directory" in capsys.readouterr().err
+    assert calls == []
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("link", ["symlink", "hard_link"])
+def test_a_baseline_is_read_before_anything_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, link: str
+) -> None:
+    # The reviewer's scenario: the directories differ, so the courtesy check
+    # passes, but out/demo_1d.npz is the baseline file itself, and saving the
+    # recording overwrites the baseline.
+    small = _small()
+    committed, out, report = tmp_path / "a", tmp_path / "b", tmp_path / "report.md"
+    committed.mkdir()
+    out.mkdir()
+    save_replay(committed / "demo_1d.npz", small)
+    if link == "symlink":
+        (out / "demo_1d.npz").symlink_to(committed / "demo_1d.npz")
+    else:
+        (out / "demo_1d.npz").hardlink_to(committed / "demo_1d.npz")
+    mean = small.arrays["mean"].copy()
+    mean[0, 0] += 1e-3
+    different = Replay(small.meta, {**small.arrays, "mean": mean})
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: different)
+
+    status = _compare(committed, out, report)
+
+    lines = report.read_text().splitlines()
+    assert status == 1
+    assert any(line.startswith("demo_1d: differs at mean, row 0") for line in lines)
+
+
+def test_a_baseline_in_another_case_is_read_before_anything_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not _is_case_insensitive(tmp_path):
+        pytest.skip("a case-variant spelling names another directory here")
+    out = tmp_path / "new" / "inner"
+    compare = tmp_path.parent / tmp_path.name.upper() / "new" / "inner"
+    assert str(compare) != str(out)
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _small())
+
+    status = _compare(compare, out, tmp_path / "report.md")
+
+    lines = (tmp_path / "report.md").read_text().splitlines()
+    assert status == 1
+    assert "demo_1d: no committed archive" in lines
+    assert (out / "demo_1d.npz").exists()
+
+
+@pytest.mark.parametrize("name", ["x.npz", "X.NPZ"], ids=["lower", "upper"])
+def test_a_report_path_may_not_be_an_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(record_replays, "record_demo", calls.append)
 
     with pytest.raises(SystemExit) as raised:
         record_replays.main(
-            ["--out", out, "--compare", compare, *report_args, "demo_1d"]
+            ["--out", str(tmp_path / "b"), "--report", str(tmp_path / name), "demo_1d"]
         )
 
     assert raised.value.code == 2
-    err = capsys.readouterr().err
-    assert "must differ from the output directory" in err or "same file" in err
+    assert "must not be an archive" in capsys.readouterr().err
     assert calls == []
-    assert _snapshot(tmp_path) == before
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_report_path_that_is_a_directory_is_a_usage_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "reports").mkdir()
+    calls: list[str] = []
+    monkeypatch.setattr(record_replays, "record_demo", calls.append)
+
+    with pytest.raises(SystemExit) as raised:
+        record_replays.main(
+            [
+                "--out",
+                str(tmp_path / "b"),
+                "--report",
+                str(tmp_path / "reports"),
+                "demo_1d",
+            ]
+        )
+
+    assert raised.value.code == 2
+    assert "must be a file" in capsys.readouterr().err
+    assert calls == []
+    assert _snapshot(tmp_path) == {"reports": ("dir", "")}
+
+
+@pytest.mark.parametrize("link", ["symlink", "hard_link"])
+def test_the_report_replaces_a_link_without_touching_its_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    link: str,
+) -> None:
+    target, report = tmp_path / "archive.bin", tmp_path / "report.md"
+    target.write_bytes(b"not the report")
+    if link == "symlink":
+        report.symlink_to(target)
+    else:
+        report.hardlink_to(target)
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _small())
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+    )
+
+    assert status == 0
+    assert target.read_bytes() == b"not the report"
+    assert not report.is_symlink()
+    assert report.read_text(encoding="utf-8") == capsys.readouterr().out
 
 
 def test_a_report_beside_the_archives_is_not_a_collision(tmp_path: Path) -> None:
@@ -409,20 +475,6 @@ def test_the_report_directory_is_created(tmp_path: Path) -> None:
     assert any(line.startswith("run: ") for line in report.read_text().splitlines())
 
 
-def test_the_report_is_printed_before_it_is_written(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    unwritable = tmp_path / "a-directory"
-    unwritable.mkdir()
-
-    with pytest.raises(OSError):
-        record_replays.main(
-            ["--out", str(tmp_path / "b"), "--report", str(unwritable), "demo_1d"]
-        )
-
-    assert "run: " in capsys.readouterr().out
-
-
 def test_the_report_is_written_whole_and_leaves_nothing_beside_it(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -436,23 +488,31 @@ def test_the_report_is_written_whole_and_leaves_nothing_beside_it(
     assert report.read_text(encoding="utf-8") == capsys.readouterr().out
 
 
-def test_a_failed_write_leaves_the_previous_report_in_place(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_failed_write_is_reported_and_leaves_the_previous_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     report = tmp_path / "reports" / "report.md"
     report.parent.mkdir()
     report.write_text("the previous report\n", encoding="utf-8")
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _small())
 
     def interrupted(source: object, target: object) -> None:
         raise OSError("interrupted before the rename")
 
     monkeypatch.setattr(os, "replace", interrupted)
 
-    with pytest.raises(OSError, match="interrupted"):
-        record_replays.main(
-            ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
-        )
+    status = record_replays.main(
+        ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+    )
 
+    printed, errors = capsys.readouterr()
+    assert status == 1
+    assert "run: " in printed
+    assert errors == (
+        f"the report could not be written to {report}: interrupted before the rename\n"
+    )
     assert report.read_text(encoding="utf-8") == "the previous report\n"
     assert [p.name for p in report.parent.iterdir()] == ["report.md"]
 
