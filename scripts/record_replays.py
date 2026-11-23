@@ -33,6 +33,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TextIO
 
 import numpy as np
 
@@ -279,9 +280,10 @@ def _emit(text: str, report: Path | None) -> bool:
     """
     succeeded = True
     try:
-        print(text, end="")
-        sys.stdout.flush()
-    except OSError as error:
+        _print_to(sys.stdout, text)
+    # OSError: a closed pipe. ValueError: a closed file object, or text the
+    # stream's encoding cannot represent (UnicodeEncodeError).
+    except (OSError, ValueError) as error:
         succeeded = False
         _warn(f"the report could not be printed: {error}")
     if report is None:
@@ -300,11 +302,19 @@ def _emit(text: str, report: Path | None) -> bool:
     return succeeded
 
 
+def _print_to(stream: TextIO | None, text: str) -> None:
+    """Write and flush ``text``; a missing stream (``1>&-``) is an ``OSError``."""
+    if stream is None:
+        raise OSError("the stream is closed")
+    stream.write(text)
+    stream.flush()
+
+
 def _warn(message: str) -> None:
     """One line on standard error; nothing more can be done if that is gone too."""
     try:
-        print(message, file=sys.stderr)
-    except OSError:
+        _print_to(sys.stderr, message + "\n")
+    except (OSError, ValueError):
         pass
 
 

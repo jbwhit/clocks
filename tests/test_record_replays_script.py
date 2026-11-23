@@ -724,6 +724,61 @@ def test_a_closed_standard_output_does_not_stop_the_report_file(
     assert "could not be printed" in capsys.readouterr().err
 
 
+class _FailingStream:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def write(self, text: str) -> int:
+        raise self.error
+
+    def flush(self) -> None:
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        None,
+        UnicodeEncodeError("charmap", "é", 0, 1, "character maps to <undefined>"),
+        ValueError("I/O operation on closed file."),
+    ],
+    ids=["missing", "cannot_encode", "closed_file"],
+)
+def test_a_missing_or_unwritable_standard_output_does_not_stop_the_report_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: Exception | None,
+) -> None:
+    report = tmp_path / "report.md"
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _SMALL_1D)
+    monkeypatch.setattr(
+        sys, "stdout", None if stdout is None else _FailingStream(stdout)
+    )
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "out"), "--report", str(report), "demo_1d"]
+    )
+
+    assert status == 1
+    assert report.read_text(encoding="utf-8").startswith("run: ")
+
+
+def test_a_missing_standard_error_as_well_does_not_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = tmp_path / "report.md"
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _SMALL_1D)
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "out"), "--report", str(report), "demo_1d"]
+    )
+
+    assert status == 1
+    assert report.exists()
+
+
 def test_report_header_records_where_it_ran(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
