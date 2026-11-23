@@ -3,6 +3,7 @@
 No YAML library is a declared dependency, so the file is read line by line.
 """
 
+import os
 import shutil
 import subprocess
 import textwrap
@@ -167,6 +168,29 @@ def _run_last_step(
 
 _SUMMARY = "summary.md"
 _UNWRITABLE_SUMMARY = "no-such-directory/summary.md"
+
+
+def test_the_fence_closes_on_its_own_line_without_a_trailing_newline(
+    tmp_path: Path,
+) -> None:
+    stdout, summary = _run_last_step(tmp_path, "head: abc", "success", _SUMMARY)
+
+    assert summary == "```text\nhead: abc\n```\n"
+    assert "::warning" not in stdout
+
+
+def test_an_unreadable_report_gives_the_warning(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("permissions do not bind a process running as root")
+    report = tmp_path / "replay-report.md"
+    report.write_text("# report\n", encoding="utf-8")
+    report.chmod(0o000)
+    try:
+        stdout, _ = _run_last_step(tmp_path, None, "success", _SUMMARY)
+    finally:
+        report.chmod(0o644)
+
+    assert "the report for sample 2 could not be added to the summary" in stdout
 
 
 @pytest.mark.parametrize(
