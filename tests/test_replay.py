@@ -671,6 +671,36 @@ def test_a_failed_save_leaves_the_previous_archive(
     assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
 
 
+def test_a_failed_cleanup_does_not_mask_the_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "x.npz"
+    save_replay(path, Replay(*filter_fixture()))
+    before = path.read_bytes()
+
+    def disk_full(target: IO[bytes], **arrays: object) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    real_unlink = Path.unlink
+
+    def cannot_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".tmp"):
+            raise PermissionError("cannot remove")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(np, "savez_compressed", disk_full)
+    monkeypatch.setattr(Path, "unlink", cannot_unlink)
+    with pytest.raises(OSError, match="No space left") as raised:
+        save_replay(path, _another_replay())
+    monkeypatch.undo()
+
+    leftover = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+    assert raised.value.errno == errno.ENOSPC
+    assert len(leftover) == 1
+    assert any(str(leftover[0]) in note for note in raised.value.__notes__)
+    assert path.read_bytes() == before
+
+
 def test_save_replaces_an_existing_archive_whole(tmp_path: Path) -> None:
     path = tmp_path / "x.npz"
     save_replay(path, Replay(*filter_fixture()))

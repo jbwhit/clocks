@@ -111,8 +111,14 @@ def save_replay(path: Path, replay: Replay) -> None:
         with handle:  # a file object, so NumPy appends no suffix of its own
             np.savez_compressed(handle, meta=np.array(text), **replay.arrays)
         temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)  # gone already once it has replaced path
+    except BaseException as error:
+        # The write or the move failed: remove the temporary file, and if that
+        # fails too, keep the original error and say what was left behind.
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            error.add_note(f"{temporary} was left behind: {cleanup_error}")
+        raise
 
 
 def load_replay(path: Path) -> Replay:
