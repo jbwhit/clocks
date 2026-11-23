@@ -317,8 +317,8 @@ Five invariants tie the arrays the drawings use to the rest of each archive.
   panels draw the prior's bars, are checked. Shifting the first update's
   predictions by 0.02, or multiplying the final predicted standard
   deviations by ten, fails. The spread is tied only within a factor of 0.6
-  to 1.5, so a change of 40% in the width of the final prediction bars
-  passes (reviewer's measurement).
+  to 1.5, so a 40% widening of the final prediction bars passes (reviewer's
+  measurement; a 40% narrowing fails for all three demos).
 - For the same three demos, the final predictions are within half a
   `predicted_std` of the forward model at the final mean. This ties the
   predictions to the displayed estimate, which the dots check cannot:

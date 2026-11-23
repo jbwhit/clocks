@@ -5,7 +5,11 @@ With ``--compare DIR`` it also compares each fresh recording in full with
 ``DIR/<demo>.npz``, every one of which is read before anything is written, and
 prints a short report, writing it to ``--report FILE`` as well when given.
 ``DIR`` must not be the output directory, and ``FILE`` must not end in
-``.npz``. A demo whose
+``.npz``. Whatever the name, the report is never written over a file that
+holds an archive (checked just before the rename, so an archive the run
+itself saved through a link is protected too): the report is printed, one
+line on standard error says it was not written, and the exit status is 1. A
+demo whose
 recording fails gets a ``recording failed`` line, with or without
 ``--compare``, one whose comparison fails a ``comparison failed`` line, and
 the others still run. The exit status
@@ -25,6 +29,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -44,6 +49,10 @@ from clocks._replay import (
 def record_demo(name: str) -> Replay:
     """Run the packaged inference of the named demo and return its replay."""
     return importlib.import_module(f"clocks._demos.{name}").record()
+
+
+class _ArchiveInTheWay(Exception):
+    """The report's destination holds a replay archive, which it must not replace."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -199,7 +208,7 @@ def _emit(text: str, report: Path | None) -> bool:
     """Print the report, then write it; return False if the write failed.
 
     Printed first, so a failed write loses nothing; the failure is one line on
-    standard error.
+    standard error. A destination that holds an archive is left as it is.
     """
     print(text, end="")
     if report is None:
@@ -209,6 +218,12 @@ def _emit(text: str, report: Path | None) -> bool:
     except OSError as error:
         print(f"the report could not be written to {report}: {error}", file=sys.stderr)
         return False
+    except _ArchiveInTheWay:
+        print(
+            f"the report was not written because {report} holds an archive",
+            file=sys.stderr,
+        )
+        return False
     return True
 
 
@@ -216,7 +231,9 @@ def _write_atomically(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` whole or not at all.
 
     The text goes to a temporary file beside ``path`` that is then renamed over
-    it, so a reader never sees a partial report.
+    it, so a reader never sees a partial report. Raises ``_ArchiveInTheWay``,
+    leaving ``path`` untouched, when ``path`` is a ZIP file: every replay
+    archive is one, and no text report is.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
@@ -231,6 +248,8 @@ def _write_atomically(path: Path, text: str) -> None:
     try:
         with handle:
             handle.write(text)
+        if zipfile.is_zipfile(path):
+            raise _ArchiveInTheWay(str(path))
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)  # gone already once it has replaced path

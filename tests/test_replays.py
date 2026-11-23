@@ -1,7 +1,9 @@
 """The committed replay archives: invariants on the files, and the gate.
 
 The invariants read only the committed files. The gate re-records each demo
-and requires its inputs to match the archive exactly. For the six filter
+and requires its inputs to match the archive: the clock positions, true
+parameters and (for model comparison) model orders and prior exactly, the
+computed rates and observations at ``rtol=1e-12, atol=1e-12``. For the six filter
 demos it also requires the posterior summaries after observations 1, 8 and the
 last to match within ``BOUNDS`` (``DENSITY_BOUNDS`` for density); for
 ``demo_model_comparison`` it checks the three conditions on the model

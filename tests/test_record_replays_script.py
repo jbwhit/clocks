@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from clocks import WeightRoundingUndecided
-from clocks._demos import demo_1d
+from clocks._demos import demo_1d, demo_2d
 from clocks._replay import DEMOS, Replay, load_replay, save_replay
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "record_replays.py"
@@ -93,6 +93,10 @@ def _snapshot(root: Path) -> dict[str, tuple[str, bytes | str]]:
 
 def _small() -> Replay:
     return demo_1d.record(n_observations=1, n_particles=16)
+
+
+_SMALL_1D = _small()
+_SMALL_2D = demo_2d.record(n_observations=1, n_particles=16)
 
 
 @pytest.mark.parametrize("spelling", ["same", "relative", "symlink", "case_variant"])
@@ -245,6 +249,77 @@ def test_the_report_replaces_a_link_without_touching_its_target(
     assert target.read_bytes() == b"not the report"
     assert not report.is_symlink()
     assert report.read_text(encoding="utf-8") == capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "case", ["baseline_behind_a_symlink", "output_behind_a_symlink"]
+)
+def test_the_report_never_replaces_an_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+) -> None:
+    # The report path has a text suffix, but a link makes it the very file an
+    # archive is stored in; the rename would replace that file with report text.
+    small = _small()
+    shared, recorded, baseline = (
+        tmp_path / "shared",
+        tmp_path / "recorded",
+        tmp_path / "baseline",
+    )
+    for directory in (shared, recorded, baseline):
+        directory.mkdir()
+    report = shared / "report.md"
+    if case == "baseline_behind_a_symlink":
+        save_replay(tmp_path / "x.npz", small)
+        (tmp_path / "x.npz").rename(report)
+        archive = baseline / "demo_1d.npz"
+        archive.symlink_to(report)
+        extra = ["--compare", str(baseline)]
+    else:
+        archive = recorded / "demo_1d.npz"
+        archive.symlink_to(report)  # dangling: the recording will create report.md
+        extra = []
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: small)
+
+    status = record_replays.main(
+        ["--out", str(recorded), *extra, "--report", str(report), "demo_1d"]
+    )
+
+    printed, errors = capsys.readouterr()
+    assert status == 1
+    assert printed.startswith("run: ")
+    assert str(report) in errors
+    assert "holds an archive" in errors
+    assert load_replay(archive).meta == small.meta
+    assert sorted(p.name for p in shared.iterdir()) == ["report.md"]
+
+
+def test_baselines_are_all_read_before_any_demo_is_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The first demo's output is a link to the second demo's baseline, so
+    # recording the first rewrites that baseline; the second demo must still be
+    # compared with the baseline as it stood when the run began.
+    recorded, baseline = tmp_path / "recorded", tmp_path / "baseline"
+    recorded.mkdir()
+    baseline.mkdir()
+    save_replay(baseline / "demo_2d.npz", _SMALL_2D)
+    (recorded / "demo_1d.npz").symlink_to(baseline / "demo_2d.npz")
+    stubs = {"demo_1d": _SMALL_1D, "demo_2d": _SMALL_2D}
+    monkeypatch.setattr(record_replays, "record_demo", stubs.__getitem__)
+
+    status = record_replays.main(
+        ["--out", str(recorded), "--compare", str(baseline), "demo_1d", "demo_2d"]
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "demo_1d: no committed archive" in lines
+    assert "demo_2d: reproduced" in lines
+    assert status == 1
 
 
 def test_a_report_beside_the_archives_is_not_a_collision(tmp_path: Path) -> None:
