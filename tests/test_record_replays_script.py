@@ -520,6 +520,29 @@ def test_a_baseline_linked_into_the_output_directory_keeps_its_content(
     assert load_replay(baseline / "demo_1d.npz").meta == _SMALL_1D.meta
 
 
+def test_an_exceptions_notes_are_in_the_demo_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def failing_write(path: Path, replay: Replay) -> None:
+        error = OSError(errno.ENOSPC, "No space left on device")
+        error.add_note("/out/.demo_1d.npz.x.tmp was left behind: cannot remove")
+        raise error
+
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _SMALL_1D)
+    monkeypatch.setattr(record_replays, "create_replay", failing_write)
+
+    status = record_replays.main(["--out", str(tmp_path / "out")] + ["demo_1d"])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert status == 1
+    assert (
+        "demo_1d: recording failed: OSError: [Errno 28] No space left on device "
+        "/out/.demo_1d.npz.x.tmp was left behind: cannot remove"
+    ) in lines
+
+
 def test_a_report_beside_the_archives_is_not_a_collision(tmp_path: Path) -> None:
     a, b = tmp_path / "a", tmp_path / "b"
     _record_into(a)

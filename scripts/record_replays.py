@@ -144,7 +144,7 @@ def _read_baseline(committed_dir: Path, name: str) -> Replay | str:
     # The report must be written when its surroundings are broken; this is the
     # outermost per-demo boundary, and the error is reported and fails the run.
     except Exception as error:
-        return f"comparison failed: {type(error).__name__}: {error}"
+        return f"comparison failed: {_describe_error(error)}"
 
 
 def _record_and_compare(
@@ -165,7 +165,7 @@ def _record_and_compare(
         recorded = _record_and_save(name, out, write)
     # As in _read_baseline: reported with its type, counted as a failure.
     except Exception as error:
-        return f"recording failed: {type(error).__name__}: {error}"
+        return f"recording failed: {_describe_error(error)}"
     if baseline is None:
         return None
     if isinstance(baseline, str):
@@ -174,7 +174,13 @@ def _record_and_compare(
         return _describe(first_difference(baseline, recorded))
     # As above: reported with its type, counted as a failure, others carry on.
     except Exception as error:
-        return f"comparison failed: {type(error).__name__}: {error}"
+        return f"comparison failed: {_describe_error(error)}"
+
+
+def _describe_error(error: Exception) -> str:
+    """``Type: message`` followed by the exception's notes, if it has any."""
+    notes = getattr(error, "__notes__", ())
+    return " ".join([f"{type(error).__name__}: {error}", *notes])
 
 
 def _record_and_save(
