@@ -252,27 +252,42 @@ def _blas() -> str:
 
 
 def _emit(text: str, report: Path | None) -> bool:
-    """Print the report, then write it; return False if the write failed.
+    """Print the report and write it, each regardless of the other.
 
-    Printed first, so a failed write loses nothing; the failure is one line on
-    standard error. Anything at ``report`` is left untouched.
+    Returns True only if everything attempted succeeded. A failed print (a
+    closed pipe, say) does not stop the file being written, and a failed write
+    loses nothing already printed; each failure is one line on standard error,
+    if that is still open. Anything at ``report`` is left untouched.
     """
-    print(text, end="")
+    succeeded = True
+    try:
+        print(text, end="")
+        sys.stdout.flush()
+    except OSError as error:
+        succeeded = False
+        _warn(f"the report could not be printed: {error}")
     if report is None:
-        return True
+        return succeeded
     try:
         _create_atomically(report, text)
     except FileExistsError:
-        print(
+        succeeded = False
+        _warn(
             f"the report could not be written to {report}: it already exists "
-            f"and was left untouched; {_FREE_PATH_ADVICE}",
-            file=sys.stderr,
+            f"and was left untouched; {_FREE_PATH_ADVICE}"
         )
-        return False
     except OSError as error:
-        print(f"the report could not be written to {report}: {error}", file=sys.stderr)
-        return False
-    return True
+        succeeded = False
+        _warn(f"the report could not be written to {report}: {error}")
+    return succeeded
+
+
+def _warn(message: str) -> None:
+    """One line on standard error; nothing more can be done if that is gone too."""
+    try:
+        print(message, file=sys.stderr)
+    except OSError:
+        pass
 
 
 def _create_atomically(path: Path, text: str) -> None:

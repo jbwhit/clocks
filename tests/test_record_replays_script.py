@@ -1,3 +1,4 @@
+import errno
 import importlib.util
 import io
 import os
@@ -652,6 +653,32 @@ def test_a_baseline_member_name_cannot_forge_a_report_line(
 
     _assert_one_line_per_value(capsys.readouterr().out, header + 1)
     assert status == 1
+
+
+def test_a_closed_standard_output_does_not_stop_the_report_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class ClosedPipe:
+        def write(self, text: str) -> int:
+            raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+
+        def flush(self) -> None:
+            raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+
+    report = tmp_path / "report.md"
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _SMALL_1D)
+    monkeypatch.setattr(sys, "stdout", ClosedPipe())
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "out"), "--report", str(report), "demo_1d"]
+    )
+
+    assert status == 1
+    assert report.read_text(encoding="utf-8").startswith("run: ")
+    assert report.read_text(encoding="utf-8").endswith("\n")
+    assert "could not be printed" in capsys.readouterr().err
 
 
 def test_report_header_records_where_it_ran(
