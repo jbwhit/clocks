@@ -134,12 +134,14 @@ def test_comparing_with_the_output_directory_is_a_usage_error(
 
 
 @pytest.mark.parametrize("link", ["symlink", "hard_link"])
-def test_a_baseline_is_read_before_anything_is_written(
+def test_an_output_linked_to_a_baseline_does_not_overwrite_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, link: str
 ) -> None:
-    # The reviewer's scenario: the directories differ, so the courtesy check
-    # passes, but out/demo_1d.npz is the baseline file itself, and saving the
-    # recording overwrites the baseline.
+    # The directories differ, so the courtesy check passes, but out/demo_1d.npz
+    # is a link to the baseline file. Saving puts a new file at the output path
+    # instead of writing through the link, so the baseline keeps its bytes and
+    # the comparison is with it. (Reading order is tested by
+    # test_baselines_are_all_read_before_any_demo_is_recorded.)
     small = _small()
     committed, out, report = tmp_path / "a", tmp_path / "b", tmp_path / "report.md"
     committed.mkdir()
@@ -149,6 +151,7 @@ def test_a_baseline_is_read_before_anything_is_written(
         (out / "demo_1d.npz").symlink_to(committed / "demo_1d.npz")
     else:
         (out / "demo_1d.npz").hardlink_to(committed / "demo_1d.npz")
+    baseline_bytes = (committed / "demo_1d.npz").read_bytes()
     mean = small.arrays["mean"].copy()
     mean[0, 0] += 1e-3
     different = Replay(small.meta, {**small.arrays, "mean": mean})
@@ -159,6 +162,8 @@ def test_a_baseline_is_read_before_anything_is_written(
     lines = report.read_text().splitlines()
     assert status == 1
     assert any(line.startswith("demo_1d: differs at mean, row 0") for line in lines)
+    assert (committed / "demo_1d.npz").read_bytes() == baseline_bytes
+    assert not (out / "demo_1d.npz").is_symlink()
 
 
 def test_a_baseline_in_another_case_is_read_before_anything_is_written(
@@ -329,55 +334,32 @@ def test_a_baseline_behind_a_link_at_the_report_path_is_refused(
     assert load_replay(baseline / "demo_1d.npz").meta == small.meta
 
 
-def test_an_output_archive_linked_to_the_report_path_survives(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # The path is free at parse time; saving the recording through the link
-    # creates the file there, and the report must then not replace it.
-    small = _small()
-    shared, recorded = tmp_path / "shared", tmp_path / "recorded"
-    shared.mkdir()
-    recorded.mkdir()
-    report = shared / "report.md"
-    (recorded / "demo_1d.npz").symlink_to(report)
-    monkeypatch.setattr(record_replays, "record_demo", lambda name: small)
-
-    status = record_replays.main(
-        ["--out", str(recorded), "--report", str(report), "demo_1d"]
-    )
-
-    printed, errors = capsys.readouterr()
-    assert status == 1
-    assert printed.startswith("run: ")
-    assert "it already exists" in errors
-    assert load_replay(recorded / "demo_1d.npz").meta == small.meta
-
-
 def test_baselines_are_all_read_before_any_demo_is_recorded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # The first demo's output is a link to the second demo's baseline, so
-    # recording the first rewrites that baseline; the second demo must still be
-    # compared with the baseline as it stood when the run began.
-    recorded, baseline = tmp_path / "recorded", tmp_path / "baseline"
-    recorded.mkdir()
-    baseline.mkdir()
-    save_replay(baseline / "demo_2d.npz", _SMALL_2D)
-    (recorded / "demo_1d.npz").symlink_to(baseline / "demo_2d.npz")
-    stubs = {"demo_1d": _SMALL_1D, "demo_2d": _SMALL_2D}
+    # Same directory for --out and --compare (the courtesy check is disabled),
+    # so each save overwrites that demo's baseline. Read after the saves, every
+    # comparison would be of a recording with itself and say "reproduced".
+    monkeypatch.setattr(record_replays, "_same_directory", lambda out, compare: False)
+    stubs = {}
+    for name, small in (("demo_1d", _SMALL_1D), ("demo_2d", _SMALL_2D)):
+        save_replay(tmp_path / f"{name}.npz", small)
+        stubs[name] = Replay(
+            {**small.meta, "seed": small.meta["seed"] + 1}, small.arrays
+        )
     monkeypatch.setattr(record_replays, "record_demo", stubs.__getitem__)
 
     status = record_replays.main(
-        ["--out", str(recorded), "--compare", str(baseline), "demo_1d", "demo_2d"]
+        ["--out", str(tmp_path), "--compare", str(tmp_path), "demo_1d", "demo_2d"]
     )
 
     lines = capsys.readouterr().out.splitlines()
-    assert "demo_1d: no committed archive" in lines
-    assert "demo_2d: reproduced" in lines
+    assert [line for line in lines if line.startswith("demo_")] == [
+        "demo_1d: differs at meta",
+        "demo_2d: differs at meta",
+    ]
     assert status == 1
 
 

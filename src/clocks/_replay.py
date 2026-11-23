@@ -9,6 +9,7 @@ loads is shaped exactly as the format says.
 import json
 import math
 import platform
+import tempfile
 import zipfile
 import zlib
 from collections.abc import Callable, Mapping, Sequence
@@ -88,13 +89,30 @@ def validate_replay(replay: Replay, source: str = "<memory>") -> None:
 
 
 def save_replay(path: Path, replay: Replay) -> None:
-    """Validate ``replay`` and write it to ``path``, which must end in ``.npz``."""
+    """Validate ``replay`` and write it to ``path``, which must end in ``.npz``.
+
+    ``path`` is replaced whole or left untouched: the archive is written to a
+    temporary file beside it and moved into place once complete, so a failed
+    write (a full disk, say) cannot truncate an existing archive.
+    """
     validate_replay(replay, str(path))
     if path.suffix != ".npz":
         # np.savez_compressed would silently append the suffix and write elsewhere.
         raise ValueError(f"{path}: path: expected a .npz suffix, got {path.suffix!r}")
     text = json.dumps(dict(replay.meta), ensure_ascii=False, sort_keys=True)
-    np.savez_compressed(path, meta=np.array(text), **replay.arrays)
+    handle = tempfile.NamedTemporaryFile(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:  # a file object, so NumPy appends no suffix of its own
+            np.savez_compressed(handle, meta=np.array(text), **replay.arrays)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)  # gone already once it has replaced path
 
 
 def load_replay(path: Path) -> Replay:

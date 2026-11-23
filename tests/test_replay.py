@@ -1,9 +1,11 @@
+import errno
 import json
 import re
 import struct
 import zipfile
 import zlib
 from pathlib import Path
+from typing import IO
 
 import numpy as np
 import pytest
@@ -637,6 +639,47 @@ def test_save_refuses_an_invalid_replay(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="mean"):
         save_replay(path, Replay(meta, arrays))
     assert not path.exists()
+
+
+def _another_replay() -> Replay:
+    meta, arrays = filter_fixture()
+    return Replay({**meta, "seed": meta["seed"] + 1}, arrays)
+
+
+def test_a_failed_save_leaves_the_previous_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "x.npz"
+    first = Replay(*filter_fixture())
+    save_replay(path, first)
+    before = path.read_bytes()
+
+    def disk_full(target: IO[bytes] | Path, **arrays: object) -> None:
+        # Like NumPy: a path is opened for writing (truncating), a file is used.
+        if isinstance(target, Path):
+            target = target.open("wb")
+        target.write(b"PK a few bytes")
+        target.flush()
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(np, "savez_compressed", disk_full)
+    with pytest.raises(OSError, match="No space left"):
+        save_replay(path, _another_replay())
+
+    assert path.read_bytes() == before
+    assert load_replay(path).meta == first.meta
+    assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
+
+
+def test_save_replaces_an_existing_archive_whole(tmp_path: Path) -> None:
+    path = tmp_path / "x.npz"
+    save_replay(path, Replay(*filter_fixture()))
+    second = _another_replay()
+
+    save_replay(path, second)
+
+    assert load_replay(path).meta == second.meta
+    assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
 
 
 # --- thin and record_filter --------------------------------------------------
