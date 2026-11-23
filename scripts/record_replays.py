@@ -4,12 +4,11 @@ Writes ``<out>/<demo>.npz`` for each requested demo (all seven by default).
 With ``--compare DIR`` it also compares each fresh recording in full with
 ``DIR/<demo>.npz``, every one of which is read before anything is written, and
 prints a short report, writing it to ``--report FILE`` as well when given.
-``DIR`` must not be the output directory, and ``FILE`` must not end in
-``.npz``. The report replaces only a previous report: just before the
-rename the destination must be absent or begin with this script's report
-header. Anything else there (an archive, an empty or unreadable file) is left
-untouched, the report is printed, one line on standard error says it was not
-written, and the exit status is 1. A demo whose
+``DIR`` must not be the output directory, ``FILE`` must not end in ``.npz``,
+and nothing may exist at ``FILE``: the report is created, never replaced (a
+usage error up front, and the file is put in place with a hard link, which
+fails rather than replace, in case something appears during the run). A demo
+whose
 recording fails gets a ``recording failed`` line, with or without
 ``--compare``, one whose comparison fails a ``comparison failed`` line, and
 the others still run. The exit status
@@ -50,13 +49,6 @@ def record_demo(name: str) -> Replay:
     return importlib.import_module(f"clocks._demos.{name}").record()
 
 
-_REPORT_HEADER = "run: "  # how every report begins; _report_text and the guard agree
-
-
-class _NotAPreviousReport(Exception):
-    """The report's destination exists and is not a previous report."""
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     names = args.demos or DEMOS
@@ -79,6 +71,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0 if written and reproduced else 1
 
 
+_FREE_PATH_ADVICE = "remove it or choose another path"
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", type=Path, required=True, help="directory to write")
@@ -96,8 +91,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         )
     if args.report is not None and args.report.suffix.lower() == ".npz":
         parser.error(f"--report must not be an archive (.npz), got {args.report}")
-    if args.report is not None and args.report.is_dir():
-        parser.error(f"--report must be a file, got the directory {args.report}")
+    if args.report is not None and os.path.lexists(args.report):
+        # lexists: a link to nothing is an entry too. Nothing is inspected, so
+        # an archive, a FIFO or an unreadable file at the path is all one case.
+        parser.error(f"--report {args.report} already exists; {_FREE_PATH_ADVICE}")
     return args
 
 
@@ -173,7 +170,7 @@ def _describe(difference: Difference | None) -> str:
 
 def _report_text(outcomes: Sequence[tuple[str, str]]) -> str:
     lines = [
-        f"{_REPORT_HEADER}{os.environ.get('GITHUB_RUN_ID', 'local')}",
+        f"run: {os.environ.get('GITHUB_RUN_ID', 'local')}",
         f"head: {os.environ.get('REPLAY_HEAD_SHA', 'unknown')}",
         f"checkout: {_checkout_sha()}",
         *(f"{key}: {value}" for key, value in provenance().items()),
@@ -210,33 +207,33 @@ def _emit(text: str, report: Path | None) -> bool:
     """Print the report, then write it; return False if the write failed.
 
     Printed first, so a failed write loses nothing; the failure is one line on
-    standard error. A destination that is not a previous report is left as it is.
+    standard error. Anything at ``report`` is left untouched.
     """
     print(text, end="")
     if report is None:
         return True
     try:
-        _write_atomically(report, text)
-    except OSError as error:
-        print(f"the report could not be written to {report}: {error}", file=sys.stderr)
-        return False
-    except _NotAPreviousReport as error:
+        _create_atomically(report, text)
+    except FileExistsError:
         print(
-            f"the report was not written because {report} exists and is not a "
-            f"previous report{error}; remove it or choose another path",
+            f"the report could not be written to {report}: it already exists "
+            f"and was left untouched; {_FREE_PATH_ADVICE}",
             file=sys.stderr,
         )
+        return False
+    except OSError as error:
+        print(f"the report could not be written to {report}: {error}", file=sys.stderr)
         return False
     return True
 
 
-def _write_atomically(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` whole or not at all.
+def _create_atomically(path: Path, text: str) -> None:
+    """Create ``path`` holding ``text`` whole, or not at all; never replace.
 
-    The text goes to a temporary file beside ``path`` that is then renamed over
-    it, so a reader never sees a partial report. Raises ``_NotAPreviousReport``,
-    leaving ``path`` untouched, unless ``path`` is absent or begins with the
-    report header.
+    The text goes to a temporary file beside ``path`` that is then hard-linked
+    to ``path``: ``os.link`` fails with ``FileExistsError`` when any directory
+    entry is there, so nothing can be replaced, and a reader never sees a
+    partial report.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
@@ -251,22 +248,9 @@ def _write_atomically(path: Path, text: str) -> None:
     try:
         with handle:
             handle.write(text)
-        _require_absent_or_previous_report(path)
-        temporary.replace(path)
+        os.link(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)  # gone already once it has replaced path
-
-
-def _require_absent_or_previous_report(path: Path) -> None:
-    try:
-        with path.open("rb") as existing:
-            first_line = existing.readline(len(_REPORT_HEADER))
-    except FileNotFoundError:  # absent, or a link to nothing: create it
-        return
-    except OSError as error:
-        raise _NotAPreviousReport(f" (could not be read: {error})") from error
-    if not first_line.startswith(_REPORT_HEADER.encode()):
-        raise _NotAPreviousReport("")
+        temporary.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
