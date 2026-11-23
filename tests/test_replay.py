@@ -1,5 +1,6 @@
 import errno
 import json
+import os
 import re
 import struct
 import zipfile
@@ -759,6 +760,25 @@ def test_a_successful_write_unlinks_no_name_but_the_one_a_link_leaves(
 
     # A replace leaves no temporary name to remove; a link leaves exactly one.
     assert len(unlinked) == (1 if writer is create_replay else 0)
+    assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
+
+
+def test_create_succeeds_when_the_temporary_name_is_already_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_link = os.link
+
+    def link_then_lose_the_temporary_name(source: Path, target: Path) -> None:
+        real_link(source, target)
+        Path(source).unlink()  # another process removes it first
+
+    monkeypatch.setattr(os, "link", link_then_lose_the_temporary_name)
+    path = tmp_path / "x.npz"
+
+    create_replay(path, Replay(*filter_fixture()))
+
+    monkeypatch.undo()
+    assert load_replay(path).meta == Replay(*filter_fixture()).meta
     assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
 
 

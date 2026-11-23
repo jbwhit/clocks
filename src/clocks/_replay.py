@@ -113,10 +113,12 @@ def _link_and_forget(temporary: Path, path: Path) -> None:
     """Link ``temporary`` to ``path``, then remove the temporary name.
 
     After a link the temporary is a second name for the finished file, so this
-    is the one success path on which it still exists and must be removed.
+    is the one success path on which it still exists and must be removed. Its
+    already being gone (another process removed it) is not a failure: the
+    archive is published.
     """
     os.link(temporary, path)
-    temporary.unlink()
+    temporary.unlink(missing_ok=True)
 
 
 def _write_archive(
