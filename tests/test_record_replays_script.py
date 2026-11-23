@@ -630,6 +630,43 @@ def test_a_failed_write_is_reported_and_leaves_nothing_beside_it(
     assert list(report.parent.iterdir()) == []
 
 
+def test_a_leftover_temporary_file_is_named_without_masking_the_write_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = tmp_path / "report.md"
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _small())
+
+    def interrupted(source: object, target: object) -> None:
+        raise OSError("interrupted before the link")
+
+    real_unlink = Path.unlink
+
+    def cannot_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".tmp") and self.parent == tmp_path:
+            raise PermissionError("cannot remove")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "link", interrupted)
+    monkeypatch.setattr(Path, "unlink", cannot_unlink)
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "b"), "--report", str(report), "demo_1d"]
+    )
+
+    errors = capsys.readouterr().err.splitlines()
+    leftover = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+    assert status == 1
+    assert len(leftover) == 1
+    assert errors == [
+        f"the temporary file {leftover[0]} could not be removed: cannot remove",
+        f"the report could not be written to {report}: interrupted before the link",
+    ]
+    monkeypatch.undo()
+    leftover[0].unlink()
+
+
 def test_a_numpy_without_build_config_gives_unknown_blas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
