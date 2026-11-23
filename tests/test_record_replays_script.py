@@ -1,8 +1,10 @@
 import importlib.util
+import io
 import os
 import platform
 import subprocess
 import sys
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -594,6 +596,62 @@ def test_a_missing_or_unreadable_archive_is_reported(tmp_path: Path, kind: str) 
     )
     assert any(line.startswith(expected) for line in report.read_text().splitlines())
     assert (b / "demo_1d.npz").exists()
+
+
+_FORGED = "demo_1d: reproduced"
+
+
+def _assert_one_line_per_value(text: str, lines_expected: int) -> None:
+    lines = text.splitlines()
+    assert len(lines) == lines_expected, lines
+    assert _FORGED not in lines
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r", "\x85", "\u2028", "\x0b", "\x1c"])
+def test_an_outcome_cannot_start_a_line_of_its_own(separator: str) -> None:
+    header = len(record_replays._report_text([]).splitlines())
+    outcome = f"committed archive unreadable: bad{separator}{_FORGED}"
+
+    text = record_replays._report_text([("demo_1d", outcome)])
+
+    _assert_one_line_per_value(text, header + 1)
+    assert "committed archive unreadable: bad" in text
+
+
+def test_a_head_from_the_environment_cannot_start_a_line_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    header = len(record_replays._report_text([]).splitlines())
+    monkeypatch.setenv("REPLAY_HEAD_SHA", f"abc\n{_FORGED}")
+
+    text = record_replays._report_text([("demo_1d", "differs at mean")])
+
+    _assert_one_line_per_value(text, header + 1)
+    assert "head: abc\\n" + _FORGED in text
+
+
+def test_a_baseline_member_name_cannot_forge_a_report_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    meta = io.BytesIO()
+    np.save(meta, np.array("{}"))
+    with zipfile.ZipFile(baseline / "demo_1d.npz", "w") as archive:
+        archive.writestr("meta.npy", meta.getvalue())
+        # Not an .npy member, so the diagnostic quotes the member's name.
+        archive.writestr(f"bad\n{_FORGED}", b"not an array")
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _SMALL_1D)
+    header = len(record_replays._report_text([]).splitlines())
+
+    status = record_replays.main(
+        ["--out", str(tmp_path / "out"), "--compare", str(baseline), "demo_1d"]
+    )
+
+    _assert_one_line_per_value(capsys.readouterr().out, header + 1)
+    assert status == 1
 
 
 def test_report_header_records_where_it_ran(

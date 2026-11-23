@@ -199,15 +199,33 @@ def _describe(difference: Difference | None) -> str:
 
 
 def _report_text(outcomes: Sequence[tuple[str, str]]) -> str:
+    """The report: ``key: value`` lines, every value on one line.
+
+    Values can carry text from outside (an unreadable archive's member names, an
+    environment variable), so ``_one_line`` keeps any of it from starting a line
+    of its own, such as a forged ``demo_1d: reproduced``.
+    """
     lines = [
-        f"run: {os.environ.get('GITHUB_RUN_ID', 'local')}",
-        f"head: {os.environ.get('REPLAY_HEAD_SHA', 'unknown')}",
-        f"checkout: {_checkout_sha()}",
-        *(f"{key}: {value}" for key, value in provenance().items()),
-        f"blas: {_blas()}",
-        *(f"{name}: {outcome}" for name, outcome in outcomes),
+        f"run: {_one_line(os.environ.get('GITHUB_RUN_ID', 'local'))}",
+        f"head: {_one_line(os.environ.get('REPLAY_HEAD_SHA', 'unknown'))}",
+        f"checkout: {_one_line(_checkout_sha())}",
+        *(f"{key}: {_one_line(str(value))}" for key, value in provenance().items()),
+        f"blas: {_one_line(_blas())}",
+        *(f"{name}: {_one_line(outcome)}" for name, outcome in outcomes),
     ]
     return "\n".join(lines) + "\n"
+
+
+def _one_line(text: str) -> str:
+    """``text`` with every character that is not printable escaped.
+
+    Escaping by printability, not from a short list, because ``str.splitlines``
+    breaks lines at more than ``\\n`` and ``\\r`` (``\\x0b``, ``\\x85``, U+2028, ...).
+    """
+    return "".join(
+        ch if ch.isprintable() or ch == " " else ch.encode("unicode_escape").decode()
+        for ch in text
+    )
 
 
 def _checkout_sha() -> str:
