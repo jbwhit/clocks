@@ -642,6 +642,26 @@ def test_an_outcome_cannot_start_a_line_of_its_own(separator: str) -> None:
     assert "committed archive unreadable: bad" in text
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "<br/>demo_1d: reproduced<br/>",
+        "```\ndemo_1d: reproduced\n```",
+        "&amp; &#10;",
+        "caf\u00e9 \u0434",
+    ],
+    ids=["html", "fence", "entity", "non_ascii"],
+)
+def test_a_value_is_plain_ascii_without_markup(value: str) -> None:
+    header = len(record_replays._report_text([]).splitlines())
+
+    text = record_replays._report_text([("demo_1d", f"bad: {value}")])
+
+    _assert_one_line_per_value(text, header + 1)
+    assert text.isascii()
+    assert not set("`<>&") & set(text)
+
+
 def test_a_head_from_the_environment_cannot_start_a_line_of_its_own(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

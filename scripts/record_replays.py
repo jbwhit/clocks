@@ -205,11 +205,11 @@ def _describe(difference: Difference | None) -> str:
 
 
 def _report_text(outcomes: Sequence[tuple[str, str]]) -> str:
-    """The report: ``key: value`` lines, every value on one line.
+    """The report: ``key: value`` lines, every value plain one-line ASCII.
 
-    Values can carry text from outside (an unreadable archive's member names, an
-    environment variable), so ``_one_line`` keeps any of it from starting a line
-    of its own, such as a forged ``demo_1d: reproduced``.
+    Values can carry text from outside, so ``_one_line`` keeps any of it from
+    starting a line of its own, such as a forged ``demo_1d: reproduced``, or
+    carrying markup.
     """
     lines = [
         f"run: {_one_line(os.environ.get('GITHUB_RUN_ID', 'local'))}",
@@ -222,16 +222,28 @@ def _report_text(outcomes: Sequence[tuple[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _one_line(text: str) -> str:
-    """``text`` with every character that is not printable escaped.
+_MARKUP = set("`<>&")
 
-    Escaping by printability, not from a short list, because ``str.splitlines``
-    breaks lines at more than ``\\n`` and ``\\r`` (``\\x0b``, ``\\x85``, U+2028, ...).
+
+def _one_line(text: str) -> str:
+    """``text`` as plain ASCII that cannot start a line or carry markup.
+
+    A character is kept only if it is printable ASCII and not a backtick,
+    ``<``, ``>`` or ``&``; every other character is backslash-escaped. So a
+    value (an unreadable archive's member names, an exception message, an
+    environment variable) can neither begin a line of its own (``str.splitlines``
+    breaks at more than newline and carriage return) nor, in the Markdown of a
+    job summary, begin one or close a code fence. A backslash stays as it is.
     """
-    return "".join(
-        ch if ch.isprintable() or ch == " " else ch.encode("unicode_escape").decode()
-        for ch in text
-    )
+    return "".join(_escaped(ch) for ch in text)
+
+
+def _escaped(ch: str) -> str:
+    if " " <= ch <= "~" and ch not in _MARKUP:
+        return ch
+    if ch in _MARKUP:
+        return f"\\x{ord(ch):02x}"
+    return ch.encode("unicode_escape").decode("ascii")
 
 
 def _checkout_sha() -> str:
