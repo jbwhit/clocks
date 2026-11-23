@@ -157,7 +157,10 @@ def test_an_output_linked_to_a_baseline_does_not_overwrite_it(
     different = Replay(small.meta, {**small.arrays, "mean": mean})
     monkeypatch.setattr(record_replays, "record_demo", lambda name: different)
 
-    status = _compare(committed, out, report)
+    status = record_replays.main(
+        ["--out", str(out), "--compare", str(committed), "--overwrite"]
+        + ["--report", str(report), "demo_1d"]
+    )
 
     lines = report.read_text().splitlines()
     assert status == 1
@@ -352,7 +355,8 @@ def test_baselines_are_all_read_before_any_demo_is_recorded(
     monkeypatch.setattr(record_replays, "record_demo", stubs.__getitem__)
 
     status = record_replays.main(
-        ["--out", str(tmp_path), "--compare", str(tmp_path), "demo_1d", "demo_2d"]
+        ["--out", str(tmp_path), "--compare", str(tmp_path), "--overwrite"]
+        + ["demo_1d", "demo_2d"]
     )
 
     lines = capsys.readouterr().out.splitlines()
@@ -361,6 +365,86 @@ def test_baselines_are_all_read_before_any_demo_is_recorded(
         "demo_2d: differs at meta",
     ]
     assert status == 1
+
+
+@pytest.mark.parametrize(
+    "kind", ["regular_file", "symlink_to_a_baseline", "dangling_symlink"]
+)
+def test_existing_outputs_are_refused_without_overwrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+) -> None:
+    out, baseline = tmp_path / "out", tmp_path / "baseline"
+    out.mkdir()
+    baseline.mkdir()
+    entry = out / "demo_1d.npz"
+    save_replay(baseline / "demo_1d.npz", _SMALL_1D)
+    if kind == "regular_file":
+        entry.write_bytes(b"an earlier recording")
+    elif kind == "symlink_to_a_baseline":
+        entry.symlink_to(baseline / "demo_1d.npz")
+    else:
+        entry.symlink_to(tmp_path / "nowhere.npz")
+    (out / "demo_2d.npz").write_bytes(b"not requested")
+    before = entry.lstat(), baseline.joinpath("demo_1d.npz").read_bytes()
+    calls: list[str] = []
+    monkeypatch.setattr(record_replays, "record_demo", calls.append)
+
+    with pytest.raises(SystemExit) as raised:
+        record_replays.main(["--out", str(out), "--compare", str(baseline), "demo_1d"])
+
+    errors = capsys.readouterr().err
+    assert raised.value.code == 2
+    assert str(entry) in errors and "--overwrite" in errors
+    assert str(out / "demo_2d.npz") not in errors
+    assert calls == []
+    assert (entry.lstat().st_ino, entry.is_symlink()) == (
+        before[0].st_ino,
+        kind != "regular_file",
+    )
+    assert baseline.joinpath("demo_1d.npz").read_bytes() == before[1]
+
+
+def test_only_the_requested_names_are_checked_for_existing_outputs(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "demo_2d.npz").write_bytes(b"not requested")
+
+    assert record_replays.main(["--out", str(tmp_path), "demo_1d"]) == 0
+
+
+def test_overwrite_replaces_an_existing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "demo_1d.npz"
+    entry.write_bytes(b"an earlier recording")
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _SMALL_1D)
+
+    status = record_replays.main(["--out", str(tmp_path), "--overwrite", "demo_1d"])
+
+    assert status == 0
+    assert load_replay(entry).meta == _SMALL_1D.meta
+
+
+def test_a_baseline_linked_into_the_output_directory_keeps_its_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reviewer's scenario: baseline/demo_1d.npz -> ../out/demo_1d.npz. The
+    # directories differ, but recording would replace the file the link names.
+    out, baseline = tmp_path / "out", tmp_path / "baseline"
+    out.mkdir()
+    baseline.mkdir()
+    save_replay(out / "demo_1d.npz", _SMALL_1D)
+    (baseline / "demo_1d.npz").symlink_to("../out/demo_1d.npz")
+    monkeypatch.setattr(record_replays, "record_demo", lambda name: _SMALL_2D)
+
+    with pytest.raises(SystemExit) as raised:
+        record_replays.main(["--out", str(out), "--compare", str(baseline), "demo_1d"])
+
+    assert raised.value.code == 2
+    assert load_replay(baseline / "demo_1d.npz").meta == _SMALL_1D.meta
 
 
 def test_a_report_beside_the_archives_is_not_a_collision(tmp_path: Path) -> None:

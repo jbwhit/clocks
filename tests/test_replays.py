@@ -11,7 +11,7 @@ probabilities instead.
 
 After an intended change to a demo's inputs or inference, re-record its
 archive with ``uv run python scripts/record_replays.py --out assets/replays
-<demo>`` and commit the file.
+--overwrite <demo>`` and commit the file.
 """
 
 import functools
@@ -701,7 +701,8 @@ def _rerecord(name: str) -> str:
     """How to bring the archive up to date when the difference was intended."""
     return (
         "if this change was intended, re-record: "
-        f"uv run python scripts/record_replays.py --out assets/replays {name}"
+        "uv run python scripts/record_replays.py --out assets/replays --overwrite "
+        f"{name}"
     )
 
 

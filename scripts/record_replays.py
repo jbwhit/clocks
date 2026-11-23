@@ -1,6 +1,9 @@
 """Record the packaged demos as replay archives and report how they compare.
 
 Writes ``<out>/<demo>.npz`` for each requested demo (all seven by default).
+Archives are created, never replaced, unless ``--overwrite`` is given: without
+it, anything already at one of those paths is a usage error, so no link into
+``--out`` can lose its content.
 With ``--compare DIR`` it also compares each fresh recording in full with
 ``DIR/<demo>.npz``, every one of which is read before anything is written, and
 prints a short report, writing it to ``--report FILE`` as well when given.
@@ -15,7 +18,7 @@ the others still run. The exit status
 is 0 when every demo was recorded and every compared demo reproduced, and 1
 otherwise; a workflow that only wants the report ignores it.
 
-    uv run python scripts/record_replays.py --out assets/replays
+    uv run python scripts/record_replays.py --out assets/replays --overwrite
     uv run python scripts/record_replays.py --out recorded \
         --compare assets/replays --report replay-report.md demo_1d
 """
@@ -81,6 +84,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--compare", type=Path, help="directory of committed archives to compare with"
     )
     parser.add_argument("--report", type=Path, help="file to write the report to")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace archives that already exist in --out; anything else that "
+        "links to those files changes with them",
+    )
     # No default: Python 3.12 rejects a tuple default as one invalid choice.
     parser.add_argument("demos", nargs="*", choices=DEMOS, metavar="demo")
     args = parser.parse_args(argv)
@@ -95,6 +104,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         # lexists: a link to nothing is an entry too. Nothing is inspected, so
         # an archive, a FIFO or an unreadable file at the path is all one case.
         parser.error(f"--report {args.report} already exists; {_FREE_PATH_ADVICE}")
+    if not args.overwrite:
+        existing = [
+            args.out / f"{name}.npz"
+            for name in args.demos or DEMOS
+            if os.path.lexists(args.out / f"{name}.npz")
+        ]
+        if existing:
+            parser.error(
+                f"{', '.join(str(path) for path in existing)} already exist(s); "
+                "pass --overwrite to replace them or choose another --out"
+            )
     return args
 
 
