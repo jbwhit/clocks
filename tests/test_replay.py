@@ -742,6 +742,26 @@ def test_create_refuses_to_replace_anything(tmp_path: Path, kind: str) -> None:
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []
 
 
+@pytest.mark.parametrize("writer", [save_replay, create_replay])
+def test_a_successful_write_unlinks_no_name_but_the_one_a_link_leaves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: object
+) -> None:
+    unlinked: list[Path] = []
+    real_unlink = Path.unlink
+
+    def recording_unlink(self: Path, missing_ok: bool = False) -> None:
+        unlinked.append(self)
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", recording_unlink)
+
+    writer(tmp_path / "x.npz", Replay(*filter_fixture()))  # type: ignore[operator]
+
+    # A replace leaves no temporary name to remove; a link leaves exactly one.
+    assert len(unlinked) == (1 if writer is create_replay else 0)
+    assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
+
+
 def test_save_replaces_an_existing_archive_whole(tmp_path: Path) -> None:
     path = tmp_path / "x.npz"
     save_replay(path, Replay(*filter_fixture()))

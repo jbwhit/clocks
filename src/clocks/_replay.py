@@ -106,7 +106,17 @@ def create_replay(path: Path, replay: Replay) -> None:
     The finished temporary file is hard-linked into place, which fails
     atomically when any directory entry exists.
     """
-    _write_archive(path, replay, os.link)
+    _write_archive(path, replay, _link_and_forget)
+
+
+def _link_and_forget(temporary: Path, path: Path) -> None:
+    """Link ``temporary`` to ``path``, then remove the temporary name.
+
+    After a link the temporary is a second name for the finished file, so this
+    is the one success path on which it still exists and must be removed.
+    """
+    os.link(temporary, path)
+    temporary.unlink()
 
 
 def _write_archive(
@@ -114,8 +124,11 @@ def _write_archive(
 ) -> None:
     """Write ``replay`` to a temporary file beside ``path``, then ``publish`` it.
 
-    ``publish(temporary, path)`` puts the finished file in place. Whatever
-    happens, the temporary name is removed afterwards.
+    ``publish(temporary, path)`` puts the finished file in place and leaves no
+    temporary name behind (``os.replace`` moves it; ``_link_and_forget`` removes
+    it). The temporary is removed here only on a failure, before or during
+    publication, when it can still exist; after success it is gone, and
+    unlinking the name again could remove another process's entry.
     """
     validate_replay(replay, str(path))
     if path.suffix != ".npz":
@@ -141,7 +154,6 @@ def _write_archive(
         except OSError as cleanup_error:
             error.add_note(f"{temporary} was left behind: {cleanup_error}")
         raise
-    temporary.unlink(missing_ok=True)  # still there after a link, gone after a move
 
 
 def load_replay(path: Path) -> Replay:
