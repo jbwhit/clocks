@@ -223,6 +223,7 @@ def test_the_last_step_shows_or_warns(
     else:
         assert in_stdout in stdout
     if summary_has_report:
-        assert summary == report
+        # Fenced as text, so Markdown in a report cannot render as report lines.
+        assert summary == f"```text\n{report}```\n"
     else:
         assert summary == ""

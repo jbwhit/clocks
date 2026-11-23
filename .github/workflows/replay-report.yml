@@ -68,7 +68,7 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           if [ -s replay-report.md ]; then
-            cat replay-report.md >> "$GITHUB_STEP_SUMMARY" || echo "::warning title=Replay report::the report for sample $SAMPLE could not be added to the summary"
+            { echo '```text'; cat replay-report.md; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || echo "::warning title=Replay report::the report for sample $SAMPLE could not be added to the summary"
           else
             echo "::warning title=Replay report::no report was written for sample $SAMPLE"
           fi
