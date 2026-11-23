@@ -1,8 +1,11 @@
 """The committed replay archives: invariants on the files, and the gate.
 
 The invariants read only the committed files. The gate re-records each demo
-and requires its inputs to match the archive exactly and its posterior
-summaries, after observations 1, 8 and the last, to match within ``BOUNDS``.
+and requires its inputs to match the archive exactly. For the six filter
+demos it also requires the posterior summaries after observations 1, 8 and the
+last to match within ``BOUNDS`` (``DENSITY_BOUNDS`` for density); for
+``demo_model_comparison`` it checks the three conditions on the model
+probabilities instead.
 
 After an intended change to a demo's inputs or inference, re-record its
 archive with ``uv run python scripts/record_replays.py --out assets/replays
@@ -75,17 +78,19 @@ DENSITY_BOUNDS = (
 # ratio 0.892 to 1.109 in every row but one.
 PREDICTION_MEAN_BOUND = 6.0
 PREDICTION_SPREAD = (0.6, 1.5)
-# The exception: the spread is not checked on echolocation's prior row (its
-# mean is, and measures 1.49). This recording's display sample omits the one
-# prior particle, inside the head, that carries 99.8% of the centre clock's
-# predicted variance, so the ratio there (0.019) says which particles were
-# sampled, not whether the archive is right; recordings with 5,999 and 6,001
-# particles gave 2.82 and 0.008 (the reviewer's runs). The row is not drawn:
-# the observed-against-fitted panel is empty at k = 0. Also: a valid float64
-# particle can cross the weak-field limit once rounded to float32, which would
-# make the forward model raise at that dot. The committed dots have margin; a
-# re-recording that hits this must account for the rounding in the evaluation
-# here.
+# Echolocation's prior row is not checked at all, and its dots are not passed
+# to the forward model. The row is not drawn: the observed-against-fitted panel
+# is empty at k = 0. One prior particle, inside the head, carries 99.8% of the
+# centre clock's predicted variance, and whether a display sample holds it is
+# chance, so neither the spread (0.019 here; 2.82 and 0.008 in the reviewer's
+# recordings with 5,999 and 6,001 particles) nor the mean (1.49 here; 6.59 in
+# one with 23,088 particles) describes the archive there. Skipping the row also
+# avoids an edge: a valid float64 particle can cross the weak-field limit once
+# rounded to float32, which would make the forward model raise at that dot. The
+# committed dots after row 0 have margin; a re-recording that hits it must
+# account for the rounding in the evaluation here. demo_1d and demo_multi_mass
+# keep row 0: their panels draw the prior's predicted bars.
+FIRST_CHECKED_ROW = {"demo_echolocation_3d": 1}
 
 
 def _params(names: Sequence[str]) -> list[object]:
@@ -206,21 +211,40 @@ def _readings_at(
     return rates - rates.mean(axis=1, keepdims=True) if centred else rates
 
 
+def _readings_of_dots(
+    cloud: NDArray,
+    clock_positions: NDArray,
+    track_offset: float,
+    centred: bool,
+    first_row: int,
+) -> NDArray[np.float64]:
+    """The forward model at every displayed dot of rows ``first_row`` on.
+
+    Returns (rows - first_row, m, C); earlier rows' dots are never evaluated.
+    """
+    return np.stack(
+        [
+            _readings_at(dots, clock_positions, track_offset, centred)
+            for dots in cloud[first_row:].astype(np.float64)
+        ]
+    )
+
+
 def _assert_predictions_match_dots(
     predicted_mean: NDArray,
     predicted_std: NDArray,
     dot_readings: NDArray,
-    spreads: Sequence[tuple[float, float] | None],
+    first_row: int,
 ) -> None:
     """Assert, row by row, the recorded predictions summarise the dots' readings.
 
-    ``dot_readings`` (rows, m, C) is the forward model at each displayed dot.
-    Per clock, the dots' mean is within ``PREDICTION_MEAN_BOUND`` predicted
-    s.d. / sqrt(m) of ``predicted_mean``, and their s.d. over ``predicted_std``
-    lies in that row's ``spreads`` range, unless that entry is None.
+    ``dot_readings`` (rows, m, C) is the forward model at each displayed dot of
+    rows ``first_row`` on. Per clock, the dots' mean is within
+    ``PREDICTION_MEAN_BOUND`` predicted s.d. / sqrt(m) of ``predicted_mean``,
+    and their s.d. is ``PREDICTION_SPREAD`` times ``predicted_std``.
     """
     m = dot_readings.shape[1]
-    for row, readings in enumerate(dot_readings):
+    for row, readings in enumerate(dot_readings, start=first_row):
         sd = predicted_std[row]
         deviation = np.abs(readings.mean(axis=0) - predicted_mean[row]) / sd
         worst = int(np.argmax(deviation))
@@ -229,9 +253,7 @@ def _assert_predictions_match_dots(
             f"{deviation[worst] * np.sqrt(m):.3g} s.d./sqrt(m) from predicted_mean"
         )
         ratio = readings.std(axis=0) / sd
-        if spreads[row] is None:
-            continue
-        low, high = spreads[row]
+        low, high = PREDICTION_SPREAD
         outside = int(np.argmax((ratio < low) | (ratio > high)))
         assert np.all((low <= ratio) & (ratio <= high)), (
             f"row {row}, clock {outside}: the dots' s.d. is {ratio[outside]:.3g} "
@@ -422,26 +444,21 @@ def test_a_weight_in_view_off_by_its_sampling_error_is_caught() -> None:
         _assert_weight_matches_dots(corrupted, arrays["cloud"], arrays["view_bounds"])
 
 
+def _first_row(name: str) -> int:
+    return FIRST_CHECKED_ROW.get(name, 0)
+
+
 @functools.lru_cache(maxsize=None)
 def _dot_readings(name: str) -> NDArray[np.float64]:
-    """The forward model at every displayed dot of every row: (rows, m, C)."""
+    """The forward model at the displayed dots of every checked row."""
     meta, arrays = _archive(name).meta, _archive(name).arrays
-    cloud = arrays["cloud"].astype(np.float64)
-    centred = name == "demo_echolocation_3d"
-    return np.stack(
-        [
-            _readings_at(dots, arrays["clock_positions"], meta["track_offset"], centred)
-            for dots in cloud
-        ]
+    return _readings_of_dots(
+        arrays["cloud"],
+        arrays["clock_positions"],
+        meta["track_offset"],
+        centred=name == "demo_echolocation_3d",
+        first_row=_first_row(name),
     )
-
-
-def _spreads(name: str) -> list[tuple[float, float] | None]:
-    rows = len(_archive(name).arrays["cloud"])
-    spreads: list[tuple[float, float] | None] = [PREDICTION_SPREAD] * rows
-    if name == "demo_echolocation_3d":
-        spreads[0] = None  # see the comment on PREDICTION_SPREAD
-    return spreads
 
 
 @pytest.mark.parametrize("name", PREDICTING_DEMOS)
@@ -452,16 +469,45 @@ def test_archive_predictions_match_the_dots(name: str) -> None:
         arrays["predicted_mean"],
         arrays["predicted_std"],
         _dot_readings(name),
-        _spreads(name),
+        _first_row(name),
     )
 
 
-@pytest.mark.parametrize("name", PREDICTING_DEMOS)
-@pytest.mark.parametrize(
-    ("row", "shift"),
-    [(0, 0.02), (1, 0.02), (-1, 0.002)],
-    ids=["prior", "first_update", "final"],
-)
+def test_echolocation_prior_dots_are_not_evaluated() -> None:
+    # A prior dot placed on a clock makes the forward model raise (a singular
+    # distance: echolocation's track offset is 0), as a dot rounded across the
+    # weak-field limit would; skipping row 0 must never reach it.
+    meta, arrays = (
+        _archive("demo_echolocation_3d").meta,
+        _archive("demo_echolocation_3d").arrays,
+    )
+    cloud = arrays["cloud"].copy()
+    cloud[0, 0, :3] = arrays["clock_positions"][13]
+
+    readings = _readings_of_dots(
+        cloud,
+        arrays["clock_positions"],
+        meta["track_offset"],
+        centred=True,
+        first_row=_first_row("demo_echolocation_3d"),
+    )
+
+    assert readings.shape[0] == len(cloud) - 1
+
+
+_SHIFTS = [
+    pytest.param(name, row, shift, id=f"{label}-{name}")
+    for label, row, shift in [
+        ("prior", 0, 0.02),
+        ("first_update", 1, 0.02),
+        ("final", -1, 0.002),
+    ]
+    for name in PREDICTING_DEMOS
+    if not (label == "prior" and name in FIRST_CHECKED_ROW)
+]
+
+
+@pytest.mark.parametrize(("name", "row", "shift"), _SHIFTS)
 def test_a_shifted_prediction_is_caught(name: str, row: int, shift: float) -> None:
     arrays = _archive(name).arrays
     corrupted = arrays["predicted_mean"].copy()
@@ -473,7 +519,7 @@ def test_a_shifted_prediction_is_caught(name: str, row: int, shift: float) -> No
         AssertionError, match=f"row {shown_row}, clock {clock}: .* from predicted_mean"
     ):
         _assert_predictions_match_dots(
-            corrupted, arrays["predicted_std"], _dot_readings(name), _spreads(name)
+            corrupted, arrays["predicted_std"], _dot_readings(name), _first_row(name)
         )
 
 
@@ -486,7 +532,7 @@ def test_widened_final_prediction_bars_are_caught(name: str) -> None:
 
     with pytest.raises(AssertionError, match=f"row {last}, clock .* of predicted_std"):
         _assert_predictions_match_dots(
-            arrays["predicted_mean"], corrupted, _dot_readings(name), _spreads(name)
+            arrays["predicted_mean"], corrupted, _dot_readings(name), _first_row(name)
         )
 
 
@@ -530,12 +576,15 @@ def test_a_final_prediction_off_the_estimate_is_caught() -> None:
 
 def test_a_final_estimate_off_the_predictions_is_caught() -> None:
     # The reviewer's edit: the final mean mass lowered by 0.00045. The dots and
-    # every other invariant pass it; here it is 1.19 predicted s.d. at clock 12.
+    # every other invariant pass it; on the committed archive it is 1.19
+    # predicted s.d. at clock 12, but only the half-s.d. threshold is required.
     arrays = _archive("demo_echolocation_3d").arrays
     mean = arrays["mean"].copy()
     mean[-1, 3] -= 0.00045
 
-    with pytest.raises(AssertionError, match=r"by 1\.19 predicted s\.d\. at clock 12"):
+    with pytest.raises(
+        AssertionError, match="predicted_mean differs from the model at the mean by"
+    ):
         _assert_prediction_matches(
             arrays["predicted_mean"][-1],
             arrays["predicted_std"][-1],

@@ -306,15 +306,19 @@ Five invariants tie the arrays the drawings use to the rest of each archive.
   echolocation, as recorded). At each clock the dots' mean reading is within
   6 `predicted_std`/√m of `predicted_mean`, and their standard deviation is
   0.6 to 1.5 times `predicted_std`. The worst rows reach 3.4 and 0.89 to 1.11
-  (measured). The exception is echolocation's prior row, whose spread is not
-  checked (its mean is, at 1.49). There the ratio runs from 0.019 to 1.43,
-  because one of the 6,000 prior particles, inside the head, carries 99.8% of
-  the centre clock's predicted variance and this display sample omits it
-  (measured). Whether a sample holds it is chance: recordings with 5,999 and
-  6,001 particles gave 2.82 and 0.008 (reviewer's measurement). That row is
-  not drawn. Shifting the first update's predictions by 0.02, or multiplying
-  the final predicted standard deviations by ten, fails. The forward model is
-  defined at every prior dot.
+  (measured). The exception is echolocation's prior row, which is not checked
+  and whose dots are not evaluated: that row is not drawn. One of the 6,000
+  prior particles, inside the head, carries 99.8% of the centre clock's
+  predicted variance, and whether a display sample holds it is chance
+  (measured), so neither summary describes the archive there: the spread
+  ratio is 0.019 here, and 2.82 and 0.008 with 5,999 and 6,001 particles;
+  the mean reached 6.59 standard errors with 23,088 (reviewer's
+  measurements). The prior rows of `demo_1d` and `demo_multi_mass`, whose
+  panels draw the prior's bars, are checked. Shifting the first update's
+  predictions by 0.02, or multiplying the final predicted standard
+  deviations by ten, fails. The spread is tied only within a factor of 0.6
+  to 1.5, so a change of 40% in the width of the final prediction bars
+  passes (reviewer's measurement).
 - For the same three demos, the final predictions are within half a
   `predicted_std` of the forward model at the final mean. This ties the
   predictions to the displayed estimate, which the dots check cannot:
