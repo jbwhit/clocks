@@ -1,9 +1,9 @@
 """The committed replay archives: invariants on the files, and the gate.
 
 The invariants read only the committed files. The gate re-records each demo
-and requires its inputs to match the archive: the clock positions, true
-parameters and (for model comparison) model orders and prior exactly, the
-computed rates and observations at ``rtol=1e-12, atol=1e-12``. For the six filter
+and requires its inputs to match the archive: the true parameters and (for
+model comparison) model orders and prior exactly, the computed clock positions,
+rates and observations at ``rtol=1e-12, atol=1e-12``. For the six filter
 demos it also requires the posterior summaries after observations 1, 8 and the
 last to match within ``BOUNDS`` (``DENSITY_BOUNDS`` for density); for
 ``demo_model_comparison`` it checks the three conditions on the model
@@ -307,7 +307,9 @@ def test_archive_matches_its_scenario(name: str) -> None:
     assert meta["track_offset"] == scenario.clock_array.track_offset
     assert meta["param_names"] == list(scenario.param_names)
     assert meta["prior_ranges"] == [list(pair) for pair in scenario.prior_ranges]
-    assert np.array_equal(arrays["clock_positions"], scenario.clock_array.positions)
+    assert_computed_input_matches(
+        arrays["clock_positions"], scenario.clock_array.positions, "clock_positions"
+    )
     assert np.array_equal(arrays["true_params"], scenario.true_params)
     np.testing.assert_allclose(
         arrays["true_rates"], scenario.true_rates, rtol=1e-12, atol=1e-12
@@ -677,8 +679,8 @@ def test_gate_inputs(name: str) -> None:
     assert _without_provenance(fresh.meta) == _without_provenance(archive.meta), (
         _rerecord(name)
     )
-    exact = ["clock_positions", "true_params"]
-    close = ["true_rates", "observations"]
+    exact = ["true_params"]
+    close = ["clock_positions", "true_rates", "observations"]
     if name == "demo_model_comparison":
         exact += ["model_ks", "model_prior"]
     if name == "demo_echolocation_3d":
@@ -688,13 +690,32 @@ def test_gate_inputs(name: str) -> None:
             f"{key}; {_rerecord(name)}"
         )
     for key in close:
-        np.testing.assert_allclose(
-            fresh.arrays[key],
-            archive.arrays[key],
-            rtol=1e-12,
-            atol=1e-12,
-            err_msg=f"{key}; {_rerecord(name)}",
+        assert_computed_input_matches(
+            fresh.arrays[key], archive.arrays[key], f"{key}; {_rerecord(name)}"
         )
+
+
+def assert_computed_input_matches(
+    actual: NDArray, expected: NDArray, label: str
+) -> None:
+    """Computed inputs match a committed archive to ``1e-12``, not bit for bit.
+
+    The two-mass 2D demo's clocks are drawn from a seeded generator, so their
+    last bit can differ between processor architectures: an exact comparison
+    failed on the x86-64 CI runner against an archive recorded on arm64, while
+    the full comparison reproduced.
+    """
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12, err_msg=label)
+
+
+def test_the_computed_input_comparison_rejects_a_real_change() -> None:
+    positions = _archive("demo_multi_mass_2d").arrays["clock_positions"]
+    moved = positions.copy()
+    moved[0, 0] *= 1 + 1e-9
+
+    assert_computed_input_matches(positions, positions.copy(), "unchanged")
+    with pytest.raises(AssertionError, match="clock_positions"):
+        assert_computed_input_matches(moved, positions, "clock_positions")
 
 
 def _rerecord(name: str) -> str:
