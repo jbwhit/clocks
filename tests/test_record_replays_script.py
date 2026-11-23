@@ -167,6 +167,10 @@ def test_an_output_linked_to_a_baseline_does_not_overwrite_it(
     assert any(line.startswith("demo_1d: differs at mean, row 0") for line in lines)
     assert (committed / "demo_1d.npz").read_bytes() == baseline_bytes
     assert not (out / "demo_1d.npz").is_symlink()
+    assert load_replay(out / "demo_1d.npz").arrays["mean"][0, 0] == mean[0, 0]
+    assert (out / "demo_1d.npz").stat().st_ino != (
+        committed / "demo_1d.npz"
+    ).stat().st_ino
 
 
 def test_a_baseline_in_another_case_is_read_before_anything_is_written(
@@ -352,7 +356,20 @@ def test_baselines_are_all_read_before_any_demo_is_recorded(
         stubs[name] = Replay(
             {**small.meta, "seed": small.meta["seed"] + 1}, small.arrays
         )
-    monkeypatch.setattr(record_replays, "record_demo", stubs.__getitem__)
+    read: list[Path] = []
+    real_load = record_replays.load_replay
+
+    def logging_load(path: Path) -> Replay:
+        read.append(path)
+        return real_load(path)
+
+    def record(name: str) -> Replay:
+        # Called for the first demo: both baselines must already have been read.
+        assert read == [tmp_path / "demo_1d.npz", tmp_path / "demo_2d.npz"], name
+        return stubs[name]
+
+    monkeypatch.setattr(record_replays, "load_replay", logging_load)
+    monkeypatch.setattr(record_replays, "record_demo", record)
 
     status = record_replays.main(
         ["--out", str(tmp_path), "--compare", str(tmp_path), "--overwrite"]
