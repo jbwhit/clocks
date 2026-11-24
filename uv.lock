@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-17T19:07:03.898027Z"
+exclude-newer = "2026-11-17T21:46:28.880603Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -307,6 +307,7 @@ dependencies = [
 dev = [
     { name = "imageio-ffmpeg" },
     { name = "jupyter" },
+    { name = "pillow" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -323,6 +324,7 @@ requires-dist = [
 dev = [
     { name = "imageio-ffmpeg", specifier = ">=0.8.1" },
     { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "pillow", specifier = ">=12.1.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "ruff", specifier = ">=0.8" },
