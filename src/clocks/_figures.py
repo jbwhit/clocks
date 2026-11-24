@@ -71,6 +71,10 @@ def density_figure(replay: Replay, colors: Palette) -> Figure:
     return fig
 
 
+def _band_style(colors: Palette) -> dict[str, object]:
+    return {"color": colors.belief, "alpha": 0.2, "linewidth": 0}
+
+
 def _gaussian_profiles(
     dots: NDArray[np.float64], x: NDArray[np.float64]
 ) -> NDArray[np.float64]:
@@ -87,21 +91,25 @@ def _draw_profile(ax: Axes, replay: Replay, colors: Palette) -> None:
     lower, upper = np.percentile(profiles, [16, 84], axis=0)
     median = np.median(profiles, axis=0)
 
-    ax.fill_between(
-        x, lower, upper, color=colors.belief, alpha=0.2, linewidth=0,
-        gid="profile-band",
-    )  # fmt: skip
+    ax.fill_between(x, lower, upper, gid="profile-band", **_band_style(colors))
     ax.plot(x, truth, color=colors.truth, linewidth=1.3, gid="true-profile")
     ax.plot(x, median, color=colors.belief, gid="median-profile")
     clock_x = arrays["clock_positions"][:, 0]
     ax.plot(
-        clock_x, np.zeros_like(clock_x), color=colors.ink, marker="s",
-        markersize=6, linestyle="none", clip_on=False, gid="clocks",
-    )  # fmt: skip
+        clock_x,
+        np.zeros_like(clock_x),
+        color=colors.ink,
+        marker="s",
+        markersize=6,
+        linestyle="none",
+        clip_on=False,
+        gid="clocks",
+    )
     top = 1.08 * max(truth.max(), upper.max())
     ax.set_xlim(x_low, x_high)
     ax.set_ylim(0.0, top)
-    ax.set_ylabel("clock-rate offset")
+    ax.set_xlabel("position along the track")
+    ax.set_ylabel("mass density")
     _label_profile(ax, colors, mu, top, float(clock_x[0]))
 
 
@@ -110,17 +118,29 @@ def _label_profile(
 ) -> None:
     """Direct labels: the true profile left of its peak, the estimate right."""
     ax.text(
-        centre - 2.2, 0.93 * top, "true profile", color=colors.truth,
-        ha="right", va="center",
-    )  # fmt: skip
+        centre - 2.2,
+        0.93 * top,
+        "true profile",
+        color=colors.truth,
+        ha="right",
+        va="center",
+    )
     ax.text(
-        ax.get_xlim()[1] - 0.15, 0.93 * top,
-        "pointwise median and 68% band", color=colors.belief, ha="right", va="center",
-    )  # fmt: skip
+        ax.get_xlim()[1] - 0.15,
+        0.93 * top,
+        "pointwise median and 68% band",
+        color=colors.belief,
+        ha="right",
+        va="center",
+    )
     ax.text(
-        first_clock, 0.05 * top, "clocks", color=colors.ink, ha="center",
+        first_clock,
+        0.05 * top,
+        "clocks",
+        color=colors.ink,
+        ha="center",
         va="bottom",
-    )  # fmt: skip
+    )
 
 
 def _draw_trace(ax: Axes, replay: Replay, colors: Palette, j: int) -> None:
@@ -132,13 +152,15 @@ def _draw_trace(ax: Axes, replay: Replay, colors: Palette, j: int) -> None:
     truth = float(arrays["true_params"][j])
     prior = replay.meta["prior_ranges"][j]
     ax.fill_between(
-        steps, mean - sd, mean + sd, color=colors.belief, alpha=0.2,
-        linewidth=0, gid="trace-band",
-    )  # fmt: skip
+        steps, mean - sd, mean + sd, gid="trace-band", **_band_style(colors)
+    )
     ax.plot(
-        [0, last], [truth, truth], color=colors.truth, linewidth=1.3,
+        [0, last],
+        [truth, truth],
+        color=colors.truth,
+        linewidth=1.3,
         gid="trace-truth",
-    )  # fmt: skip
+    )
     ax.plot(steps, mean, color=colors.belief, gid="trace-mean")
     ax.set_xlim(0, last)
     ax.set_ylim(*trace_limits(mean, sd, truth, prior))

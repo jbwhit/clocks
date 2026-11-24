@@ -8,6 +8,7 @@ import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.colors import to_hex, to_rgba
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from numpy.typing import NDArray
 
 from clocks._style import Palette
@@ -52,9 +53,9 @@ def visible_colours(fig: Figure) -> set[str]:
     return found
 
 
-def one(container: object, gid: str) -> Artist:
+def one(container: Artist, gid: str) -> Artist:
     """The single artist under ``container`` that carries ``gid``."""
-    matches = [a for a in container.findobj() if a.get_gid() == gid]  # type: ignore[attr-defined]
+    matches = [a for a in container.findobj() if a.get_gid() == gid]
     assert len(matches) == 1, (
         f"expected one artist with gid {gid!r}, got {len(matches)}"
     )
@@ -117,3 +118,10 @@ def _as_rgba(value: object) -> object:
     if array.dtype.kind in "US":
         return [to_rgba(str(v)) for v in array.ravel()]
     return array
+
+
+def assert_drawn(line: Line2D) -> None:
+    """Assert that a line is visible, opaque and has a width above 0."""
+    assert line.get_visible()
+    assert line.get_alpha() in (None, 1)
+    assert line.get_linewidth() > 0

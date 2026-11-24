@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from _figure_artists import (
+    assert_drawn,
     band_edges,
     gid_census,
     one,
@@ -20,7 +21,7 @@ import clocks.viz
 from clocks import _figures
 from clocks._demos import demo_1d
 from clocks._figures import density_figure, trace_limits
-from clocks._replay import Replay, load_replay
+from clocks._replay import Replay, load_replay, validate_replay
 from clocks._style import THEMES, style
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -192,6 +193,7 @@ def test_true_profile(themed_figure) -> None:
     expected = 0.010 * np.exp(-((X - 1.5) ** 2) / (2 * 2.0**2))
     np.testing.assert_allclose(line.get_ydata(), expected, rtol=1e-12)
     assert hexof(line.get_color()) == hexof(colors.truth)
+    assert_drawn(line)
 
 
 @each_theme
@@ -210,6 +212,7 @@ def test_median_and_band_are_pointwise_percentiles_of_the_last_row(
     np.testing.assert_allclose(lower, np.percentile(profiles, 16, axis=0), rtol=1e-12)
     np.testing.assert_allclose(upper, np.percentile(profiles, 84, axis=0), rtol=1e-12)
     assert hexof(line.get_color()) == hexof(colors.belief)
+    assert_drawn(line)
     assert hexof(band.get_facecolor()[0]) == hexof(colors.belief)
     assert band.get_visible()
     assert band.get_facecolor()[0][3] > 0
@@ -290,6 +293,9 @@ def test_density_labels(themed_figure) -> None:
         matches = [t for t in texts if t.get_text() == label]
         assert len(matches) == 1, label
         assert hexof(matches[0].get_color()) == hexof(role)
+    assert fig.axes[0].get_xlabel() == "position along the track"
+    assert fig.axes[0].get_ylabel() == "mass density"
+    assert [ax.get_xlabel() for ax in fig.axes[1:]] == ["observations"] * 3
 
 
 def test_profile_limits() -> None:
@@ -334,6 +340,8 @@ def test_traces_follow_the_archive(themed_figure) -> None:
         assert hexof(mean_line.get_color()) == hexof(colors.belief)
         assert hexof(band.get_facecolor()[0]) == hexof(colors.belief)
         assert hexof(truth.get_color()) == hexof(colors.truth)
+        assert_drawn(mean_line)
+        assert_drawn(truth)
         assert band.get_visible() and band.get_facecolor()[0][3] > 0
         assert ax.get_xlim() == (0, 2)
         assert ax.get_ylim() == pytest.approx(limits[j], rel=1e-9)
@@ -401,8 +409,6 @@ def test_density_figure_draws_a_one_observation_run() -> None:
             "mh_acceptances": a["mh_acceptances"][:1],
         },
     )
-    from clocks._replay import validate_replay
-
     validate_replay(cut)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
