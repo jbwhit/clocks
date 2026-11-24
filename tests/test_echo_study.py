@@ -359,6 +359,7 @@ def test_the_pass_counts_and_their_label_sit_above_the_top_panel() -> None:
             text.get_transform().transform(text.get_position())
         )
         assert read_y > 1.0
+        assert read_y == pytest.approx(y_axes)
         assert y_axes > 1.0
     # The label is placed in axes coordinates throughout.
     assert label.get_transform().contains_branch_seperately(top.transAxes) == (

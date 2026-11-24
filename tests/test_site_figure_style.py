@@ -219,9 +219,7 @@ def _is_show_of(statement: ast.stmt, name: str) -> bool:
     )
 
 
-def _is_canonical(
-    call: ast.Call, block: ast.With, parents: dict[ast.AST, ast.AST]
-) -> bool:
+def _is_canonical(call: ast.Call, block: ast.With) -> bool:
     """Does the block hold exactly the builder assignment and its ``show``?
 
     The ``with`` has one item, ``style(...) as <palette>``; its body is exactly
@@ -276,7 +274,7 @@ def _style_block_violations(cell: str) -> list[str]:
         "`show(<name>)`, the only two statements of a one-item "
         "`with style(theme) as <palette>`"
         for call, name in builders
-        if blocks[call] is not None and not _is_canonical(call, blocks[call], parents)
+        if blocks[call] is not None and not _is_canonical(call, blocks[call])
     ]
     return messages
 
@@ -948,16 +946,32 @@ def test_figure_function_heights_are_the_drawn_ones(name: str) -> None:
         plt.close(fig)
 
 
-_DATA_DECLARATIONS = {
-    "density_figure": (
-        "replay",
-        'replay = load_replay(Path("../../assets/replays/demo_density.npz"))',
-    ),
-    "range_study_figure": (
-        "study",
-        'study = json.loads(Path("../../assets/echolocation_range_study.json")'
-        ".read_text())",
-    ),
+BUILDER_CELL_PROGRAMS: dict[str, str] = {
+    "density_figure": """\
+from pathlib import Path
+
+from clocks.viz import THEMES, density_figure, load_replay, show, style
+
+# A cell runs in its page's directory: the archive is two levels up.
+replay = load_replay(Path("../../assets/replays/demo_density.npz"))
+for theme in THEMES:
+    with style(theme) as colors:
+        fig = density_figure(replay, colors)
+        show(fig)
+""",
+    "range_study_figure": """\
+import json
+from pathlib import Path
+
+from clocks.viz import THEMES, range_study_figure, show, style
+
+# A cell runs in its page's directory: the study is two levels up.
+study = json.loads(Path("../../assets/echolocation_range_study.json").read_text())
+for theme in THEMES:
+    with style(theme) as colors:
+        fig = range_study_figure(study, colors)
+        show(fig)
+""",
 }
 
 
@@ -973,14 +987,9 @@ def _builder_cell(builder: str) -> tuple[Path, str]:
     return found[0]
 
 
-def _stored_names(tree: ast.AST, name: str) -> list[ast.Name]:
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name)
-        and node.id == name
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-    ]
+def _cell_code(cell: str) -> str:
+    """The cell's source without its ``#|`` option lines."""
+    return "\n".join(line for line in cell.splitlines() if not line.startswith("#|"))
 
 
 @pytest.mark.parametrize(
@@ -990,31 +999,36 @@ def _stored_names(tree: ast.AST, name: str) -> list[ast.Name]:
         pytest.param("range_study_figure", id="range_study"),
     ],
 )
-def test_builder_cell_draws_its_committed_data(builder: str) -> None:
+def test_builder_cell_is_exactly_its_pinned_program(builder: str) -> None:
+    """Each cell draws committed data that the Reproducibility page names.
+
+    So the whole cell is pinned, compared by syntax tree (comments and spacing
+    do not matter; every statement, name, literal and argument does): any
+    change to a cell is a deliberate change to this test.
+    """
     page, cell = _builder_cell(builder)
-    name, source = _DATA_DECLARATIONS[builder]
-    tree = ast.parse(cell)
-    expected = ast.dump(ast.parse(source).body[0])
-
-    assigning = [
-        stmt
-        for stmt in ast.walk(tree)
-        if isinstance(stmt, ast.stmt) and _stored_names(stmt, name)
-        if not isinstance(stmt, (ast.For, ast.With, ast.If, ast.FunctionDef))
-    ]
-    assert [ast.dump(stmt) for stmt in assigning] == [expected]
-    assert len(_stored_names(tree, name)) == 1
-
-    (call, _), *_ = [c for c in _builder_calls(tree) if c[1] == builder]
-    first = call.args[0]
-    assert isinstance(first, ast.Name) and first.id == name
+    program = BUILDER_CELL_PROGRAMS[builder]
+    assert ast.dump(ast.parse(_cell_code(cell))) == ast.dump(ast.parse(program))
 
     literals = [
         node.value
-        for node in ast.walk(assigning[0])
+        for node in ast.walk(ast.parse(program))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     ]
     assert len(literals) == 1
     resolved = (page.parent / literals[0]).resolve()
     assert resolved.is_file()
     assert resolved.is_relative_to((REPO / "assets").resolve())
+
+
+def test_every_builder_cell_has_a_pinned_program() -> None:
+    used: list[str] = []
+    for page in PLOT_PAGES:
+        for cell in _plot_cells(SITE / page):
+            builders = _facade_builders(cell)
+            if not builders:
+                continue
+            assert len(builders) == 1, f"{page}: a cell calls {builders}"
+            assert builders[0] in BUILDER_CELL_PROGRAMS, f"{page}: {builders[0]}"
+            used.append(builders[0])
+    assert sorted(used) == sorted(BUILDER_CELL_PROGRAMS)

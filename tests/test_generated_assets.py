@@ -308,11 +308,18 @@ def test_the_ci_bullets_link_exactly_the_workflow_files() -> None:
     page = " ".join(raw.split())
     section = raw.split("Four workflows run on GitHub Actions:")[1]
     section = section.split("\n## ")[0]
-    linked = set(re.findall(r"^- \[`([\w-]+\.yml)`\]", section, re.MULTILINE))
+    links = re.findall(
+        r"^- \[`([\w-]+\.yml)`\]\(\S*/\.github/workflows/([\w-]+\.yml)\)",
+        section,
+        re.MULTILINE,
+    )
     files = {path.name for path in (ROOT / ".github/workflows").glob("*.yml")}
 
     assert "Four workflows run on GitHub Actions:" in page
-    assert linked == files
+    assert len(links) == 4
+    assert len({text for text, _ in links}) == 4
+    assert all(text == target for text, target in links)
+    assert {text for text, _ in links} == files
 
 
 def test_the_replay_report_bullet_claims_only_what_the_workflow_guarantees() -> None:
