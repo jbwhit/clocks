@@ -399,7 +399,7 @@ for theme in THEMES:
 
 `git rm assets/demo_density.png site/assets/demo_density.png`.
 
-`docs/2026-08-16-development-calibration.md`: after the hash table, a paragraph whose first sentence is "`demo_density.png` was removed from both trees on YYYY-MM-DD (today's date); the density figure is now drawn when the site is built, from `assets/replays/demo_density.npz`, and its old bytes remain in git history under the hash above." The table is not edited.
+`docs/2026-08-16-development-calibration.md` (here and in Task 6, `YYYY-MM-DD` stands for today's date, written in digits with nothing between it and the semicolon): after the hash table, a paragraph whose first sentence is "`demo_density.png` was removed from both trees on YYYY-MM-DD; the density figure is now drawn when the site is built, from `assets/replays/demo_density.npz`, and its old bytes remain in git history under the hash above." The table is not edited.
 
 `site/reproduce/reproducibility.qmd` (line numbers as on `main`):
 
@@ -524,7 +524,7 @@ for theme in THEMES:
 
 `git rm assets/echolocation_range_study.png site/assets/echolocation_range_study.png`.
 
-`docs/2026-08-16-development-calibration.md`: add to Task 4's paragraph "`echolocation_range_study.png` was removed from both trees on YYYY-MM-DD (today's date); the range-study figure is now drawn when the site is built, from `echolocation_range_study.json`, whose row above is unchanged, and the PNG's old bytes remain in git history under the hash above."
+`docs/2026-08-16-development-calibration.md`: add to Task 4's paragraph "`echolocation_range_study.png` was removed from both trees on YYYY-MM-DD; the range-study figure is now drawn when the site is built, from `echolocation_range_study.json`, whose row above is unchanged, and the PNG's old bytes remain in git history under the hash above."
 
 `site/reproduce/reproducibility.qmd`: the CI bullet's last sentence becomes "The demo GIFs are the exceptions: they are committed files, described in the next section."; the sentence "The displayed study was regenerated directly from the certified block-400 records." becomes "The figure is drawn when the site is built, from the certified block-400 records in `assets/echolocation_range_study.json`."
 
