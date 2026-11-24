@@ -1,11 +1,14 @@
 """Contracts for the corrected generated evidence shipped by Task 11."""
 
 import json
+import re
 from hashlib import sha256
 from pathlib import Path
 from statistics import median
 
 import pytest
+
+from clocks._replay import load_replay
 
 ROOT = Path(__file__).parents[1]
 ASSETS = ROOT / "assets"
@@ -23,15 +26,17 @@ EXPECTED_VISUAL_HASHES = {
     "demo_model_comparison.gif": (
         "27af99630edf6578e635d60cfd2f085442f8429ca008ce25afc935b823c6c9f2"
     ),
-    "demo_density.png": (
-        "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"
-    ),
     "demo_echolocation_3d.gif": (
         "5df30d7c052c3e366216866c9b0ecc991cc777467515dd1c7699de743413d34f"
     ),
     "echolocation_range_study.png": (
         "6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc"
     ),
+}
+RETIRED_VISUALS = {
+    "demo_density.png": (
+        "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"
+    )
 }
 ECHO_CERT_SOURCE_HASH = (
     "a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941"
@@ -175,6 +180,8 @@ PROVENANCE_VOCABULARY = (
     "seed-block 400",
     "400–411",
     "population reliability",
+    "committed replay",
+    "replay file",
 )
 
 
@@ -198,3 +205,48 @@ def test_landing_page_links_to_the_figure_provenance_section() -> None:
 
     assert "reproduce/reproducibility.qmd#sec-figures" in landing
     assert "{#sec-figures}" in provenance
+
+
+@pytest.mark.parametrize(("name", "expected_hash"), RETIRED_VISUALS.items())
+def test_retired_visuals_are_gone_but_recorded(name: str, expected_hash: str) -> None:
+    report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
+
+    assert not (ASSETS / name).exists()
+    assert not (SITE_ASSETS / name).exists()
+    assert f"| `{name}` | `{expected_hash}` |" in report.splitlines()
+    assert re.search(
+        rf"`{re.escape(name)}` was removed from both trees on \d{{4}}-\d{{2}}-\d{{2}};",
+        report,
+    )
+
+
+def _reproducibility_page() -> str:
+    return (ROOT / "site/reproduce/reproducibility.qmd").read_text()
+
+
+def test_density_provenance_names_its_run() -> None:
+    meta = load_replay(ROOT / "assets/replays/demo_density.npz").meta
+    page = " ".join(_reproducibility_page().split())
+
+    assert (
+        "**Replay data.** The density figure on "
+        "[Beyond Point Masses](../story/beyond-point-masses.qmd) is drawn when the "
+        "site is built, from `assets/replays/demo_density.npz`, the recorder's "
+        "archive of the demo's packaged run: "
+        f"{meta['n_observations']} observations, {meta['n_particles']:,} particles "
+        f"and seed {meta['seed']}. "
+    ) in page
+    assert "density PNG" not in page
+
+
+def test_provenance_section_describes_figures_drawn_at_build_time() -> None:
+    raw = _reproducibility_page()
+    page = " ".join(raw.split())
+
+    assert "## Where the figures come from {#sec-figures}" in raw
+    assert (
+        "[development calibration report]"
+        "(https://github.com/jbwhit/clocks/blob/main/"
+        "docs/2026-08-16-development-calibration.md) "
+        "is the record of the August 2026 release"
+    ) in page

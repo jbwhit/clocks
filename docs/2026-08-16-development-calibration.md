@@ -203,6 +203,8 @@ byte-deterministic across tool versions.
 | `echolocation_range_study.json` | `a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941` |
 | `echolocation_range_study.png` | `6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc` |
 
+`demo_density.png` was removed from both trees on 2026-11-23; the density figure is now drawn when the site is built, from `assets/replays/demo_density.npz`, and its old bytes remain in git history under the hash above.
+
 The default model-comparison asset is also a useful caution against narrating
 one finite evidence estimate as a guaranteed recovery. With K=2 truth, its
 80-observation, 2,000-particle, seed-42 run ended at K=2: 0.3990 and K=3:

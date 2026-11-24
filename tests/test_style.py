@@ -13,12 +13,15 @@ import matplotlib
 import matplotlib.ft2font
 import matplotlib.image
 import matplotlib.pyplot as plt
+import numpy as np
 import pytest
+from _figure_artists import png_size
 from matplotlib import font_manager
+from matplotlib.colors import to_rgb
 from matplotlib.font_manager import FontProperties
 
 import clocks._style
-from clocks._style import THEMES, Palette, palette, show, style
+from clocks._style import THEMES, Palette, palette, save_png, show, style
 
 
 def _luminance(hex_color: str) -> float:
@@ -416,3 +419,39 @@ def test_show_ignores_the_canvas_device_pixel_ratio(
     image = calls[0]
     assert _png_array(image).shape[:2] == (840, 1500)
     assert (image.width, image.height) == (750, 420)
+
+
+@pytest.mark.parametrize(
+    "caller_settings",
+    [
+        pytest.param({}, id="plain"),
+        pytest.param(
+            {
+                "savefig.bbox": "tight",
+                "savefig.transparent": True,
+                "savefig.facecolor": "magenta",
+            },
+            id="hostile",
+        ),
+    ],
+)
+def test_save_png_writes_the_authored_canvas(
+    tmp_path: Path, caller_settings: dict[str, object]
+) -> None:
+    with style("light"):
+        fig, ax = plt.subplots(figsize=(7.5, 5.4))
+        ax.plot([0, 1], [0, 1])
+    try:
+        with matplotlib.rc_context(caller_settings):
+            save_png(fig, tmp_path / "out.bin")
+    finally:
+        plt.close(fig)
+
+    assert [p.name for p in tmp_path.iterdir()] == ["out.bin"]
+    assert (tmp_path / "out.bin").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert png_size(tmp_path / "out.bin") == (1500, 1080)
+    pixel = matplotlib.image.imread(tmp_path / "out.bin", format="png")[0, 0]
+    np.testing.assert_allclose(
+        pixel[:3], to_rgb(palette("light").background), rtol=0, atol=1 / 255
+    )
+    assert pixel[3] == 1.0

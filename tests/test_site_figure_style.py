@@ -86,8 +86,11 @@ FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {"density_figure": 540}
 
 # Retired image files and library modules that draw figures; later tasks add to
 # these.
-RETIRED_ASSETS: tuple[str, ...] = ()
-LIBRARY_DRAWING_MODULES: tuple[str, ...] = ("src/clocks/_figures.py",)
+RETIRED_ASSETS: tuple[str, ...] = ("demo_density.png",)
+LIBRARY_DRAWING_MODULES: tuple[str, ...] = (
+    "src/clocks/_figures.py",
+    "src/clocks/_demos/demo_density.py",
+)
 
 
 def _is_plot_cell(cell: str) -> bool:

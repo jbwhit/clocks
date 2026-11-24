@@ -14,7 +14,23 @@ center $\mu$, width $\sigma$ (the profile's own width here, not the
 [observation noise](../method/notation-and-glossary.qmd#term-sigma-obs) from earlier pages), and peak amplitude $A$ — and the
 identical particle filter on top.
 
-![The density demo, one simulated run. Left: true vs inferred density profile. Center: the clock rates both produce. Right: convergence of all three parameters.](../assets/demo_density.png)
+```{python}
+#| code-fold: true
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "The density demo, one simulated run. Top: the true profile and, from 500 particles sampled from the final posterior, the pointwise median profile with its central 68% band; squares mark the clocks. Below: each parameter's posterior mean after each observation, with a band of one standard deviation, and its true value."
+#|   - "The density demo, one simulated run. Top: the true profile and, from 500 particles sampled from the final posterior, the pointwise median profile with its central 68% band; squares mark the clocks. Below: each parameter's posterior mean after each observation, with a band of one standard deviation, and its true value."
+from pathlib import Path
+
+from clocks.viz import THEMES, density_figure, load_replay, show, style
+
+# A cell runs in its page's directory: the archive is two levels up.
+replay = load_replay(Path("../../assets/replays/demo_density.npz"))
+for theme in THEMES:
+    with style(theme) as colors:
+        fig = density_figure(replay, colors)
+        show(fig)
+```
 
 ## What spreading the mass does to clocks
 
