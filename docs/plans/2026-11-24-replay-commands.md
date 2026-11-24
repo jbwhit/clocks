@@ -227,7 +227,7 @@ This note covers everything since 0.1.
 
 ### Task 3: Mutation checks
 
-No files change. **The coordinator runs it, with a mutation harness in worktrees that no reviewer or implementer is using**; mutants may run in several worktrees at once, one at a time in each, and no row is dropped or merged. In each worktree the environment is synced once on the clean tree; for every mutant the harness sets `PYTHONDONTWRITEBYTECODE=1`, deletes every `__pycache__`, confirms `git status --porcelain` is empty, applies the mutant and restores it in a `try`/`finally`, and runs the whole suite, default and slow tests together, with `uv run --no-sync pytest -q -m ''`, in the foreground with a 600000 ms timeout. **The expected sets below are the declaration for this pull request's head**; before the first mutant the coordinator records the baseline and checks every name in the table against the collected IDs, correcting the table, with a note, where a name is wrong. Every mutant breaks library code, a script, a page or a configuration file, never a test.
+No files change. **The coordinator runs it, with a mutation harness in worktrees that no reviewer or implementer is using**; mutants may run in several worktrees at once, one at a time in each, and no row is dropped or merged. In each worktree the environment is synced once on the clean tree; for every mutant the harness sets `PYTHONDONTWRITEBYTECODE=1`, deletes every `__pycache__`, confirms `git status --porcelain` is empty, applies the mutant and restores it in a `try`/`finally`, and runs the whole suite, default and slow tests together, with `uv run --no-sync pytest -q -m ''`, each run under the per-mutant time limit of pull request 3's Task 14 (three times the clean baseline's duration, the whole process group killed when it passes). **The expected sets below are the declaration for this pull request's head**; before the first mutant the coordinator records the baseline and checks every name in the table against the collected IDs, correcting the table, with a note, where a name is wrong. Every mutant breaks library code, a script, a page or a configuration file, never a test.
 
 | Task | Mutation | Tests that must fail, and no others |
 |---|---|---|
@@ -265,14 +265,14 @@ The expected sets are derived from the tests as this plan specifies them; none w
 
 - [ ] **Step 1: Complete and check the declaration** against the baseline's collected IDs.
 - [ ] **Step 2: Run each mutation** and record the exact set of failing test IDs and any change in what is collected.
-- [ ] **Step 3: Class every discrepancy, and resolve it**, exactly as pull request 3's Task 14, Step 3 says: an extra failure, a missing predicted failure, a surviving mutant, a collection failure or an unrelated crash; the declared set stays beside the observed one, and no test is changed merely so that the two agree.
+- [ ] **Step 3: Class every discrepancy, and resolve it**, exactly as pull request 3's Task 14, Step 3 says: an extra failure, a missing predicted failure, a surviving mutant, a collection failure, a timeout or an unrelated crash; the declared set stays beside the observed one, and no test is changed merely so that the two agree.
 - [ ] **Step 4: Report** the table of results with each row's class and resolution. The run counts as evidence only when every row is exact or resolved; until then the hand-over's mutation line says "not complete" and lists what is open.
 
 ---
 
 ### Hand-over
 
-The coordinator opens the pull request as a draft and gives in its description: what each command writes now and what happens to an older clip; that `--output` is gone and options cannot be abbreviated; the upgrade note; the mutation table with its declared and observed sets and, for each discrepancy, its class and resolution (Task 3, Steps 3 and 4). After review converges and the pull request is marked ready, the coordinator confirms on that head, by full SHA and with a non-empty `conclusion` for each: CI's default and slow steps and the wheel check's two new `ok:` lines; the site check; and the three replay-report jobs.
+The coordinator opens the pull request as a draft and gives in its description: what each command writes now and what happens to an older clip; that `--output` is gone and options cannot be abbreviated; the upgrade note; the mutation table with its declared and observed sets and, for each discrepancy, its class and resolution (Task 3, Steps 3 and 4). Before the merge, as in pull request 3's hand-over: after review converges and the pull request is marked ready, the coordinator confirms on that head, by full SHA, that each merge-gating run concluded `success`: `CI`'s default and slow steps and the wheel check's two new `ok:` lines; `Site check`; and the three `Replay report` jobs. After the merge, the `CI` and `Deploy site` runs for the merge commit on `main` are confirmed the same way.
 
 ## Self-review
 
