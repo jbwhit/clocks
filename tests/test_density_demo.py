@@ -4,6 +4,7 @@ import warnings
 from pathlib import Path
 
 import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from _figure_artists import png_size
@@ -244,6 +245,30 @@ def test_density_command_saves_the_figure_it_drew(
     assert len(saved) == 1
     assert saved[0][0] is fig
     assert saved[0][1] == tmp_path / "d.png"
+
+
+def test_a_failed_save_still_closes_the_figure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_save(fig: object, path: Path) -> None:
+        raise OSError("disk full")
+
+    plt.close("all")
+    monkeypatch.setattr(demo_density, "save_png", failing_save)
+
+    with pytest.raises(OSError, match="disk full"):
+        main(
+            [
+                "--output",
+                str(tmp_path / "d.png"),
+                "--observations",
+                "1",
+                "--particles",
+                "16",
+            ]
+        )
+
+    assert plt.get_fignums() == []
 
 
 @pytest.mark.parametrize(

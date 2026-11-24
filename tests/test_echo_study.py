@@ -338,6 +338,18 @@ def test_pass_counts_follow_each_tolerance(tolerances: dict, counts: list[str]) 
     assert _counts(fig) == counts
 
 
+def test_the_pass_counts_and_their_label_sit_above_the_top_panel() -> None:
+    fig, _ = _drawn(literal_study(), "light")
+    top, _ = _axes(fig)
+    fig.canvas.draw()
+    texts = [t for t in top.texts if t.get_gid() in {"pass-count", "pass-count-label"}]
+    assert len(texts) > 1
+    top_edge = top.get_window_extent().y1
+    for text in texts:
+        _, y = text.get_transform().transform(text.get_position())
+        assert y > top_edge, f"{text.get_text()!r} sits at {y}, panel top {top_edge}"
+
+
 def test_pass_counts_use_both_limits() -> None:
     fig, colors = _drawn(literal_study(), "light")
     top, _ = _axes(fig)
@@ -425,6 +437,7 @@ def test_write_summary_figure_saves_the_light_range_study(
     path = tmp_path / "study.png"
     built: list[tuple] = []
     saved: list[tuple] = []
+    save_faces: list[str] = []
     real_build = clocks._echo_study.range_study_figure
     real_save = clocks._echo_study.save_png
 
@@ -436,6 +449,7 @@ def test_write_summary_figure_saves_the_light_range_study(
 
     def save_spy(fig, target):
         saved.append((fig, target))
+        save_faces.append(to_hex(matplotlib.rcParams["figure.facecolor"]))
         real_save(fig, target)
 
     monkeypatch.setattr(clocks._echo_study, "range_study_figure", build_spy)
@@ -450,6 +464,7 @@ def test_write_summary_figure_saves_the_light_range_study(
     assert len(saved) == 1
     assert saved[0][0] is fig
     assert saved[0][1] == path
+    assert save_faces == [palette("light").background]
 
 
 def test_write_summary_figure_output(tmp_path: Path) -> None:

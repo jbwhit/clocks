@@ -262,7 +262,7 @@ def write_summary_figure(study: dict, png_path: Path) -> None:
     try:
         with style("light") as colors:
             fig = range_study_figure(study, colors)
-        save_png(fig, png_path)
+            save_png(fig, png_path)
     finally:
         if fig is not None:
             plt.close(fig)

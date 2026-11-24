@@ -219,10 +219,36 @@ def _is_show_of(statement: ast.stmt, name: str) -> bool:
     )
 
 
+def _style_palette_name(block: ast.With) -> str | None:
+    """Return the name the style block binds its palette to, if it binds one."""
+    for item in block.items:
+        call = item.context_expr
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "style"
+            and isinstance(item.optional_vars, ast.Name)
+        ):
+            return item.optional_vars.id
+    return None
+
+
 def _is_canonical(
     call: ast.Call, block: ast.With, parents: dict[ast.AST, ast.AST]
 ) -> bool:
-    """Is the call ``<name> = <builder>(...)`` followed directly by show(name)?"""
+    """Is the call ``<name> = <builder>(<data>, <palette>)`` then show(name)?
+
+    ``<palette>`` must be the name the style block binds, passed positionally
+    and alone, so a figure cannot be drawn with another theme's colours.
+    """
+    palette = _style_palette_name(block)
+    if (
+        palette is None
+        or call.keywords
+        or len(call.args) != 2
+        or not (isinstance(call.args[1], ast.Name) and call.args[1].id == palette)
+    ):
+        return False
     statement: ast.AST = call
     while parents[statement] is not block:
         statement = parents[statement]
@@ -661,6 +687,35 @@ _CANONICAL = (
             _CANONICAL.replace("THEMES:", "OTHER_THEMES:"),
             [_NOT_IN_BLOCK, _SHOW_NOT_IN_BLOCK],
             id="other_loop_name",
+        ),
+        pytest.param(
+            _CANONICAL.replace(
+                "density_figure(replay, colors)",
+                'density_figure(replay, palette("light"))',
+            ),
+            [_NOT_CANONICAL],
+            id="fixed_palette",
+        ),
+        pytest.param(
+            _CANONICAL.replace(
+                "        fig = density_figure(replay, colors)",
+                "        other = colors\n        fig = density_figure(replay, other)",
+            ),
+            [_NOT_CANONICAL],
+            id="other_palette_name",
+        ),
+        pytest.param(
+            _CANONICAL.replace(" as colors", "").replace(
+                "density_figure(replay, colors)",
+                "density_figure(replay, palette(theme))",
+            ),
+            [_NOT_CANONICAL],
+            id="no_as_name",
+        ),
+        pytest.param(
+            _CANONICAL.replace("replay, colors)", "replay, colors=colors)"),
+            [_NOT_CANONICAL],
+            id="palette_by_keyword",
         ),
         pytest.param(
             "for theme in THEMES:\n"

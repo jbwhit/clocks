@@ -84,8 +84,9 @@ for theme in THEMES:
         show(fig)
 ```
 
-The display subtracts the channel mean, but the likelihood uses an exact
-orthonormal contrast transform. For $C$ labeled clocks, let $Q$ have
+The animation's rate panel subtracts the channel mean from each clock's rate,
+while the plot above and the likelihood use an exact orthonormal contrast
+transform. For $C$ labeled clocks, let $Q$ have
 $C-1$ orthonormal rows perpendicular to the all-ones vector. Then
 $Q\mathbf{1}=0$ and $QQ^T=I_{C-1}$. If the raw channel noise is
 $\epsilon\sim\mathcal N(0,\sigma^2 I_C)$, the contrast noise is therefore
@@ -117,8 +118,8 @@ random seeds. A run passes if it recovers the position to within
 #| code-fold: true
 #| renderings: [light, dark]
 #| fig-cap:
-#|   - "Resolution against range, twelve runs at each of six ranges. Top: position error; bottom: mass error. Dots are individual runs and circles their median; squares are the filter's own uncertainty, the median posterior standard deviation; dashed lines are the pass limits. The counts along the top are the runs within both limits."
-#|   - "Resolution against range, twelve runs at each of six ranges. Top: position error; bottom: mass error. Dots are individual runs and circles their median; squares are the filter's own uncertainty, the median posterior standard deviation; dashed lines are the pass limits. The counts along the top are the runs within both limits."
+#|   - "Resolution against range, twelve runs at each of six ranges. Top: position error; bottom: mass error. Dots are individual runs and circles their median; squares are the filter's own uncertainty, the median posterior standard deviation (for position, the three coordinates' standard deviations combined in quadrature); dashed lines are the pass limits. The counts along the top are the runs within both limits."
+#|   - "Resolution against range, twelve runs at each of six ranges. Top: position error; bottom: mass error. Dots are individual runs and circles their median; squares are the filter's own uncertainty, the median posterior standard deviation (for position, the three coordinates' standard deviations combined in quadrature); dashed lines are the pass limits. The counts along the top are the runs within both limits."
 import json
 from pathlib import Path
 

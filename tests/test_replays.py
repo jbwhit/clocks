@@ -609,6 +609,20 @@ def test_a_mixed_row_names_the_original_clock() -> None:
         )
 
 
+def test_a_mixed_row_names_the_original_clock_for_a_spread() -> None:
+    # Clock 0 has a spread and agrees (mean 1.0, s.d. 0.01 = predicted_std);
+    # clock 1 has none, its mean matches, but its dots spread by 3e-7.
+    with pytest.raises(
+        AssertionError, match="row 0, clock 1: the dots' s.d. is 3e-07 where"
+    ):
+        _assert_predictions_match_dots(
+            np.array([[1.0, 2.0]]),
+            np.array([[0.01, 0.0]]),
+            np.array([[[0.99, 2.0 - 3e-7], [1.01, 2.0 + 3e-7]]]),
+            0,
+        )
+
+
 def test_prior_cases_and_the_skip_map_partition_the_predicting_demos() -> None:
     assert set(PRIOR_CHECKED_DEMOS).isdisjoint(FIRST_CHECKED_ROW)
     assert set(PRIOR_CHECKED_DEMOS) | set(FIRST_CHECKED_ROW) == set(PREDICTING_DEMOS)

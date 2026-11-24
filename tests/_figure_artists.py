@@ -53,9 +53,19 @@ def visible_colours(fig: Figure) -> set[str]:
     return found
 
 
+def _in_visible_axes(artist: Artist) -> bool:
+    owner = getattr(artist, "axes", None)
+    return owner is None or owner.get_visible()
+
+
 def one(container: Artist, gid: str) -> Artist:
-    """The single artist under ``container`` that carries ``gid``."""
-    matches = [a for a in container.findobj() if a.get_gid() == gid]
+    """The single artist under ``container`` that carries ``gid``.
+
+    An artist whose axes is hidden is not drawn, so it does not count.
+    """
+    matches = [
+        a for a in container.findobj() if a.get_gid() == gid and _in_visible_axes(a)
+    ]
     assert len(matches) == 1, (
         f"expected one artist with gid {gid!r}, got {len(matches)}"
     )
@@ -71,7 +81,7 @@ def gid_census(fig: Figure) -> dict[str, list[str]]:
     for ax in fig.axes:
         for artist in ax.findobj():
             gid = artist.get_gid()
-            if gid is None or artist is ax:
+            if gid is None or artist is ax or not _in_visible_axes(artist):
                 continue
             census[gid].append(ax.get_gid())
     return dict(census)

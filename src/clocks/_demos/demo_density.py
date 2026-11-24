@@ -207,9 +207,11 @@ def _run_demo(args: argparse.Namespace) -> None:
     _print_estimate(replay, -1, n_particles)
     with style("light") as colors:
         fig = density_figure(replay, colors)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        save_png(fig, args.output)
-        plt.close(fig)
+        try:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            save_png(fig, args.output)
+        finally:
+            plt.close(fig)
     print(f"Saved: {args.output}")
 
 

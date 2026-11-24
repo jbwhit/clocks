@@ -4,7 +4,8 @@ title: "Reproducibility"
 
 ## Seeds everywhere
 
-Every demo and every executed cell on this site fixes its RNG seed.
+Every demo, and every executed cell on this site that draws random numbers,
+fixes its RNG seed.
 `SimulationConfig.seed` and `InferenceConfig.seed` thread a single
 generator through observation noise and the particle filter respectively,
 so a given configuration is repeatable in the same numerical environment.
@@ -28,7 +29,7 @@ because hardcoded counts go stale.
 
 ## CI
 
-Three workflows run on GitHub Actions:
+Four workflows run on GitHub Actions:
 
 - [`ci.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/ci.yml)
   runs tests and lint on pushes to `main` and on non-draft pull requests
@@ -43,6 +44,10 @@ Three workflows run on GitHub Actions:
   renders this site and runs the link and figure checks on non-draft pull
   requests targeting `main` that touch the site, the library, or the data the
   site's figures are drawn from, so a broken page is caught before it merges.
+- [`replay-report.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/replay-report.yml)
+  records each demo again on the runner and reports where the result differs
+  from the committed replay data. It is a diagnostic: every step is allowed to
+  fail without failing the run, so it never fails a pull request.
 
 ## Where the figures come from {#sec-figures}
 

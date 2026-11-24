@@ -12,6 +12,7 @@ from typing import IO
 import numpy as np
 import pytest
 
+from clocks import _replay
 from clocks._demos import demo_1d
 from clocks._replay import (
     CLOUD_SIZE,
@@ -816,6 +817,10 @@ def test_thin_picks(weights, size, expected) -> None:
     assert picked.dtype == np.float32
     assert picked.shape == (len(expected), 1)
     assert picked[:, 0].tolist() == expected
+
+
+def test_the_thinning_offset_is_the_golden_ratio_conjugate() -> None:
+    assert _replay.THINNING_OFFSET == (math.sqrt(5.0) - 1.0) / 2.0
 
 
 def test_thin_ignores_the_scale_of_the_weights() -> None:

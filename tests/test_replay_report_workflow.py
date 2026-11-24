@@ -265,7 +265,7 @@ def test_a_failed_read_leaves_the_summary_untouched(tmp_path: Path) -> None:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     fake_cat = fake_bin / "cat"
-    fake_cat.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fake_cat.write_text("#!/bin/sh\nprintf 'partial'\nexit 1\n", encoding="utf-8")
     fake_cat.chmod(0o755)
 
     stdout, summary = _run_last_step(

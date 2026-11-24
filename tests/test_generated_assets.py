@@ -293,3 +293,54 @@ def test_site_check_description_names_the_figure_data() -> None:
         "touch the site, the library, or the data the site's figures are drawn from"
         in page
     )
+
+
+def test_the_seed_sentence_covers_only_cells_that_draw_random_numbers() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "Every demo, and every executed cell on this site that draws random "
+        "numbers, fixes its RNG seed."
+    ) in page
+
+
+def test_the_workflow_count_is_the_number_of_workflow_files() -> None:
+    raw = _reproducibility_page()
+    page = " ".join(raw.split())
+    files = list((ROOT / ".github/workflows").glob("*.yml"))
+    section = raw.split("Four workflows run on GitHub Actions:")[1]
+    section = section.split("\n## ")[0]
+    bullets = re.findall(r"^- \[`[\w-]+\.yml`\]", section, re.MULTILINE)
+
+    assert "Four workflows run on GitHub Actions:" in page
+    assert len(files) == 4
+    assert len(bullets) == len(files)
+
+
+_NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+_NUMBER_WORDS |= {7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven"}
+_NUMBER_WORDS |= {12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen"}
+
+
+def test_the_range_caption_counts_the_studys_runs_and_ranges() -> None:
+    study = json.loads((ASSETS / "echolocation_range_study.json").read_text())
+    ranges = study["ranges"]
+    per_range = {
+        sum(run["range_r"] == range_r for run in study["results"]) for range_r in ranges
+    }
+    assert len(per_range) == 1
+    phrase = (
+        f"{_NUMBER_WORDS[per_range.pop()]} runs at each of "
+        f"{_NUMBER_WORDS[len(ranges)]} ranges"
+    )
+    lines = (ROOT / "site/story/gravitational-echolocation.qmd").read_text()
+    captions = [
+        line for line in lines.splitlines() if line.startswith('#|   - "Resolution')
+    ]
+
+    assert len(captions) == 2
+    for caption in captions:
+        assert phrase in caption
+        assert (
+            "the median posterior standard deviation (for position, the three "
+            "coordinates' standard deviations combined in quadrature);"
+        ) in caption

@@ -577,16 +577,19 @@ def test_compare_names_the_first_difference(tmp_path: Path) -> None:
     )
 
 
-def test_a_difference_that_is_not_numeric_omits_the_size(tmp_path: Path) -> None:
+@pytest.mark.parametrize("field", ["seed", "noise_std"])
+def test_a_difference_that_is_not_numeric_omits_the_size(
+    tmp_path: Path, field: str
+) -> None:
     a, b, report = tmp_path / "a", tmp_path / "b", tmp_path / "report.md"
     _record_into(a)
     committed = load_replay(a / "demo_1d.npz")
-    meta = {**committed.meta, "seed": int(committed.meta["seed"]) + 1}
+    meta = {**committed.meta, field: committed.meta[field] + 1}
     save_replay(a / "demo_1d.npz", replace(committed, meta=meta))
 
     assert _compare(a, b, report) == 1
 
-    assert "demo_1d: differs at meta.seed" in report.read_text().splitlines()
+    assert f"demo_1d: differs at meta.{field}" in report.read_text().splitlines()
 
 
 def test_compare_ignores_created_with(tmp_path: Path) -> None:

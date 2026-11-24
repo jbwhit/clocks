@@ -186,6 +186,16 @@ def test_density_figure_size_and_axes(themed_figure) -> None:
 
 
 @each_theme
+def test_an_artist_under_a_hidden_axes_is_not_counted_as_drawn(themed_figure) -> None:
+    fig, _ = themed_figure
+    one(fig.axes[0], "true-profile")
+    fig.axes[0].set_visible(False)
+    with pytest.raises(AssertionError, match="got 0"):
+        one(fig.axes[0], "true-profile")
+    assert "true-profile" not in gid_census(fig)
+
+
+@each_theme
 def test_true_profile(themed_figure) -> None:
     fig, colors = themed_figure
     line = one(fig.axes[0], "true-profile")
@@ -390,6 +400,12 @@ def test_trace_headers() -> None:
             id="prior_row_left_out",
         ),
         pytest.param([0.0, 7.9], [1.0, 0.5], 7.5, (7.36, 8.0), id="clipped_to_prior"),
+        # Row 1 spans -8.4 to -7.4 and the truth is -7.5, so the interval is
+        # [-8.4, -7.4]: width 1.0, pad 0.04; the lower end -8.44 is clipped to -8.0
+        # and the upper end is -7.4 + 0.04 = -7.36.
+        pytest.param(
+            [0.0, -7.9], [1.0, 0.5], -7.5, (-8.0, -7.36), id="clipped_to_prior_below"
+        ),
         pytest.param(
             [0.0, 1.5, 1.5], [3.0, 0.0, 0.0], 1.5, (0.86, 2.14), id="zero_width"
         ),

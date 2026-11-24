@@ -450,7 +450,21 @@ def test_save_png_writes_the_authored_canvas(
     assert [p.name for p in tmp_path.iterdir()] == ["out.bin"]
     assert (tmp_path / "out.bin").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert png_size(tmp_path / "out.bin") == (1500, 1080)
-    pixel = matplotlib.image.imread(tmp_path / "out.bin", format="png")[0, 0]
+    image = matplotlib.image.imread(tmp_path / "out.bin", format="png")
+    pixel = image[0, 0]
+    assert np.any(np.any(image != pixel, axis=-1)), "nothing is drawn"
+    # The frame and ticks already differ from the corner, so also compare with
+    # the same figure drawn without its one line.
+    with style("light"):
+        bare, _ = plt.subplots(figsize=(7.5, 5.4))
+    try:
+        with matplotlib.rc_context(caller_settings):
+            save_png(bare, tmp_path / "bare.bin")
+    finally:
+        plt.close(bare)
+    bare_image = matplotlib.image.imread(tmp_path / "bare.bin", format="png")
+    assert bare_image.shape == image.shape
+    assert np.any(image != bare_image), "the plotted line is missing"
     np.testing.assert_allclose(
         pixel[:3], to_rgb(palette("light").background), rtol=0, atol=1 / 255
     )
