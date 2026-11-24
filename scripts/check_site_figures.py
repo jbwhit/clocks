@@ -1,18 +1,20 @@
 """Check the figure contract for the rendered site.
 
-Each of the nine plotting pages draws its plot twice, once per colour theme.
-Quarto wraps the two outputs in elements with the classes `light-content` and
-`dark-content`, and the site shows one at a time. This check parses the
-rendered HTML and requires, for every page:
+Pages draw their plots twice each, once per colour theme. Quarto wraps the
+two outputs in elements with the classes `light-content` and `dark-content`,
+and the site shows one at a time. `EXPECTED_FIGURES` lists, for each page, its
+figures in document order. This check parses the rendered HTML and requires,
+for every listed page:
 
-- exactly one wrapper per theme, none carrying both theme classes and none
-  nested inside another;
-- exactly one image in each wrapper, declared 750 pixels wide and the page's
+- exactly two wrappers per figure, in document order light then dark, none
+  carrying both theme classes and none nested inside another;
+- exactly one image in each wrapper, declared 750 pixels wide and the figure's
   expected height, whose URL path (query and fragment dropped) names a file
-  inside the site, the two files existing and different;
+  inside the site, the two files existing, different, and differing in content;
 - exactly one `figcaption` in each wrapper, with the same text in both.
 
-Images outside the two wrappers (committed GIFs and PNGs) are ignored.
+A page not in the manifest must hold no theme wrapper at all. Images outside
+the wrappers (committed GIFs and PNGs) are ignored.
 
 Run from the repo root, after rendering the site:
 
@@ -25,6 +27,7 @@ from __future__ import annotations
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,17 +42,26 @@ _VOID_TAGS = frozenset(
     | {"source", "track", "wbr"}
 )
 
-# Page (relative to the output directory) -> declared image height in pixels.
-EXPECTED_PAGES: dict[str, int] = {
-    "story/clocks-as-gravimeters.html": 420,
-    "story/one-clock-is-not-enough.html": 420,
-    "story/the-search-in-one-dimension.html": 540,
-    "story/into-the-plane.html": 540,
-    "story/two-hidden-masses.html": 420,
-    "story/how-many-masses.html": 420,
-    "story/beyond-point-masses.html": 420,
-    "story/gravitational-echolocation.html": 420,
-    "method/the-particle-filter.html": 540,
+
+class Fig(NamedTuple):
+    """One figure on a page: its kind, declared image height, and a clip name."""
+
+    kind: str
+    height: int
+    clip: str | None = None
+
+
+# Page (relative to the output directory) -> its figures, in document order.
+EXPECTED_FIGURES: dict[str, tuple[Fig, ...]] = {
+    "story/clocks-as-gravimeters.html": (Fig("plot", 420),),
+    "story/one-clock-is-not-enough.html": (Fig("plot", 420),),
+    "story/the-search-in-one-dimension.html": (Fig("plot", 540),),
+    "story/into-the-plane.html": (Fig("plot", 540),),
+    "story/two-hidden-masses.html": (Fig("plot", 420),),
+    "story/how-many-masses.html": (Fig("plot", 420),),
+    "story/beyond-point-masses.html": (Fig("plot", 420),),
+    "story/gravitational-echolocation.html": (Fig("plot", 420),),
+    "method/the-particle-filter.html": (Fig("plot", 540),),
 }
 
 
@@ -114,18 +126,37 @@ class _FigureParser(HTMLParser):
 
 
 def figure_failures(output_dir: Path) -> list[str]:
-    """Return one message per violated rule across the expected pages."""
+    """Return one message per violated rule across the manifest and the site."""
     failures: list[str] = []
-    for page, height in EXPECTED_PAGES.items():
+    for page, figures in EXPECTED_FIGURES.items():
         path = output_dir / page
         if not path.is_file():
             failures.append(f"{page}: page is missing from {output_dir}")
             continue
-        failures.extend(_page_failures(page, path, height, output_dir))
+        failures.extend(_page_failures(page, path, figures, output_dir))
+    failures.extend(_unlisted_page_failures(output_dir))
     return failures
 
 
-def _page_failures(page: str, path: Path, height: int, output_dir: Path) -> list[str]:
+def _unlisted_page_failures(output_dir: Path) -> list[str]:
+    failures: list[str] = []
+    for path in sorted(output_dir.rglob("*.html")):
+        relative = path.relative_to(output_dir)
+        if "site_libs" in relative.parts or relative.as_posix() in EXPECTED_FIGURES:
+            continue
+        parser = _FigureParser()
+        parser.feed(path.read_text(encoding="utf-8"))
+        if parser.wrappers:
+            failures.append(
+                f"{relative.as_posix()}: not in the figure manifest, "
+                f"but has {len(parser.wrappers)} theme wrapper(s)"
+            )
+    return failures
+
+
+def _page_failures(
+    page: str, path: Path, figures: tuple[Fig, ...], output_dir: Path
+) -> list[str]:
     parser = _FigureParser()
     parser.feed(path.read_text(encoding="utf-8"))
     ambiguous = [w for w in parser.wrappers if len(w.themes) > 1]
@@ -140,35 +171,67 @@ def _page_failures(page: str, path: Path, height: int, output_dir: Path) -> list
         for w in parser.wrappers
         if w.nested
     ]
+    wrappers = parser.wrappers
+    if len(wrappers) != 2 * len(figures):
+        failures.append(
+            f"{page}: expected {len(figures)} figure(s), "
+            f"{2 * len(figures)} theme wrappers; found {len(wrappers)}"
+        )
+        return failures
+    for index, figure in enumerate(figures, start=1):
+        pair = wrappers[2 * index - 2 : 2 * index]
+        if [w.themes[0] for w in pair] != list(THEMES):
+            found = " then ".join(f"{w.themes[0]}-content" for w in pair)
+            failures.append(
+                f"{page}: figure {index}: expected light-content then "
+                f"dark-content, found {found}"
+            )
+            continue
+        if figure.kind != "plot":
+            raise ValueError(
+                f"{page}: figure {index}: no check for kind {figure.kind!r}"
+            )
+        failures.extend(
+            _plot_failures(f"{page}: figure {index}", pair, figure, path, output_dir)
+        )
+    return failures
+
+
+def _plot_failures(
+    label: str,
+    pair: list[_Wrapper],
+    figure: Fig,
+    page_path: Path,
+    output_dir: Path,
+) -> list[str]:
+    failures: list[str] = []
     files: dict[str, Path] = {}
     captions: dict[str, str] = {}
-    for theme in THEMES:
-        label = f"{page}: {theme}-content"
-        wrappers = [w for w in parser.wrappers if w.themes == [theme]]
-        if len(wrappers) != 1:
-            failures.append(f"{label}: expected 1 wrapper, found {len(wrappers)}")
-            continue
-        wrapper = wrappers[0]
-        failures.extend(_image_failures(label, wrapper.images, height))
+    for theme, wrapper in zip(THEMES, pair, strict=True):
+        theme_label = f"{label} {theme}-content"
+        failures.extend(_image_failures(theme_label, wrapper.images, figure.height))
         if len(wrapper.images) == 1:
             src = wrapper.images[0].get("src") or ""
-            resolved, problem = _resolve_source(src, path, output_dir)
+            resolved, problem = _resolve_source(src, page_path, output_dir)
             if resolved is None:
-                failures.append(f"{label}: {problem}")
+                failures.append(f"{theme_label}: {problem}")
             else:
                 files[theme] = resolved
         texts = wrapper.captions
         if len(texts) != 1:
-            failures.append(f"{label}: expected 1 figcaption, found {len(texts)}")
+            failures.append(f"{theme_label}: expected 1 figcaption, found {len(texts)}")
         elif not texts[0]:
-            failures.append(f"{label}: empty caption")
+            failures.append(f"{theme_label}: empty caption")
         else:
             captions[theme] = texts[0]
-    if len(files) == 2 and files["light"] == files["dark"]:
-        failures.append(f"{page}: light and dark use the same image file")
+    if len(files) == 2:
+        if files["light"] == files["dark"]:
+            failures.append(f"{label}: light and dark use the same image file")
+        elif files["light"].read_bytes() == files["dark"].read_bytes():
+            failures.append(f"{label}: light and dark images have the same content")
     if len(captions) == 2 and captions["light"] != captions["dark"]:
         failures.append(
-            f"{page}: captions differ: {captions['light']!r} vs {captions['dark']!r}"
+            f"{label}: captions differ: {captions['light']!r} vs {captions['dark']!r}"
         )
     return failures
 
@@ -200,6 +263,8 @@ def _resolve_source(
     except ValueError:
         return None, f"image URL is malformed: {src!r}"
     path = unquote(url.path)
+    if "\x00" in path:
+        return None, f"image path contains a NUL: {src!r}"
     # The decoded path is checked too: %2F decodes to a leading slash.
     if url.scheme or url.netloc or path.startswith("/"):
         return None, f"image is outside the site: {src!r}"
@@ -218,7 +283,11 @@ def main() -> int:
         for failure in failures:
             print(f"  {failure}")
         return 1
-    print(f"Figure contract OK: {len(EXPECTED_PAGES)} pages checked.")
+    figure_count = sum(len(figures) for figures in EXPECTED_FIGURES.values())
+    print(
+        f"Figure contract OK: {len(EXPECTED_FIGURES)} pages, "
+        f"{figure_count} figures checked."
+    )
     return 0
 
 
