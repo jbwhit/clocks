@@ -1215,7 +1215,9 @@ def _exclusion_case(ax, case: str) -> list[tuple[float, float]]:
     """The points to label; marks, and an inset where asked, drawn on ``ax``.
 
     A mark sits at the centre of every candidate box of the last point but the
-    first offset's, so that offset alone covers none.
+    first offset's, so that offset alone covers none; the second offset's box
+    holds a second mark, so that a rule which ranks by order alone, ignoring
+    the marks, takes a different offset from the rule.
     """
     if case == "panel_edge":
         points = [(9.6, 5.0)]
@@ -1235,6 +1237,8 @@ def _exclusion_case(ax, case: str) -> list[tuple[float, float]]:
     for offset in OFFSETS[1:]:
         box = _candidate_box(ax, text, points[-1], offset)
         centres.append(((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2))
+    second = _candidate_box(ax, text, points[-1], OFFSETS[1])
+    centres.append(((3 * second.x0 + second.x1) / 4, (second.y0 + second.y1) / 2))
     data = ax.transData.inverted().transform(centres)
     ax.plot(data[:, 0], data[:, 1], linestyle="none", marker="o")
     return points
@@ -1266,7 +1270,12 @@ def test_label_masses_keeps_its_exclusions(case: str) -> None:
             assert kinds == tuple(int(k == _EXCLUSION_OF[case]) for k in range(3))
             assert all(marks >= 1 for _, marks, _ in ranks[1:])
             assert any(sum(kinds) == 0 for kinds, _, _ in ranks[1:])
+            # The second offset is free but covers two marks: ignoring the marks
+            # would take it, where the rule takes a later offset covering one.
+            assert sum(ranks[1][0]) == 0 and ranks[1][1] == 2
         expected = _choose(ranks)
+        if case != "all_blocked":
+            assert expected != OFFSETS[1]
 
         labels = label_masses(ax, points, palette("light"))
 
