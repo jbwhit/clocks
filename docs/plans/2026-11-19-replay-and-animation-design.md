@@ -4,7 +4,7 @@
 
 **Status:** Approved for implementation. Codex xhigh round 3, on `75ef763`:
 "SOUND ENOUGH TO IMPLEMENT", with three small findings that this revision folds
-in.
+in. Corrected after merge: clock positions are compared at `rtol=1e-12, atol=1e-12`, not exactly (`a108783`).
 
 **Source:** findings V1, V5 and C6 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), the visual reviewer's critique
@@ -251,12 +251,15 @@ which valid trajectory a machine takes, and full comparison is reported.
 **The gate**, the same on every platform. A test calls the demo's `record()`
 and compares it with the committed archive:
 
-1. **Schema and inputs, exactly.** Key set, shapes and dtypes; `meta` except
-   `created_with`; `clock_positions`, `true_params`, `model_ks` and
-   `model_prior`. The inputs computed in floating point (`true_rates`,
+1. **Schema and inputs.** Key set, shapes and dtypes; `meta` except
+   `created_with`; `true_params`, `model_ks` and `model_prior`, exactly. The
+   inputs computed in floating point (`clock_positions`, `true_rates`,
    `observations`, `filter_observations`) are compared with `rtol=1e-12` and
-   `atol=1e-12`: a library's last digit is not the scenario, and centred and
-   contrast values near zero need the absolute term.
+   `atol=1e-12`: a library's low-order bits are not the scenario, and centred
+   and contrast values near zero need the absolute term. The two-mass 2D demo's
+   clocks are drawn from a seeded generator, and the x86-64 runner rounds their
+   scaling differently from the arm64 machine that recorded the archive (pull
+   request 1, `a108783`).
 2. **Summaries a reader sees, within bounds**, after observations 1 and 8 and
    at the end: each component of the posterior mean, and each posterior
    standard deviation, within a stated absolute distance of the archive's. The
@@ -355,8 +358,9 @@ row).
 
 **Invariants on the committed archive**, with no inference:
 
-- the files are exactly the seven names; each loads; `meta` and the geometry
-  equal the demo's `scenario()`;
+- the files are exactly the seven names; each loads; `meta` equals
+  the demo's `scenario()`, and its clock positions match the scenario's at
+  `rtol=1e-12, atol=1e-12`;
 - `true_rates` equals the forward model at `true_params` (1e-12). This holds
   for the density demo too, and involves no readings;
 - each echolocation reading sums to zero within an absolute 1e-12, and
@@ -718,8 +722,9 @@ section is retitled "Where the figures come from".
   `assets/replays/<name>.npz`, written by the recorder: configuration, seed,
   observations, a summary of the cloud before any observation and after each,
   and, except for the model-comparison run, a 500-particle sample for display.
-  Tests run each demo again, compare its inputs exactly and compare its
-  summaries within stated bounds; they do not require the same random path.
+  Tests run each demo again; they compare its inputs, the computed ones (clock
+  positions, true rates and readings) at `rtol=1e-12, atol=1e-12` and the rest
+  exactly, and its summaries within stated bounds; they do not require the same random path.
   Video files are build products. Each archive is one finite realization.
 - **Echolocation animation**: the opening sentences calling the GIF an old
   release whose panel "will change when the assets are next regenerated" are

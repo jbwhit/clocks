@@ -1,5 +1,6 @@
 import errno
 import json
+import math
 import os
 import re
 import struct
@@ -796,7 +797,7 @@ def test_save_replaces_an_existing_archive_whole(tmp_path: Path) -> None:
 # --- thin and record_filter --------------------------------------------------
 
 
-PHI = (5**0.5 - 1) / 2
+PHI = (math.sqrt(5.0) - 1.0) / 2.0
 
 
 @pytest.mark.parametrize(
