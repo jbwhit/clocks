@@ -20,7 +20,23 @@ line. The interesting changes are *geometric*:
   could explain that clock's reading with an arbitrarily small mass — the
   offset keeps the geometry informative.
 
-![The 2D search, one simulated run: 8 clocks, one hidden mass, three unknowns (x, y, M).](../assets/demo_2d.gif)
+```{=html}
+<figure class="replay">
+<video class="light-content" aria-label="Animation: the 2D search" aria-describedby="demo-2d-text" src="../media/demo_2d.light.mp4" poster="../media/demo_2d.light.png" width="750" height="450" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="Animation: the 2D search" aria-describedby="demo-2d-text" src="../media/demo_2d.dark.mp4" poster="../media/demo_2d.dark.png" width="750" height="450" controls playsinline preload="none"></video>
+<figcaption>The 2D search, one simulated run: 8 clocks, one hidden mass, three unknowns (x, y, M). Left: the cloud and the clocks, each given a stronger fill the slower it runs. Right: the three estimates after each observation.</figcaption>
+</figure>
+```
+
+::: {#demo-2d-text}
+Before any reading the dots cover the whole square. The first readings pull
+them toward the mass, and by the eighth they are a small cloud around it; the
+three traces at the right narrow at the same time. After 50 readings the run
+ends at x = 1.43 ± 0.07, y = -1.15 ± 0.08 and M = 0.149 ± 0.001, against a true
+x = 1.50, y = -1.00 and M = 0.150. Each ± is one standard deviation of the
+final cloud. The y estimate sits about two of those from the truth: that is
+this run's noise, and another seed would miss in another direction.
+:::
 
 ## The surviving hypotheses
 

@@ -40,5 +40,6 @@ notes and an external Gemini review, 2026-02; updated 2026-06.)
 
 - **In-browser interactivity.** The inference engine is pure numpy/scipy,
   which Pyodide supports — a live-slider demo could run client-side on the
-  website without a server. (The website ships static GIFs by deliberate
-  scope choice; see docs/superpowers/specs/2026-06-09-deep-clean-and-website-design.md.)
+  website without a server. (The website ships pre-rendered video drawn
+  from committed replay data, with native controls and no script; see
+  docs/plans/2026-11-19-replay-and-animation-design.md.)

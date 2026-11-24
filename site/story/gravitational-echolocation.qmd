@@ -84,9 +84,10 @@ for theme in THEMES:
         show(fig)
 ```
 
-The animation's rate panel subtracts the channel mean from each clock's rate,
-while the plot above and the likelihood use an exact orthonormal contrast
-transform. For $C$ labeled clocks, let $Q$ have
+The animation's panel of fitted against observed readings uses readings with
+the channel mean subtracted from each clock's rate, while the plot above and
+the likelihood use an exact orthonormal contrast transform. For $C$ labeled
+clocks, let $Q$ have
 $C-1$ orthonormal rows perpendicular to the all-ones vector. Then
 $Q\mathbf{1}=0$ and $QQ^T=I_{C-1}$. If the raw channel noise is
 $\epsilon\sim\mathcal N(0,\sigma^2 I_C)$, the contrast noise is therefore
@@ -102,10 +103,28 @@ components as independent would give the wrong absolute
 ## Watching the head lock on
 
 The demo places the mass at two circumradii, off-axis, and shows eighty
-differential observations while the camera orbits. It is a single run at the
-closest, most favorable range.
+differential observations while the camera turns part of the way around the
+head. It is a single run at the closest, most favorable range.
 
-![The echolocation demo. Left: the head lattice, the true exterior mass (star), and the particle cloud, camera orbiting. Right, top to bottom: parameter convergence, mass marginal, differential rates by clock.](../assets/demo_echolocation_3d.gif)
+```{=html}
+<figure class="replay">
+<video class="light-content" aria-label="Animation: the head locating an exterior mass" aria-describedby="demo-echolocation-3d-text" src="../media/demo_echolocation_3d.light.mp4" poster="../media/demo_echolocation_3d.light.png" width="750" height="550" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="Animation: the head locating an exterior mass" aria-describedby="demo-echolocation-3d-text" src="../media/demo_echolocation_3d.dark.mp4" poster="../media/demo_echolocation_3d.dark.png" width="750" height="550" controls playsinline preload="none"></video>
+<figcaption>The echolocation demo, one simulated run. Center: the head, its clocks, the cloud and the true mass (ring). Upper left: the whole search box. Lower left: the fitted readings against the observed ones: agreement with the readings used in the fit, not a test on new data. Right: the four estimates after each observation.</figcaption>
+</figure>
+```
+
+::: {#demo-echolocation-3d-text}
+Before any reading the dots fill the whole search box, 32 units on a side, and
+only 0.4% of the prior lies inside the close view around the head. The first
+reading collapses the cloud into that view, where 100.0% of its weight stays;
+the small panel of the whole box shows one cluster where the box was full.
+After 80 readings the run ends at x = 0.98 ± 0.02, y = 1.46 ± 0.02,
+z = 2.93 ± 0.03 and M = 0.078 ± 0.002, against true values of 0.99, 1.48, 2.97
+and 0.080. Each ± is one standard deviation of the final cloud. The panel of
+fitted against observed readings shows agreement with the readings used in the
+fit, not a test on new data.
+:::
 
 ## How far does the sense reach?
 

@@ -21,7 +21,23 @@ summed Newtonian potentials and a pedagogical weak-field rate map, a
 [inverse problem](method/notation-and-glossary.qmd#term-inverse-problem),
 and a series of increasingly hard detection puzzles.
 
-![One simulated run: a particle filter localizing a hidden mass on a plane from clock rates alone. Clockwise from top left: the physical setup, the cloud of surviving hypotheses, the convergence of the estimates, and the observed tick rates.](assets/demo_2d.gif)
+```{=html}
+<figure class="replay">
+<video class="light-content" aria-label="Animation: the 2D search" aria-describedby="demo-2d-text" src="media/demo_2d.light.mp4" poster="media/demo_2d.light.png" width="750" height="450" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="Animation: the 2D search" aria-describedby="demo-2d-text" src="media/demo_2d.dark.mp4" poster="media/demo_2d.dark.png" width="750" height="450" controls playsinline preload="none"></video>
+<figcaption>One simulated run: a particle filter finding a hidden mass on a plane from clock rates alone. Left: the cloud of hypotheses, the eight clocks and the true position. Right: the estimates of x, y and M after each observation.</figcaption>
+</figure>
+```
+
+::: {#demo-2d-text}
+Before any reading the dots cover the whole square. The first readings pull
+them toward the mass, and by the eighth they are a small cloud around it; the
+three traces at the right narrow at the same time. After 50 readings the run
+ends at x = 1.43 ± 0.07, y = -1.15 ± 0.08 and M = 0.149 ± 0.001, against a true
+x = 1.50, y = -1.00 and M = 0.150. Each ± is one standard deviation of the
+final cloud. The y estimate sits about two of those from the truth: that is
+this run's noise, and another seed would miss in another direction.
+:::
 
 Here is the whole round trip — simulate noisy clock readings near a hidden
 mass, then recover it:

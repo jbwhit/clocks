@@ -8,12 +8,30 @@ Three clocks sit on a line; somewhere on a parallel track hides a single
 mass. Two unknowns — position $x$ and mass $M$ — and a stream of noisy tick
 rates. Here is the full search, animated:
 
-![The 1D search, one simulated run. Clockwise from top left: the physical setup; the particle cloud in (x, M) space; the convergence of both estimates with uncertainty bands; the observed tick rates being fed to the filter.](../assets/demo_1d.gif)
+```{=html}
+<figure class="replay">
+<video class="light-content" aria-label="Animation: the search in one dimension" aria-describedby="demo-1d-text" src="../media/demo_1d.light.mp4" poster="../media/demo_1d.light.png" width="750" height="450" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="Animation: the search in one dimension" aria-describedby="demo-1d-text" src="../media/demo_1d.dark.mp4" poster="../media/demo_1d.dark.png" width="750" height="450" controls playsinline preload="none"></video>
+<figcaption>The 1D search, one simulated run. Left: the cloud of hypotheses in position and mass, above the three clocks and, clock by clock, the true, predicted and measured slowing. Right: the estimates of x and M after each observation.</figcaption>
+</figure>
+```
+
+::: {#demo-1d-text}
+Before any reading the dots cover the whole search: every position along the
+track and every mass the prior allows. The first reading pulls them into a
+narrow band around the true position, and each of the next few tightens it;
+under the cloud, the filter's predicted slowing at each clock closes on the
+measured one. After 50 readings the run ends at x = 2.48 ± 0.04 and
+M = 0.101 ± 0.001, against a true x = 2.50 and M = 0.100. Each ± is one
+standard deviation of the final cloud: how far the surviving hypotheses still
+disagree in this one run, not an error bar over many runs.
+:::
 
 ## Meet the detective
 
 The inference engine is a **particle filter**: a cloud of hypotheses —
-one thousand of them in the animation above — each one a guess at
+one thousand of them in the run animated above, which shows a sample of
+five hundred — each one a guess at
 $(x, M)$. Every time a new observation
 arrives, each hypothesis is reweighted by how well it predicts the observed
 rates. Adaptive likelihood tempering prevents one sharp observation from

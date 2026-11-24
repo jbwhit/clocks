@@ -12,14 +12,22 @@ probability each model assigned to the data. The filter produces an
 [estimate of it](../method/the-particle-filter.qmd#sec-evidence) as a
 by-product of running, and that estimate carries sampling noise of its own.
 
-![One simulated run: posterior probability over K=1, 2, 3 as 80 observations accumulate. Truth is K=2.](../assets/demo_model_comparison.gif)
+```{=html}
+<figure class="replay">
+<video class="light-content" aria-label="Animation: the probability of one, two and three masses" aria-describedby="demo-model-comparison-text" src="../media/demo_model_comparison.light.mp4" poster="../media/demo_model_comparison.light.png" width="750" height="420" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="Animation: the probability of one, two and three masses" aria-describedby="demo-model-comparison-text" src="../media/demo_model_comparison.dark.mp4" poster="../media/demo_model_comparison.dark.png" width="750" height="420" controls playsinline preload="none"></video>
+<figcaption>One simulated run: posterior probability over K=1, 2, 3 as 80 observations accumulate. Truth is K=2.</figcaption>
+</figure>
+```
 
+::: {#demo-model-comparison-text}
 One mass is all but ruled out by the first observation. Three masses lead at
 first, two take over around the tenth observation, and from about the
 twentieth three stay ahead: the run ends at about 40% for two masses and 60%
 for three, leaning toward the wrong answer. That is one run's
 estimate from finite data and a finite particle cloud, a weak preference
 rather than a verdict.
+:::
 
 ## Occam's razor, automatic
 

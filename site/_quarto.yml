@@ -1,6 +1,10 @@
 project:
   type: website
   output-dir: _output
+  pre-render: prerender.py
+  resources:
+    - "media/*.mp4"
+    - "media/*.png"
   render:
     - "*.qmd"
     - "story/*.qmd"
@@ -65,7 +69,9 @@ format:
     highlight-style:
       light: gruvbox-light
       dark: gruvbox-dark
-    css: styles.css
+    css:
+      - styles.css
+      - replay.css
     toc: true
     code-fold: true
     code-copy: true

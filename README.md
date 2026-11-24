@@ -61,16 +61,13 @@ uv run demo-density             # → output/demo_density.png
 uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
 ```
 
-![2D inference demo](assets/demo_2d.gif)
-
-The committed demo media is the packaged output of the corrected physics and
-SMC implementation, regenerated after the frozen configurations completed
-one-shot certification -- a release, not a re-render of the current code. The
-echolocation GIF's differential-rates panel draws the forward model evaluated
-at the posterior mean; the code now plots the posterior mean of the particles'
-own predictions, so that panel will change when the assets are next
-regenerated. The files are release artifacts, not a promise of byte-identical
-encodings across plotting-library versions.
+The site animates six of the demos and draws the density figure, all from
+replay data: [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The
+site's clips and posters are build products and are not committed. What is
+committed is replay data, `assets/replays/<demo>.npz`: what each packaged run
+produced, in numbers, tied to the code by tests of its inputs and of bounded
+summaries. Six of the commands above still write GIFs, drawn by the earlier
+animation code; `demo-density` writes a PNG.
 
 Most GIF demos animate the physical setup, the particle cloud converging,
 and the estimates' uncertainty; `demo-model-comparison` instead tracks

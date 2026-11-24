@@ -55,7 +55,10 @@ from typing import NamedTuple
 import pytest
 
 import clocks.viz
+from clocks._clip_parts import standard_deviations
 from clocks._clips import CLIP_HEIGHTS
+from clocks._figures import trace_decimals
+from clocks._replay import Replay, load_replay
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
 _SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
@@ -93,10 +96,74 @@ class Embed(NamedTuple):
 
 
 # Page (relative to site/) -> its clip embeds, in document order.
-REPLAY_EMBEDS: dict[str, tuple[Embed, ...]] = {}
+REPLAY_EMBEDS: dict[str, tuple[Embed, ...]] = {
+    "index.qmd": (
+        Embed(
+            "demo_2d",
+            "Animation: the 2D search",
+            "One simulated run: a particle filter finding a hidden mass on a plane "
+            "from clock rates alone. Left: the cloud of hypotheses, the eight clocks "
+            "and the true position. Right: the estimates of x, y and M after each "
+            "observation.",
+        ),
+    ),
+    "story/the-search-in-one-dimension.qmd": (
+        Embed(
+            "demo_1d",
+            "Animation: the search in one dimension",
+            "The 1D search, one simulated run. Left: the cloud of hypotheses in "
+            "position and mass, above the three clocks and, clock by clock, the "
+            "true, predicted and measured slowing. Right: the estimates of x and M "
+            "after each observation.",
+        ),
+    ),
+    "story/into-the-plane.qmd": (
+        Embed(
+            "demo_2d",
+            "Animation: the 2D search",
+            "The 2D search, one simulated run: 8 clocks, one hidden mass, three "
+            "unknowns (x, y, M). Left: the cloud and the clocks, each given a "
+            "stronger fill the slower it runs. Right: the three estimates after "
+            "each observation.",
+        ),
+    ),
+    "story/two-hidden-masses.qmd": (
+        Embed(
+            "demo_multi_mass",
+            "Animation: two masses on a line",
+            "Two masses in 1D: five clocks, four unknowns. One simulated run.",
+        ),
+        Embed(
+            "demo_multi_mass_2d",
+            "Animation: two masses on a plane",
+            "Two masses in 2D: ten randomly placed clocks, six unknowns. "
+            "One simulated run.",
+        ),
+    ),
+    "story/how-many-masses.qmd": (
+        Embed(
+            "demo_model_comparison",
+            "Animation: the probability of one, two and three masses",
+            "One simulated run: posterior probability over K=1, 2, 3 as 80 "
+            "observations accumulate. Truth is K=2.",
+        ),
+    ),
+    "story/gravitational-echolocation.qmd": (
+        Embed(
+            "demo_echolocation_3d",
+            "Animation: the head locating an exterior mass",
+            "The echolocation demo, one simulated run. Center: the head, its "
+            "clocks, the cloud and the true mass (ring). Upper left: the whole "
+            "search box. Lower left: the fitted readings against the observed "
+            "ones: agreement with the readings used in the fit, not a test on new "
+            "data. Right: the four estimates after each observation.",
+        ),
+    ),
+}
 FIGURE_PAGES: tuple[str, ...] = tuple(sorted(set(PLOT_PAGES) | set(REPLAY_EMBEDS)))
-# A digit, ASCII or subscript: what a description's leftover text may not hold.
-STRAY = re.compile(r"[0-9₀-₉]")
+# A digit, ASCII, subscript or superscript: what a description's leftover text
+# may not hold.
+STRAY = re.compile(r"[0-9₀-₉¹²³⁰⁴-⁹]")
 _EXCLUDED_DIRS = {"_output", ".quarto"}
 _CELL = re.compile(r"^```\{python\}[^\n]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 _CAPTION_ENTRY = re.compile(r'^#\|\s{2,}-\s*"(.*)"\s*$')
@@ -145,6 +212,12 @@ FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {
 RETIRED_ASSETS: tuple[str, ...] = (
     "demo_density.png",
     "echolocation_range_study.png",
+    "demo_1d.gif",
+    "demo_2d.gif",
+    "demo_multi_mass.gif",
+    "demo_multi_mass_2d.gif",
+    "demo_model_comparison.gif",
+    "demo_echolocation_3d.gif",
 )
 LIBRARY_DRAWING_MODULES: tuple[str, ...] = (
     "src/clocks/_figures.py",
@@ -880,7 +953,15 @@ def _embed_block(embed: Embed, page: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-_VIDEO_MARKUP = ("<video", "<source", "<figure", "<iframe", ".mp4", "{=html}")
+_VIDEO_MARKUP = (
+    "<video",
+    "<source",
+    "<figure",
+    "<iframe",
+    ".mp4",
+    "{=html}",
+    "{{< video",
+)
 _DIV_CLOSE = re.compile(r"^:{3,}[ \t]*$")
 
 
@@ -1019,6 +1100,7 @@ def test_the_manifest_lists_exactly_the_figure_pages() -> None:
         _manifest_page(page) for page in FIGURE_PAGES
     }
     assert len(PLOT_PAGES) == 9
+    assert len(FIGURE_PAGES) == 10
 
 
 _PAGE = "story/into-the-plane.qmd"
@@ -1152,6 +1234,12 @@ def _altered(pattern: str, new: str, count: int = 0) -> str:
             id="another_raw_block",
         ),
         pytest.param(
+            PAGE_TEXT + "{{< video https://www.example.com/clip >}}\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="a_video_shortcode",
+        ),
+        pytest.param(
             PAGE_TEXT.replace("\n::: {#demo-2d-text}\nWords.\n:::\n", ""),
             (_EMBED_2D,),
             _NOT_FOLLOWED,
@@ -1245,11 +1333,13 @@ def test_without_removes_pinned_sentences_and_reports_a_missing_one() -> None:
 
 
 def test_stray_numbers_are_found() -> None:
-    """Only this catches a subscript digit, which ``\\d`` does not match,
-    passing as no number."""
-    assert STRAY.pattern == r"[0-9₀-₉]"
+    """Only this catches a subscript or superscript digit, which ``[0-9]`` does
+    not match, passing as no number."""
+    assert STRAY.pattern == r"[0-9₀-₉¹²³⁰⁴-⁹]"
     assert STRAY.search("after 12 readings")
     assert STRAY.search("x₃")
+    for superscript in "⁰¹²³⁴⁵⁶⁷⁸⁹":
+        assert STRAY.search(f"one over R{superscript}"), superscript
     assert STRAY.search("0.4%")
     assert not STRAY.search("after twelve readings, x and M")
 
@@ -1259,6 +1349,182 @@ def test_embed_labels_and_captions_are_plain_text() -> None:
         for embed in embeds:
             for text in (embed.label, embed.caption):
                 assert not set(text) & set('<>&"'), f"{page}: {embed.clip}: {text!r}"
+
+
+def test_each_clip_is_embedded_at_its_declared_height() -> None:
+    """Only this catches a manifest height typed by hand that the drawn clip
+    does not have."""
+    embedded: list[str] = []
+    for page, embeds in REPLAY_EMBEDS.items():
+        figures = check_site_figures.EXPECTED_FIGURES[_manifest_page(page)]
+        clips = [fig for fig in figures if fig.kind == "clip"]
+        for embed, fig in zip(embeds, clips, strict=True):
+            assert fig.clip == embed.clip, page
+            assert fig.height == CLIP_HEIGHTS[embed.clip], page
+            embedded.append(embed.clip)
+    assert len(embedded) == 7
+    assert set(embedded) == set(CLIP_HEIGHTS)
+
+
+ARCHIVES = REPO / "assets" / "replays"
+ORDINAL = {10: "tenth", 20: "twentieth"}
+
+
+def _listing(items: Sequence[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return ", ".join(items[:-1]) + " and " + items[-1] if len(items) > 1 else items[0]
+
+
+def _number(replay: Replay, j: int, value: float) -> str:
+    """``value`` at the trace headers' decimals for parameter ``j``."""
+    return f"{value:.{trace_decimals(replay.meta['prior_ranges'][j])}f}"
+
+
+def _run_ends(replay: Replay) -> str:
+    """``After T readings the run ends at x = m ± s, ...``, from the last row."""
+    mean = replay.arrays["mean"][-1]
+    sd = standard_deviations(replay)[-1]
+    ends = [
+        f"{name} = {_number(replay, j, mean[j])} ± {_number(replay, j, sd[j])}"
+        for j, name in enumerate(replay.meta["param_names"])
+    ]
+    return (
+        f"After {replay.meta['n_observations']} readings the run ends at "
+        f"{_listing(ends)}"
+    )
+
+
+def _against_a_true(replay: Replay) -> str:
+    truth = replay.arrays["true_params"]
+    named = [
+        f"{name} = {_number(replay, j, truth[j])}"
+        for j, name in enumerate(replay.meta["param_names"])
+    ]
+    return f", against a true {_listing(named)}."
+
+
+def _against_true_values(replay: Replay) -> str:
+    truth = replay.arrays["true_params"]
+    values = [_number(replay, j, value) for j, value in enumerate(truth)]
+    return f", against true values of {_listing(values)}."
+
+
+def _sentences_1d(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    assert sd[1, 0] < 0.1 * sd[0, 0]  # "a narrow band" after the first reading
+    return [_run_ends(replay) + _against_a_true(replay)]
+
+
+def _sentences_2d(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    mean, truth = replay.arrays["mean"][-1], replay.arrays["true_params"]
+    assert sd[8, :2].max() < 0.1 * sd[0, :2].min()  # "by the eighth"
+    assert 1.5 < abs(mean[1] - truth[1]) / sd[-1, 1] < 2.5  # "about two of those"
+    return [_run_ends(replay) + _against_a_true(replay)]
+
+
+def _sentences_multi_mass(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    mean = replay.arrays["mean"]
+    assert sd[1, 1] > 1.5 * sd[1, 0]  # the second "takes longer"
+    early = (
+        f"after one reading its position is x₂ = {_number(replay, 1, mean[1, 1])} "
+        f"± {_number(replay, 1, sd[1, 1])}, and after eight it is "
+        f"{_number(replay, 1, mean[8, 1])} ± {_number(replay, 1, sd[8, 1])}."
+    )
+    return [early, _run_ends(replay) + _against_true_values(replay)]
+
+
+def _sentences_multi_mass_2d(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    assert (sd[3, :4] > 0.4 * sd[0, :4]).all()  # "barely narrow them"
+    return [_run_ends(replay) + _against_true_values(replay)]
+
+
+def _sentences_model_comparison(replay: Replay) -> list[str]:
+    ks = [int(k) for k in replay.arrays["model_ks"]]
+    posterior = replay.arrays["model_posterior"]
+    assert posterior[1, ks.index(1)] < 1e-5  # "all but ruled out by the first"
+    leader = [ks[int(row.argmax())] for row in posterior]
+    changes = [k for k in range(2, len(leader)) if leader[k] != leader[k - 1]]
+    assert leader[1] == 3
+    assert changes == [10, 19]
+    assert [leader[k] for k in changes] == [2, 3]
+    p2, p3 = posterior[-1, ks.index(2)], posterior[-1, ks.index(3)]
+    return [
+        "Three masses lead at first, two take over around the "
+        f"{ORDINAL[round(changes[0], -1)]} observation, and from about the "
+        f"{ORDINAL[round(changes[1], -1)]} three stay ahead: the run ends at about "
+        f"{round(100 * p2)}% for two masses and {round(100 * p3)}% for three"
+    ]
+
+
+def _sentences_echolocation(replay: Replay) -> list[str]:
+    lo, hi = replay.meta["prior_ranges"][0]
+    weight = replay.arrays["weight_in_view"]
+    return [
+        f"Before any reading the dots fill the whole search box, {hi - lo:g} units "
+        f"on a side, and only {100 * weight[0]:.1f}% of the prior lies inside the "
+        "close view around the head.",
+        f"where {100 * weight[1:].min():.1f}% of its weight stays",
+        _run_ends(replay) + _against_true_values(replay),
+    ]
+
+
+# Clip -> the sentences of its description that hold a number, built from the
+# archive (with the qualitative words checked against it on the way).
+DESCRIPTION_SENTENCES = {
+    "demo_1d": _sentences_1d,
+    "demo_2d": _sentences_2d,
+    "demo_multi_mass": _sentences_multi_mass,
+    "demo_multi_mass_2d": _sentences_multi_mass_2d,
+    "demo_model_comparison": _sentences_model_comparison,
+    "demo_echolocation_3d": _sentences_echolocation,
+}
+EMBED_CASES = [
+    pytest.param(page, embed, id=f"{page}:{embed.clip}")
+    for page, embeds in REPLAY_EMBEDS.items()
+    for embed in embeds
+]
+
+
+@pytest.mark.parametrize(("page", "embed"), EMBED_CASES)
+def test_description_numbers_are_the_archives(page: str, embed: Embed) -> None:
+    """Only this catches a description whose numbers belong to another run, or
+    a number added to a description without a check."""
+    text = (SITE / page).read_text(encoding="utf-8")
+    description = _descriptions(text)[_description_id(embed.clip)]
+    replay = load_replay(ARCHIVES / f"{embed.clip}.npz")
+    sentences = DESCRIPTION_SENTENCES[embed.clip](replay)
+    assert STRAY.search(_without(description, sentences)) is None
+
+
+def test_the_two_2d_descriptions_are_the_same() -> None:
+    """Only this catches one of the two being edited alone (decision D24)."""
+    landing = _descriptions((SITE / "index.qmd").read_text(encoding="utf-8"))
+    plane = _descriptions((SITE / "story/into-the-plane.qmd").read_text("utf-8"))
+    assert landing["demo-2d-text"] == plane["demo-2d-text"]
+
+
+def test_the_model_caption_counts_the_archives_observations() -> None:
+    meta = load_replay(ARCHIVES / "demo_model_comparison.npz").meta
+    (embed,) = REPLAY_EMBEDS["story/how-many-masses.qmd"]
+    assert f"as {meta['n_observations']} observations accumulate" in embed.caption
+    assert f"Truth is K={meta['true_k']}" in embed.caption
+
+
+def test_the_1d_page_says_how_many_dots_are_shown() -> None:
+    """Only this catches the page claiming the clip shows the whole cloud."""
+    meta = load_replay(ARCHIVES / "demo_1d.npz").meta
+    page = " ".join(
+        (SITE / "story/the-search-in-one-dimension.qmd").read_text("utf-8").split()
+    )
+    assert meta["n_particles"] == 1000
+    assert meta["cloud_size"] == 500
+    assert (
+        "one thousand of them in the run animated above, which shows a sample of "
+        "five hundred"
+    ) in page
 
 
 _RETIRED = ("demo_density.png",)

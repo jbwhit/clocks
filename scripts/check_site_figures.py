@@ -37,7 +37,7 @@ and requires, for every listed page:
   `open`.
 
 A page not in the manifest must hold no themed element at all. Images outside
-the wrappers (committed GIFs) are ignored. The output's `media/` must hold only
+the wrappers are ignored. The output's `media/` must hold only
 the clips and posters of the clips the manifest lists. When the manifest lists
 a clip, the encoder is looked up once (its absence is one failure; the other
 checks still run), the output's `replay.css` must be exactly `REPLAY_CSS`, and
@@ -108,14 +108,29 @@ class Fig(NamedTuple):
 
 # Page (relative to the output directory) -> its figures, in document order.
 EXPECTED_FIGURES: dict[str, tuple[Fig, ...]] = {
+    "index.html": (Fig("clip", 450, "demo_2d"),),
     "story/clocks-as-gravimeters.html": (Fig("plot", 420),),
     "story/one-clock-is-not-enough.html": (Fig("plot", 420),),
-    "story/the-search-in-one-dimension.html": (Fig("plot", 540),),
-    "story/into-the-plane.html": (Fig("plot", 540),),
-    "story/two-hidden-masses.html": (Fig("plot", 420),),
-    "story/how-many-masses.html": (Fig("plot", 420),),
+    "story/the-search-in-one-dimension.html": (
+        Fig("clip", 450, "demo_1d"),
+        Fig("plot", 540),
+    ),
+    "story/into-the-plane.html": (Fig("clip", 450, "demo_2d"), Fig("plot", 540)),
+    "story/two-hidden-masses.html": (
+        Fig("clip", 500, "demo_multi_mass"),
+        Fig("clip", 550, "demo_multi_mass_2d"),
+        Fig("plot", 420),
+    ),
+    "story/how-many-masses.html": (
+        Fig("clip", 420, "demo_model_comparison"),
+        Fig("plot", 420),
+    ),
     "story/beyond-point-masses.html": (Fig("plot", 540), Fig("plot", 420)),
-    "story/gravitational-echolocation.html": (Fig("plot", 420), Fig("plot", 540)),
+    "story/gravitational-echolocation.html": (
+        Fig("plot", 420),
+        Fig("clip", 550, "demo_echolocation_3d"),
+        Fig("plot", 540),
+    ),
     "method/the-particle-filter.html": (Fig("plot", 540),),
 }
 

@@ -1,5 +1,6 @@
 """Contracts for the corrected generated evidence shipped by Task 11."""
 
+import importlib.util
 import json
 import re
 from hashlib import sha256
@@ -13,8 +14,21 @@ from clocks._replay import load_replay
 ROOT = Path(__file__).parents[1]
 ASSETS = ROOT / "assets"
 SITE_ASSETS = ROOT / "site/assets"
+# The rendered-site check, loaded by path as tests/test_site_figure_style.py
+# loads it, for its REPLAY_CSS.
+_CHECKER = ROOT / "scripts" / "check_site_figures.py"
+_CHECKER_SPEC = importlib.util.spec_from_file_location("check_site_figures", _CHECKER)
+assert _CHECKER_SPEC is not None and _CHECKER_SPEC.loader is not None
+check_site_figures = importlib.util.module_from_spec(_CHECKER_SPEC)
+_CHECKER_SPEC.loader.exec_module(check_site_figures)
 
-EXPECTED_VISUAL_HASHES = {
+RETIRED_VISUALS = {
+    "demo_density.png": (
+        "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"
+    ),
+    "echolocation_range_study.png": (
+        "6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc"
+    ),
     "demo_1d.gif": "417ae3523e95e85e91feca7f67e2a8bc7347006883ea27b1101f0cc164477483",
     "demo_2d.gif": "eb581e327d950d7bedce87f28c383c35aa38e99792291d5ace2291ae090e1a3b",
     "demo_multi_mass.gif": (
@@ -30,35 +44,9 @@ EXPECTED_VISUAL_HASHES = {
         "5df30d7c052c3e366216866c9b0ecc991cc777467515dd1c7699de743413d34f"
     ),
 }
-RETIRED_VISUALS = {
-    "demo_density.png": (
-        "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"
-    ),
-    "echolocation_range_study.png": (
-        "6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc"
-    ),
-}
 ECHO_CERT_SOURCE_HASH = (
     "a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941"
 )
-
-
-@pytest.mark.parametrize(("name", "expected_hash"), EXPECTED_VISUAL_HASHES.items())
-def test_corrected_visual_release_bytes_are_complete_and_mirrored(
-    name: str, expected_hash: str
-) -> None:
-    root_path = ASSETS / name
-    site_path = SITE_ASSETS / name
-
-    assert root_path.is_file() and root_path.stat().st_size > 0
-    assert site_path.is_file() and site_path.stat().st_size > 0
-    root_bytes = root_path.read_bytes()
-    assert site_path.read_bytes() == root_bytes
-    assert sha256(root_bytes).hexdigest() == expected_hash
-    if name.endswith(".gif"):
-        assert root_bytes[:6] in (b"GIF87a", b"GIF89a")
-    else:
-        assert root_bytes.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_certified_range_json_matches_raw_hash_and_tracked_records() -> None:
@@ -121,8 +109,6 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
     ]
 
     assert "a1b016b" in report
-    for expected_hash in EXPECTED_VISUAL_HASHES.values():
-        assert expected_hash in report
     # The exact protocol record lives on the Reproducibility page; the story
     # pages state the results in plain words and link there. The test
     # searches whitespace-normalized prose for the passages below. The pass
@@ -146,13 +132,19 @@ def test_current_prose_identifies_corrected_assets_and_honest_model_results() ->
         "It does not estimate population reliability or justify a universal "
         "pass probability."
     ) in provenance
+    model = load_replay(ASSETS / "replays/demo_model_comparison.npz")
+    meta = model.meta
+    ks = [int(k) for k in model.arrays["model_ks"]]
+    final = model.arrays["model_posterior"][-1]
+    p2, p3 = final[ks.index(2)], final[ks.index(3)]
     assert (
-        "With K=2 truth, its final estimate is K=2: 0.3990 and K=3: 0.6010. "
+        "The animation on [How Many Masses?](../story/how-many-masses.qmd) replays "
+        f"the packaged default run: {meta['n_observations']} observations, "
+        f"{meta['n_particles']:,} particles per candidate, and seed {meta['seed']}. "
     ) in provenance
     assert (
-        "The committed GIF on [How Many Masses?](../story/how-many-masses.qmd) is "
-        "the packaged default run: 80 observations, 2,000 particles per candidate, "
-        "and seed 42. "
+        f"With K={meta['true_k']} truth, its final estimate is K=2: {p2:.4f} and "
+        f"K=3: {p3:.4f}. "
     ) in provenance
     assert (
         "The executed cell on that page is a separate 25-observation, "
@@ -207,7 +199,9 @@ def test_landing_page_links_to_the_figure_provenance_section() -> None:
     assert "{#sec-figures}" in provenance
 
 
-@pytest.mark.parametrize(("name", "expected_hash"), RETIRED_VISUALS.items())
+@pytest.mark.parametrize(
+    ("name", "expected_hash"), RETIRED_VISUALS.items(), ids=list(RETIRED_VISUALS)
+)
 def test_retired_visuals_are_gone_but_recorded(name: str, expected_hash: str) -> None:
     report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
 
@@ -229,12 +223,14 @@ def test_density_provenance_names_its_run() -> None:
     page = " ".join(_reproducibility_page().split())
 
     assert (
-        "**Replay data.** The density figure on "
-        "[Beyond Point Masses](../story/beyond-point-masses.qmd) is drawn when the "
-        "site is built, from `assets/replays/demo_density.npz`, the recorder's "
-        "archive of the demo's packaged run: "
-        f"{meta['n_observations']} observations, {meta['n_particles']:,} particles "
-        f"and seed {meta['seed']}. "
+        "**Replay data.** Each animation, and the density figure on "
+        "[Beyond Point Masses](../story/beyond-point-masses.qmd), is drawn when the "
+        "site is built, from `assets/replays/<name>.npz`, the recorder's archive of "
+        "that demo's packaged run. "
+    ) in page
+    assert (
+        f"For the density demo that is {meta['n_observations']} observations, "
+        f"{meta['n_particles']:,} particles and seed {meta['seed']}. "
     ) in page
     assert "density PNG" not in page
 
@@ -248,6 +244,20 @@ def test_the_cloud_size_in_the_prose_is_the_archives() -> None:
 
     assert f"a {size}-particle sample for display" in reproducibility
     assert story.count(caption) == 2
+    for archive in sorted((ASSETS / "replays").glob("*.npz")):
+        replay = load_replay(archive)
+        if "cloud" in replay.arrays:
+            assert replay.meta["cloud_size"] == 500, archive.name
+    model = load_replay(ASSETS / "replays/demo_model_comparison.npz")
+    assert "cloud" not in model.arrays
+    assert (
+        "An archive of a filter run holds the configuration, seed and observations, "
+        "a summary of the cloud before any observation and after each, and a "
+        "500-particle sample for display. The model-comparison archive holds no "
+        "cloud: it records each candidate's posterior probability, evidence and "
+        "effective sample size after each observation, and each candidate's final "
+        "estimate."
+    ) in reproducibility
 
 
 def test_range_study_provenance_names_its_source() -> None:
@@ -265,11 +275,12 @@ def test_deploy_sentence_says_how_each_figure_is_redrawn() -> None:
     page = " ".join(_reproducibility_page().split())
 
     assert (
-        "so every figure drawn by an executed cell is redrawn at deploy time: "
-        "most by running the model again from source, and the density and "
-        "range-study figures from committed data files. The demo GIFs are the "
-        "exceptions: they are committed images, described in the next section."
+        "so every figure and animation is redrawn at deploy time: most figures by "
+        "running the model again from source, and the density figure, the "
+        "range-study figure and the six animations from committed data files."
     ) in page
+    assert "demo GIFs" not in page
+    assert "committed images" not in page
     assert "regenerated from source at deploy time" not in page
     assert "range-study PNG" not in page
 
@@ -359,3 +370,115 @@ def test_the_range_caption_counts_the_studys_runs_and_ranges() -> None:
             "the median posterior standard deviation (for position, the three "
             "coordinates' standard deviations combined in quadrature);"
         ) in caption
+
+
+def test_video_files_are_called_build_products() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "The video files are build products: they are not committed, and their "
+        "bytes are not pinned."
+    ) in page
+
+
+def test_echolocation_animation_provenance() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "**Echolocation animation.** The animation places the mass at two "
+        "circumradii along a fixed off-axis direction, and is one fixed-seed "
+        "visualization at the closest, most favorable range, not a reliability "
+        "measurement."
+    ) in page
+    for stale in (
+        "will change when the assets are next regenerated",
+        "not a re-render of the current code",
+        "committed GIF",
+    ):
+        assert stale not in page
+
+
+def test_readme_describes_the_site_and_the_commands_as_they_are() -> None:
+    """Only this catches the README pointing at a deleted image, or claiming of
+    the commands what is true only of the site."""
+    readme = " ".join((ROOT / "README.md").read_text().split())
+    for sentence in (
+        "The site animates six of the demos and draws the density figure, all "
+        "from replay data",
+        "The site's clips and posters are build products and are not committed.",
+        "What is committed is replay data, `assets/replays/<demo>.npz`: what each "
+        "packaged run produced, in numbers, tied to the code by tests of its "
+        "inputs and of bounded summaries.",
+        "Six of the commands above still write GIFs, drawn by the earlier "
+        "animation code; `demo-density` writes a PNG.",
+    ):
+        assert sentence in readme
+    assert "assets/demo_2d.gif" not in readme
+    assert "commits no rendered media" not in readme
+
+
+def test_the_commands_are_described_as_they_are() -> None:
+    """Only this catches the page implying that the commands produce the clips.
+
+    Pull request 4 replaces the sentence and this test.
+    """
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "`uv run demo-density` records the same configured scenario and draws its "
+        "result. The other six `uv run demo-*` commands run the same scenarios "
+        "again and still write GIFs, drawn by the earlier animation code and not "
+        "from these archives."
+    ) in page
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _block(lines: list[str], header: str) -> list[str]:
+    """The lines under the one line ``header``, up to the next non-blank line
+    indented no deeper than it (blank lines are kept)."""
+    assert lines.count(header) == 1, header
+    start = lines.index(header) + 1
+    depth = _indent(header)
+    end = start
+    while end < len(lines) and (not lines[end].strip() or _indent(lines[end]) > depth):
+        end += 1
+    return lines[start:end]
+
+
+def test_quarto_runs_the_script_and_ships_the_media() -> None:
+    """Only this catches media drawn but never copied to the site, or the
+    stylesheet dropped from the list Quarto links for HTML.
+
+    The file is read as text (the tests have no YAML reader: decision D45), and
+    each pin is anchored to its block, so the same lines under another key do
+    not pass.
+    """
+    lines = (ROOT / "site" / "_quarto.yml").read_text().split("\n")
+
+    project = _block(lines, "project:")
+    assert "  pre-render: prerender.py" in project
+    resources = _block(project, "  resources:")
+    assert resources == ['    - "media/*.mp4"', '    - "media/*.png"']
+
+    html = _block(_block(lines, "format:"), "  html:")
+    css = [index for index, line in enumerate(html) if line.startswith("    css:")]
+    assert len(css) == 1
+    at = css[0]
+    assert html[at] == "    css:"
+    assert html[at + 1 : at + 3] == ["      - styles.css", "      - replay.css"]
+    assert not html[at + 3].lstrip().startswith("-")
+    assert sum(line.lstrip().startswith("css:") for line in lines) == 1
+
+
+def test_replay_css_is_the_canonical_rule() -> None:
+    """Only this catches the rule edited, extended or commented out in the source."""
+    rule = b"figure.replay video { max-width: 100%; height: auto; }\n"
+    assert (ROOT / "site" / "replay.css").read_bytes() == rule
+    assert rule == check_site_figures.REPLAY_CSS
+
+
+def test_someday_maybe_no_longer_says_static_gifs() -> None:
+    """Only this catches a live note still describing the site as it was."""
+    note = " ".join((ROOT / "docs" / "someday-maybe.md").read_text().split())
+    assert "static GIFs" not in note
+    assert "pre-rendered video drawn from committed replay data" in note
