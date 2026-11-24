@@ -116,6 +116,9 @@ LIBRARY_DRAWING_MODULES: tuple[str, ...] = (
     "src/clocks/_figures.py",
     "src/clocks/_demos/demo_density.py",
     "src/clocks/_echo_study.py",
+    "src/clocks/_clip_parts.py",
+    "src/clocks/_clip_maps.py",
+    "src/clocks/_clips.py",
 )
 
 
@@ -968,6 +971,48 @@ def test_every_figure_builder_module_is_scanned() -> None:
         )
     }
     assert defining <= set(LIBRARY_DRAWING_MODULES)
+
+
+def _clip_modules() -> list[Path]:
+    return sorted((REPO / "src" / "clocks").glob("_clip*.py"))
+
+
+def test_every_clip_module_is_scanned() -> None:
+    clip_modules = {path.relative_to(REPO).as_posix() for path in _clip_modules()}
+    assert clip_modules
+    assert clip_modules <= set(LIBRARY_DRAWING_MODULES)
+
+
+# What a renderer may import from the package: never the forward model.
+_RENDERER_IMPORTS = frozenset(
+    {"clocks._replay", "clocks._style", "clocks._figures", "clocks._video"}
+)
+
+
+def _package_imports(path: Path) -> set[str]:
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0, f"{path.name}: relative import"
+            found.add(node.module or "")
+    return {name for name in found if name == "clocks" or name.startswith("clocks.")}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [*_clip_modules(), REPO / "src" / "clocks" / "_video.py"],
+    ids=lambda path: path.name,
+)
+def test_clip_modules_import_no_model_code(path: Path) -> None:
+    imported = _package_imports(path)
+    stray = {
+        name
+        for name in imported
+        if name not in _RENDERER_IMPORTS and not name.startswith("clocks._clip")
+    }
+    assert stray == set()
 
 
 def _draw_density_figure(colors):

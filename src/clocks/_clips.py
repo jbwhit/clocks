@@ -1,0 +1,104 @@
+"""Video clips drawn from replays: the registry, the shot list and ``render_clip``.
+
+Each clip is a figure built once from a replay, with fixed axes, and redrawn
+for every row; each drawing is written to the encoder as many times as its
+dwell asks. The clips are read from the archive alone: no module here calls
+the forward model.
+"""
+
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import NamedTuple
+
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+
+from clocks._clip_maps import build_2d
+from clocks._clip_parts import Clip
+from clocks._replay import Replay
+from clocks._style import Palette, frame_rgba, style
+from clocks._video import dwell_frames, encode, find_encoder
+
+FRAME_WIDTH = 1500  # pixels: 750 CSS pixels at twice the style's 100 dpi
+
+# Declared heights in CSS pixels; a frame is twice as tall.
+CLIP_HEIGHTS: dict[str, int] = {
+    "demo_1d": 450,
+    "demo_2d": 450,
+    "demo_multi_mass": 500,
+    "demo_multi_mass_2d": 550,
+    "demo_model_comparison": 420,
+    "demo_echolocation_3d": 550,
+}
+BUILDERS: dict[str, Callable[[Replay, Palette], Clip]] = {"demo_2d": build_2d}
+
+
+class Shot(NamedTuple):
+    """One drawing of a clip: the archive row, its repeats, the camera azimuth."""
+
+    row: int
+    repeat: int
+    azimuth: float | None = None
+
+
+def shots(replay: Replay) -> list[Shot]:
+    """Every drawing of the clip, in order, each held for its dwell."""
+    dwell = dwell_frames(int(replay.meta["n_observations"]))
+    return [Shot(k, n) for k, n in enumerate(dwell)]
+
+
+def build_clip(replay: Replay, colors: Palette) -> Clip:
+    """Build the clip of ``replay``'s demo. Call inside ``style(theme)``."""
+    demo = replay.meta["demo"]
+    if demo not in BUILDERS:
+        raise ValueError(f"no clip for demo {demo!r}")
+    return BUILDERS[demo](replay, colors)
+
+
+def final_frame(replay: Replay, colors: Palette) -> Figure:
+    """The clip's figure at its last shot, the poster; the caller closes it.
+
+    Call inside ``style(theme)``.
+    """
+    clip = build_clip(replay, colors)
+    last = shots(replay)[-1]
+    try:
+        clip.show(last.row, last.azimuth)
+    except BaseException:
+        plt.close(clip.fig)
+        raise
+    return clip.fig
+
+
+def render_clip(
+    replay: Replay, path: Path, *, theme: str = "light", encoder: str | None = None
+) -> int:
+    """Draw ``replay``'s clip in ``theme`` and encode it to ``path`` as H.264.
+
+    The frames are 1500 pixels wide and twice the clip's declared height tall,
+    at 20 a second; each row is drawn only when the encoder asks for it. The
+    encoder is looked up before anything is drawn. ``path`` is written by
+    ``clocks._video.encode`` alone, whole or not at all. Returns the number of
+    video frames written.
+    """
+    if encoder is None:
+        encoder = find_encoder()
+    with style(theme) as colors:
+        clip = build_clip(replay, colors)
+        try:
+            return encode(
+                _frames(clip, shots(replay)),
+                path,
+                width=FRAME_WIDTH,
+                height=2 * CLIP_HEIGHTS[replay.meta["demo"]],
+                encoder=encoder,
+            )
+        finally:
+            plt.close(clip.fig)
+
+
+def _frames(clip: Clip, plan: list[Shot]) -> Iterator[tuple[bytes, int]]:
+    """Each shot's pixels and repeats, drawn only when the next is asked for."""
+    for shot in plan:
+        clip.show(shot.row, shot.azimuth)
+        yield frame_rgba(clip.fig), shot.repeat

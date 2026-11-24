@@ -2,8 +2,8 @@
 
 Implementations live in ``clocks._panels`` and ``clocks._panels3d`` (static
 primitives), ``clocks._figures`` (figures drawn from replays),
-``clocks._echo_study`` (the range-study figure) and ``clocks._animate``
-(animation drivers).
+``clocks._echo_study`` (the range-study figure), ``clocks._animate``
+(animation drivers) and ``clocks._clips`` (video clips drawn from replays).
 """
 
 from clocks._animate import (
@@ -14,6 +14,7 @@ from clocks._animate import (
     animate_inference_multi_2d,
     animate_model_comparison,
 )
+from clocks._clips import render_clip
 from clocks._echo_study import range_study_figure
 from clocks._figures import density_figure
 from clocks._panels import (
@@ -62,6 +63,7 @@ __all__ = [
     "palette",
     "plot_scene_3d",
     "range_study_figure",
+    "render_clip",
     "show",
     "style",
 ]
