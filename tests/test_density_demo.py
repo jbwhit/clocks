@@ -11,6 +11,7 @@ from matplotlib.colors import to_hex
 
 from clocks._demos import demo_density
 from clocks._demos.demo_density import build_density_filter, main
+from clocks._figures import trace_decimals
 from clocks._replay import Replay, load_replay
 from clocks._style import palette
 from clocks._support import density_support_mask
@@ -101,12 +102,41 @@ def _estimate_lines(
     mean = replay_arrays["mean"][row]
     std = np.sqrt(np.diagonal(replay_arrays["cov"][row]))
     ess = replay_arrays["ess"][row]
-    return [
-        f"  mu    = {mean[0]:.3f} ± {std[0]:.3f}  (true: {truth[0]})",
-        f"  sigma = {mean[1]:.3f} ± {std[1]:.3f}  (true: {truth[1]})",
-        f"  A     = {mean[2]:.3f} ± {std[2]:.3f}  (true: {truth[2]})",
-        f"  ESS   = {ess:.0f} / {n_particles}",
-    ]
+    ranges = (
+        demo_density.MU_RANGE,
+        demo_density.SIGMA_RANGE,
+        demo_density.AMPLITUDE_RANGE,
+    )
+    labels = ("mu   ", "sigma", "A    ")
+    lines = []
+    for index, label in enumerate(labels):
+        digits = trace_decimals(ranges[index])
+        lines.append(
+            f"  {label} = {mean[index]:.{digits}f} ± {std[index]:.{digits}f}"
+            f"  (true: {truth[index]})"
+        )
+    lines.append(f"  ESS   = {ess:.0f} / {n_particles}")
+    return lines
+
+
+def test_default_format_prints_the_amplitude_to_four_places(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = load_replay(ROOT / "assets/replays/demo_density.npz")
+    cov = archive.arrays["cov"].copy()
+    cov[-1, 2, 2] = 0.0005**2
+    mean = archive.arrays["mean"].copy()
+    mean[-1, 2] = 0.0095
+    stub = Replay(archive.meta, {**archive.arrays, "cov": cov, "mean": mean})
+    monkeypatch.setattr(demo_density, "record", lambda **_: stub)
+
+    main(["--output", str(tmp_path / "d.png")])
+
+    lines = capsys.readouterr().out.splitlines()
+    at = lines.index("Final estimate:")
+    assert lines[at + 3] == "  A     = 0.0095 ± 0.0005  (true: 0.01)"
 
 
 def test_density_command_prints_and_draws_the_recorded_run(

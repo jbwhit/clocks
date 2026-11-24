@@ -892,3 +892,75 @@ def test_figure_function_heights_are_the_drawn_ones(name: str) -> None:
         assert round(fig.get_figwidth() * 100) == 750
     finally:
         plt.close(fig)
+
+
+_DATA_DECLARATIONS = {
+    "density_figure": (
+        "replay",
+        'replay = load_replay(Path("../../assets/replays/demo_density.npz"))',
+    ),
+    "range_study_figure": (
+        "study",
+        'study = json.loads(Path("../../assets/echolocation_range_study.json")'
+        ".read_text())",
+    ),
+}
+
+
+def _builder_cell(builder: str) -> tuple[Path, str]:
+    """Return the page and the plot cell whose builders include *builder*."""
+    found = [
+        (SITE / page, cell)
+        for page in PLOT_PAGES
+        for cell in _plot_cells(SITE / page)
+        if builder in _facade_builders(cell)
+    ]
+    assert len(found) == 1, f"{builder} is drawn by {len(found)} cells"
+    return found[0]
+
+
+def _stored_names(tree: ast.AST, name: str) -> list[ast.Name]:
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        pytest.param("density_figure", id="density"),
+        pytest.param("range_study_figure", id="range_study"),
+    ],
+)
+def test_builder_cell_draws_its_committed_data(builder: str) -> None:
+    page, cell = _builder_cell(builder)
+    name, source = _DATA_DECLARATIONS[builder]
+    tree = ast.parse(cell)
+    expected = ast.dump(ast.parse(source).body[0])
+
+    assigning = [
+        stmt
+        for stmt in ast.walk(tree)
+        if isinstance(stmt, ast.stmt) and _stored_names(stmt, name)
+        if not isinstance(stmt, (ast.For, ast.With, ast.If, ast.FunctionDef))
+    ]
+    assert [ast.dump(stmt) for stmt in assigning] == [expected]
+    assert len(_stored_names(tree, name)) == 1
+
+    (call, _), *_ = [c for c in _builder_calls(tree) if c[1] == builder]
+    first = call.args[0]
+    assert isinstance(first, ast.Name) and first.id == name
+
+    literals = [
+        node.value
+        for node in ast.walk(assigning[0])
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    assert len(literals) == 1
+    resolved = (page.parent / literals[0]).resolve()
+    assert resolved.is_file()
+    assert resolved.is_relative_to((REPO / "assets").resolve())

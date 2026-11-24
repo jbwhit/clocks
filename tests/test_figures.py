@@ -20,7 +20,7 @@ from matplotlib.colors import to_hex
 import clocks.viz
 from clocks import _figures
 from clocks._demos import demo_1d
-from clocks._figures import density_figure, trace_limits
+from clocks._figures import density_figure, trace_decimals, trace_limits
 from clocks._replay import Replay, load_replay, validate_replay
 from clocks._style import THEMES, style
 
@@ -356,6 +356,15 @@ def test_changing_one_row_moves_only_that_point() -> None:
     diff = after - before
     assert diff[1] == pytest.approx(0.1, rel=1e-12)
     assert diff[0] == 0.0 and diff[2] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("prior_range", "expected"),
+    [((-8.0, 8.0), 2), ((0.1, 5.0), 2), ((0.001, 0.030), 4)],
+    ids=["mu", "sigma", "amplitude"],
+)
+def test_trace_decimals(prior_range: tuple[float, float], expected: int) -> None:
+    assert trace_decimals(prior_range) == expected
 
 
 def test_trace_headers() -> None:

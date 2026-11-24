@@ -1,8 +1,9 @@
 """Matplotlib plotting and animation (public facade).
 
 Implementations live in ``clocks._panels`` and ``clocks._panels3d`` (static
-primitives), ``clocks._figures`` (figures drawn from replays) and
-``clocks._animate`` (animation drivers).
+primitives), ``clocks._figures`` (figures drawn from replays),
+``clocks._echo_study`` (the range-study figure) and ``clocks._animate``
+(animation drivers).
 """
 
 from clocks._animate import (

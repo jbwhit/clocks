@@ -124,6 +124,10 @@ def summarize(results: list[dict]) -> list[dict]:
 def range_study_figure(study: Mapping[str, Any], colors: Palette) -> Figure:
     """Position and mass error against range, with each run and the pass limits.
 
+    Each panel shows every run's error, the median error and the median
+    posterior standard deviation at each range, and the study's pass limit; the
+    top panel also counts the runs within both limits.
+
     Draws with the rcParams in force: call it inside ``with style(theme) as
     colors:``. It never shows, saves or closes the figure it returns.
     """
@@ -131,9 +135,7 @@ def range_study_figure(study: Mapping[str, Any], colors: Palette) -> Figure:
     tolerances = study["tolerances"]
     summary = summarize(results)
     ranges = [row["range_r"] for row in summary]
-    fig, (ax_pos, ax_mass) = plt.subplots(
-        2, 1, figsize=(7.5, 5.4), sharex=True, gridspec_kw={"top": 0.88}
-    )
+    fig, (ax_pos, ax_mass) = plt.subplots(2, 1, figsize=(7.5, 5.4), sharex=True)
     panels = (
         (ax_pos, "position-error", "position error", "position_error", "pos_std"),
         (ax_mass, "mass-error", "mass error", "mass_error", "mass_std"),

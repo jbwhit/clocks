@@ -41,6 +41,11 @@ def trace_limits(
     return max(low - pad, prior_range[0]), min(high + pad, prior_range[1])
 
 
+def trace_decimals(prior_range: Sequence[float]) -> int:
+    """Decimals that show a parameter to two significant figures of its range."""
+    return max(2, 2 - math.floor(math.log10(prior_range[1] - prior_range[0])))
+
+
 def trace_header(
     name: str,
     truth: float,
@@ -49,12 +54,18 @@ def trace_header(
     prior_range: Sequence[float],
 ) -> str:
     """The header of a trace: the name, the truth and the final estimate."""
-    digits = max(2, 2 - math.floor(math.log10(prior_range[1] - prior_range[0])))
+    digits = trace_decimals(prior_range)
     return f"{name}   true {truth:.{digits}f}   {mean:.{digits}f} ± {sd:.{digits}f}"
 
 
 def density_figure(replay: Replay, colors: Palette) -> Figure:
-    """Draw the final density profile above one trace per parameter."""
+    """Draw the final density profile above one trace per parameter.
+
+    The top panel shows the true profile with the pointwise median and central
+    68% band of the profiles of the last row's sampled particles; each lower
+    panel shows one parameter's posterior mean with a one-standard-deviation
+    band, against the number of observations.
+    """
     demo = replay.meta["demo"]
     if demo != "demo_density":
         raise ValueError(f"density_figure needs a demo_density replay, got {demo!r}")

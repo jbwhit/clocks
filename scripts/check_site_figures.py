@@ -14,7 +14,7 @@ for every listed page:
 - exactly one `figcaption` in each wrapper, with the same text in both.
 
 A page not in the manifest must hold no theme wrapper at all. Images outside
-the wrappers (committed GIFs and PNGs) are ignored.
+the wrappers (committed GIFs) are ignored.
 
 Run from the repo root, after rendering the site:
 

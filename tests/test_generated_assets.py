@@ -239,6 +239,17 @@ def test_density_provenance_names_its_run() -> None:
     assert "density PNG" not in page
 
 
+def test_the_cloud_size_in_the_prose_is_the_archives() -> None:
+    meta = load_replay(ROOT / "assets/replays/demo_density.npz").meta
+    size = meta["cloud_size"]
+    reproducibility = " ".join(_reproducibility_page().split())
+    story = " ".join((ROOT / "site/story/beyond-point-masses.qmd").read_text().split())
+    caption = f"from {size} particles sampled from the final posterior"
+
+    assert f"a {size}-particle sample for display" in reproducibility
+    assert story.count(caption) == 2
+
+
 def test_range_study_provenance_names_its_source() -> None:
     page = " ".join(_reproducibility_page().split())
 

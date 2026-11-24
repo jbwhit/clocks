@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from clocks._demos._common import add_common_arguments
-from clocks._figures import density_figure
+from clocks._figures import density_figure, trace_decimals
 from clocks._replay import (
     Replay,
     Scenario,
@@ -124,8 +124,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _format_estimate(label: str, mean: float, std: float, truth: float) -> str:
-    return f"  {label} = {mean:.3f} ± {std:.3f}  (true: {truth})"
+def _format_estimate(
+    label: str,
+    mean: float,
+    std: float,
+    truth: float,
+    prior_range: Sequence[float],
+) -> str:
+    digits = trace_decimals(prior_range)
+    return f"  {label} = {mean:.{digits}f} ± {std:.{digits}f}  (true: {truth})"
 
 
 def build_density_filter(
@@ -211,9 +218,12 @@ def _print_estimate(replay: Replay, row: int, n_particles: int) -> None:
     std = np.sqrt(np.diagonal(replay.arrays["cov"][row]))
     truth = (float(value) for value in replay.arrays["true_params"])
     labels = ("mu   ", "sigma", "A    ")
+    ranges = replay.meta["prior_ranges"]
     for index, (label, true_value) in enumerate(zip(labels, truth, strict=True)):
         print(
-            _format_estimate(label, float(mean[index]), float(std[index]), true_value)
+            _format_estimate(
+                label, float(mean[index]), float(std[index]), true_value, ranges[index]
+            )
         )
     print(f"  ESS   = {replay.arrays['ess'][row]:.0f} / {n_particles}")
 
