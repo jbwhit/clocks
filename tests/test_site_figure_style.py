@@ -219,49 +219,32 @@ def _is_show_of(statement: ast.stmt, name: str) -> bool:
     )
 
 
-def _style_palette_name(block: ast.With) -> str | None:
-    """Return the name the style block binds its palette to, if it binds one."""
-    for item in block.items:
-        call = item.context_expr
-        if (
-            isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "style"
-            and isinstance(item.optional_vars, ast.Name)
-        ):
-            return item.optional_vars.id
-    return None
-
-
 def _is_canonical(
     call: ast.Call, block: ast.With, parents: dict[ast.AST, ast.AST]
 ) -> bool:
-    """Is the call ``<name> = <builder>(<data>, <palette>)`` then show(name)?
+    """Does the block hold exactly the builder assignment and its ``show``?
 
-    ``<palette>`` must be the name the style block binds, passed positionally
-    and alone, so a figure cannot be drawn with another theme's colours.
+    The ``with`` has one item, ``style(...) as <palette>``; its body is exactly
+    ``<fig> = <builder>(<data>, <palette>)`` then ``show(<fig>)``. The palette
+    is passed positionally and alone, and nothing else can rebind it, so a
+    figure cannot be drawn with another theme's colours.
     """
-    palette = _style_palette_name(block)
-    if (
-        palette is None
-        or call.keywords
-        or len(call.args) != 2
-        or not (isinstance(call.args[1], ast.Name) and call.args[1].id == palette)
-    ):
+    if len(block.items) != 1 or len(block.body) != 2:
         return False
-    statement: ast.AST = call
-    while parents[statement] is not block:
-        statement = parents[statement]
-    index = next((i for i, item in enumerate(block.body) if item is statement), None)
-    if index is None or not (
-        isinstance(statement, ast.Assign)
+    palette = block.items[0].optional_vars
+    statement, following = block.body
+    return (
+        isinstance(palette, ast.Name)
+        and isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.value is call
-    ):
-        return False
-    following = block.body[index + 1 : index + 2]
-    return bool(following) and _is_show_of(following[0], statement.targets[0].id)
+        and not call.keywords
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Name)
+        and call.args[1].id == palette.id
+        and _is_show_of(following, statement.targets[0].id)
+    )
 
 
 def _style_block_violations(cell: str) -> list[str]:
@@ -289,7 +272,9 @@ def _style_block_violations(cell: str) -> list[str]:
         if _style_block(call, parents) is None
     ]
     messages += [
-        f"{name}() is not `<name> = {name}(...)` followed immediately by `show(<name>)`"
+        f"{name}() is not `<name> = {name}(<data>, <palette>)` followed by "
+        "`show(<name>)`, the only two statements of a one-item "
+        "`with style(theme) as <palette>`"
         for call, name in builders
         if blocks[call] is not None and not _is_canonical(call, blocks[call], parents)
     ]
@@ -558,8 +543,9 @@ _HEAD = "from clocks.viz import THEMES, density_figure, show, style\n"
 _NOT_IN_BLOCK = "density_figure() is not inside a style(theme) block of a THEMES loop"
 _SHOW_NOT_IN_BLOCK = "show() is not inside a style(theme) block of a THEMES loop"
 _NOT_CANONICAL = (
-    "density_figure() is not `<name> = density_figure(...)` "
-    "followed immediately by `show(<name>)`"
+    "density_figure() is not `<name> = density_figure(<data>, <palette>)` "
+    "followed by `show(<name>)`, the only two statements of a one-item "
+    "`with style(theme) as <palette>`"
 )
 _CANONICAL = (
     "for theme in THEMES:\n"
@@ -697,25 +683,38 @@ _CANONICAL = (
             id="fixed_palette",
         ),
         pytest.param(
-            _CANONICAL.replace(
-                "        fig = density_figure(replay, colors)",
-                "        other = colors\n        fig = density_figure(replay, other)",
-            ),
+            'other = palette("light")\n'
+            + _CANONICAL.replace("(replay, colors)", "(replay, other)"),
             [_NOT_CANONICAL],
             id="other_palette_name",
         ),
         pytest.param(
-            _CANONICAL.replace(" as colors", "").replace(
-                "density_figure(replay, colors)",
-                "density_figure(replay, palette(theme))",
-            ),
+            'colors = palette("light")\n' + _CANONICAL.replace(" as colors", ""),
             [_NOT_CANONICAL],
             id="no_as_name",
         ),
         pytest.param(
-            _CANONICAL.replace("replay, colors)", "replay, colors=colors)"),
+            _CANONICAL.replace("replay, colors)", "replay, colors, **{})"),
             [_NOT_CANONICAL],
             id="palette_by_keyword",
+        ),
+        pytest.param(
+            _CANONICAL.replace(
+                "        fig = density_figure",
+                '        colors = palette("light")\n        fig = density_figure',
+            ),
+            [_NOT_CANONICAL],
+            id="palette_rebound_in_block",
+        ),
+        pytest.param(
+            _CANONICAL + "        print(theme)\n",
+            [_NOT_CANONICAL],
+            id="statement_after_show",
+        ),
+        pytest.param(
+            _CANONICAL.replace("as colors:", 'as colors, open("x") as f:'),
+            [_NOT_CANONICAL],
+            id="two_with_items",
         ),
         pytest.param(
             "for theme in THEMES:\n"

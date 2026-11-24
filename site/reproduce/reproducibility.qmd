@@ -47,7 +47,7 @@ Four workflows run on GitHub Actions:
 - [`replay-report.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/replay-report.yml)
   records each demo again on the runner and reports where the result differs
   from the committed replay data. It is a diagnostic: every step is allowed to
-  fail without failing the run, so it never fails a pull request.
+  fail without failing the run.
 
 ## Where the figures come from {#sec-figures}
 

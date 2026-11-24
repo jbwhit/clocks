@@ -342,12 +342,29 @@ def test_the_pass_counts_and_their_label_sit_above_the_top_panel() -> None:
     fig, _ = _drawn(literal_study(), "light")
     top, _ = _axes(fig)
     fig.canvas.draw()
-    texts = [t for t in top.texts if t.get_gid() in {"pass-count", "pass-count-label"}]
-    assert len(texts) > 1
+    counts = [t for t in top.texts if t.get_gid() == "pass-count"]
+    (label,) = [t for t in top.texts if t.get_gid() == "pass-count-label"]
+    assert len(counts) > 1
     top_edge = top.get_window_extent().y1
-    for text in texts:
+    for text in [*counts, label]:
         _, y = text.get_transform().transform(text.get_position())
         assert y > top_edge, f"{text.get_text()!r} sits at {y}, panel top {top_edge}"
+    for text in counts:
+        # x in data coordinates, y in axes coordinates (above the panel).
+        x_range, y_axes = text.get_position()
+        display_x, _ = text.get_transform().transform(text.get_position())
+        data_x, _ = top.transData.transform((x_range, 1.0))
+        assert display_x == pytest.approx(data_x)
+        _, read_y = top.transAxes.inverted().transform(
+            text.get_transform().transform(text.get_position())
+        )
+        assert read_y > 1.0
+        assert y_axes > 1.0
+    # The label is placed in axes coordinates throughout.
+    assert label.get_transform().contains_branch_seperately(top.transAxes) == (
+        True,
+        True,
+    )
 
 
 def test_pass_counts_use_both_limits() -> None:

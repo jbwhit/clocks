@@ -46,8 +46,10 @@ def snr_table(
 ) -> list[dict]:
     """Noise-free centered signal magnitude per range (spec section 3).
 
-    Pure forward-model evaluation — the same computation the site page's
-    falloff cell shows.
+    Pure forward-model evaluation. The signal is the largest absolute
+    mean-centred clock rate. The site page's falloff cell plots the largest
+    absolute orthonormal contrast (``Q @ rates``) instead, so its numbers
+    differ from this table's.
     """
     head = build_head_lattice()
     table = []

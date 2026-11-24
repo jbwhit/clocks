@@ -10,6 +10,7 @@ FIXTURE = """name: Fixture
 on:
   push:
     branches: [main]
+    types: [decoy]
     paths:
       - "assets/replays/**"
   pull_request:

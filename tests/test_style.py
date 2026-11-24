@@ -440,31 +440,28 @@ def test_save_png_writes_the_authored_canvas(
 ) -> None:
     with style("light"):
         fig, ax = plt.subplots(figsize=(7.5, 5.4))
-        ax.plot([0, 1], [0, 1])
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        (line,) = ax.plot([0, 1], [0, 1])
     try:
         with matplotlib.rc_context(caller_settings):
             save_png(fig, tmp_path / "out.bin")
+        assert [p.name for p in tmp_path.iterdir()] == ["out.bin"]
+        # The same figure with only its line hidden: limits and ticks agree, so
+        # any difference between the two images is the plotted line.
+        line.set_visible(False)
+        with matplotlib.rc_context(caller_settings):
+            save_png(fig, tmp_path / "hidden.bin")
     finally:
         plt.close(fig)
 
-    assert [p.name for p in tmp_path.iterdir()] == ["out.bin"]
     assert (tmp_path / "out.bin").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert png_size(tmp_path / "out.bin") == (1500, 1080)
     image = matplotlib.image.imread(tmp_path / "out.bin", format="png")
+    hidden = matplotlib.image.imread(tmp_path / "hidden.bin", format="png")
     pixel = image[0, 0]
-    assert np.any(np.any(image != pixel, axis=-1)), "nothing is drawn"
-    # The frame and ticks already differ from the corner, so also compare with
-    # the same figure drawn without its one line.
-    with style("light"):
-        bare, _ = plt.subplots(figsize=(7.5, 5.4))
-    try:
-        with matplotlib.rc_context(caller_settings):
-            save_png(bare, tmp_path / "bare.bin")
-    finally:
-        plt.close(bare)
-    bare_image = matplotlib.image.imread(tmp_path / "bare.bin", format="png")
-    assert bare_image.shape == image.shape
-    assert np.any(image != bare_image), "the plotted line is missing"
+    assert hidden.shape == image.shape
+    assert np.any(image != hidden), "the plotted line is missing"
     np.testing.assert_allclose(
         pixel[:3], to_rgb(palette("light").background), rtol=0, atol=1 / 255
     )

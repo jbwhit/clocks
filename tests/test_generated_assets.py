@@ -303,17 +303,24 @@ def test_the_seed_sentence_covers_only_cells_that_draw_random_numbers() -> None:
     ) in page
 
 
-def test_the_workflow_count_is_the_number_of_workflow_files() -> None:
+def test_the_ci_bullets_link_exactly_the_workflow_files() -> None:
     raw = _reproducibility_page()
     page = " ".join(raw.split())
-    files = list((ROOT / ".github/workflows").glob("*.yml"))
     section = raw.split("Four workflows run on GitHub Actions:")[1]
     section = section.split("\n## ")[0]
-    bullets = re.findall(r"^- \[`[\w-]+\.yml`\]", section, re.MULTILINE)
+    linked = set(re.findall(r"^- \[`([\w-]+\.yml)`\]", section, re.MULTILINE))
+    files = {path.name for path in (ROOT / ".github/workflows").glob("*.yml")}
 
     assert "Four workflows run on GitHub Actions:" in page
-    assert len(files) == 4
-    assert len(bullets) == len(files)
+    assert linked == files
+
+
+def test_the_replay_report_bullet_claims_only_what_the_workflow_guarantees() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "It is a diagnostic: every step is allowed to fail without failing the run."
+    ) in page
+    assert "never fails a pull request" not in page
 
 
 _NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
