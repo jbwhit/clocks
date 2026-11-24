@@ -194,6 +194,8 @@ def range_study_figure(study: Mapping[str, Any], colors: Palette) -> Figure:
 def _label_lines(ax: Axes, colors: Palette, summary: list[dict]) -> None:
     """Direct labels at the middle range: the spread up and left of its line,
     the error down and right of its own, where nothing else is drawn."""
+    # The middle range: on the committed study the two lines are furthest apart
+    # there, so the labels sit clear of both.
     first = summary[max(0, len(summary) // 2 - 1)]
     ax.annotate(
         "median posterior s.d.",
@@ -254,9 +256,11 @@ def _label_pass_counts(
 
 def write_summary_figure(study: dict, png_path: Path) -> None:
     """Write the range-study figure, light theme, as the site shows it."""
-    with style("light") as colors:
-        fig = range_study_figure(study, colors)
+    fig = None
     try:
+        with style("light") as colors:
+            fig = range_study_figure(study, colors)
         save_png(fig, png_path)
     finally:
-        plt.close(fig)
+        if fig is not None:
+            plt.close(fig)

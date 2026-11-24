@@ -125,3 +125,13 @@ def assert_drawn(line: Line2D) -> None:
     assert line.get_visible()
     assert line.get_alpha() in (None, 1)
     assert line.get_linewidth() > 0
+    if line.get_marker() not in ("None", "", None):
+        assert line.get_markersize() > 0
+
+
+def assert_marks_drawn(line: Line2D) -> None:
+    """Assert that a marker-only line shows: visible, faint but not clear, sized."""
+    assert line.get_visible()
+    assert line.get_alpha() is not None and 0 < line.get_alpha() < 1
+    assert line.get_marker() not in ("None", "", None)
+    assert line.get_markersize() > 0

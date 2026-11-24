@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from _figure_artists import (
     assert_drawn,
+    assert_marks_drawn,
     gid_census,
     one,
     palette_hexes,
@@ -218,6 +219,7 @@ def _texts(ax, text: str) -> list:
 def _counts(fig) -> list[str]:
     top, _ = _axes(fig)
     texts = [t for t in top.texts if t.get_gid() == "pass-count"]
+    assert all(t.get_visible() for t in texts)
     return [t.get_text() for t in sorted(texts, key=lambda t: t.get_position()[0])]
 
 
@@ -263,8 +265,7 @@ def test_runs_are_faint_ink_dots(theme: str) -> None:
         assert runs.get_marker() == "o"
         assert runs.get_linestyle() == "None"
         assert to_hex(runs.get_color()) == colors.ink
-        assert runs.get_visible()
-        assert 0 < runs.get_alpha() < 1
+        assert_marks_drawn(runs)
 
 
 @pytest.mark.parametrize("theme", THEMES)
@@ -338,13 +339,21 @@ def test_pass_counts_follow_each_tolerance(tolerances: dict, counts: list[str]) 
 
 
 def test_pass_counts_use_both_limits() -> None:
-    fig, _ = _drawn(literal_study(), "light")
+    fig, colors = _drawn(literal_study(), "light")
     top, _ = _axes(fig)
     texts = [t for t in top.texts if t.get_gid() == "pass-count"]
     pairs = sorted((t.get_position()[0], t.get_text()) for t in texts)
     assert pairs == [(2.0, "2"), (4.0, "1")]
-    everywhere = [t for ax in fig.axes for t in ax.texts]
-    assert [t.get_text() for t in everywhere].count("runs within both limits") == 1
+    label = [
+        t
+        for ax in fig.axes
+        for t in ax.texts
+        if t.get_text() == "runs within both limits" and t.get_visible()
+    ]
+    assert len(label) == 1
+    for text in [*texts, *label]:
+        assert text.get_visible()
+        assert to_hex(text.get_color()) == colors.muted
 
 
 @pytest.mark.parametrize("theme", THEMES)
