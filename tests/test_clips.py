@@ -184,6 +184,9 @@ def test_ellipse_points_lie_two_standard_deviations_out() -> None:
     np.testing.assert_allclose(distances, 4.0, rtol=1e-9)
     turn = np.unwrap(np.arctan2(offsets[:, 1], offsets[:, 0]))
     assert abs(turn[-1] - turn[0]) == pytest.approx(2 * np.pi, rel=1e-9)
+    # Small steps all the way: an arc closed by a jump back to its first point
+    # also unwraps to a full turn, through one large step.
+    assert np.max(np.abs(np.diff(turn))) < 0.2
 
 
 def test_ellipse_points_of_no_spread() -> None:
