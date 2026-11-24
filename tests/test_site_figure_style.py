@@ -23,6 +23,22 @@ visible on the rendered page: a surrounding block that hides its contents, a
 stylesheet, or a script could still hide one. The rendered-site check
 (``scripts/check_site_figures.py``) covers the rendered structure, and the
 contact sheets and the phone-width measurements cover what a visitor sees.
+
+Clip embeds are pinned whole: each is the text ``_embed_block`` builds from
+``REPLAY_EMBEDS``, present exactly once and in the table's order, followed by
+its description, and video markup anywhere else on a page is a violation. This
+catches an embed's markup changed by mistake. It does not check what surrounds
+a block, so it does not catch a canonical block inside a code fence or an HTML
+comment, which Markdown does not render, or inside a wrapper that hides it. The
+rendered-site check (``scripts/check_site_figures.py``) catches the first, and
+part of the second: a block that was not rendered leaves no video, and the
+count of themed elements against the manifest fails; a wrapper carrying one of
+the markers that script names (``HIDING_CLASSES``, ``hidden``, ``aria-hidden``,
+two inline styles, ``template``, ``noscript``, a closed ``details``) fails its
+hidden-ancestor rule. A wrapper that hides by any other means, an opacity of
+zero or a ``clip-path`` for two, passes both. Actual visibility, keyboard reach
+and playback are browser checks, made by hand for each pull request that
+changes a clip or its page.
 """
 
 import ast
@@ -30,13 +46,16 @@ import html
 import importlib.util
 import re
 import string
+import sys
 import urllib.parse
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 import pytest
 
 import clocks.viz
+from clocks._clips import CLIP_HEIGHTS
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
 _SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
@@ -63,6 +82,21 @@ PLOT_PAGES = (
     "story/the-search-in-one-dimension.qmd",
     "story/two-hidden-masses.qmd",
 )
+
+
+class Embed(NamedTuple):
+    """One clip embedded on a page."""
+
+    clip: str
+    label: str  # the aria-label of both videos
+    caption: str
+
+
+# Page (relative to site/) -> its clip embeds, in document order.
+REPLAY_EMBEDS: dict[str, tuple[Embed, ...]] = {}
+FIGURE_PAGES: tuple[str, ...] = tuple(sorted(set(PLOT_PAGES) | set(REPLAY_EMBEDS)))
+# A digit, ASCII or subscript: what a description's leftover text may not hold.
+STRAY = re.compile(r"[0-9₀-₉]")
 _EXCLUDED_DIRS = {"_output", ".quarto"}
 _CELL = re.compile(r"^```\{python\}[^\n]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 _CAPTION_ENTRY = re.compile(r'^#\|\s{2,}-\s*"(.*)"\s*$')
@@ -814,22 +848,417 @@ def _manifest_page(page: str) -> str:
     return page.replace(".qmd", ".html")
 
 
-@pytest.mark.parametrize("page", PLOT_PAGES)
+def _description_id(clip: str) -> str:
+    """Return the id of a clip's description: ``demo_2d`` -> ``demo-2d-text``."""
+    return f"{clip.replace('_', '-')}-text"
+
+
+def _embed_block(embed: Embed, page: str) -> str:
+    """Return the canonical raw block that embeds a clip on a page.
+
+    Its paths are relative to the page, and its last line ends with a newline,
+    so the closing fence is a whole line.
+    """
+    up = "../" * (len(PurePosixPath(page).parts) - 1)
+    videos = [
+        f'<video class="{theme}-content" aria-label="{embed.label}" '
+        f'aria-describedby="{_description_id(embed.clip)}" '
+        f'src="{up}media/{embed.clip}.{theme}.mp4" '
+        f'poster="{up}media/{embed.clip}.{theme}.png" '
+        f'width="750" height="{CLIP_HEIGHTS[embed.clip]}" '
+        'controls playsinline preload="none"></video>'
+        for theme in ("light", "dark")
+    ]
+    lines = [
+        "```{=html}",
+        '<figure class="replay">',
+        *videos,
+        f"<figcaption>{embed.caption}</figcaption>",
+        "</figure>",
+        "```",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+_VIDEO_MARKUP = ("<video", "<source", "<figure", "<iframe", ".mp4", "{=html}")
+_DIV_CLOSE = re.compile(r"^:{3,}[ \t]*$")
+
+
+def _replay_embed_violations(
+    text: str, page: str, embeds: Sequence[Embed]
+) -> list[str]:
+    """Return how a page's source departs from its pinned clip embeds.
+
+    Each embed's block must occur exactly once, the blocks in the table's
+    order, each followed by its non-empty description div whose id occurs once;
+    with every pinned block removed, no line may hold video markup. Nothing is
+    said about what surrounds a block (see the module docstring).
+    """
+    blocks = [_embed_block(embed, page) for embed in embeds]
+    messages: list[str] = []
+    starts: list[int] = []
+    for number, (embed, block) in enumerate(zip(embeds, blocks, strict=True), 1):
+        count = text.count(block)
+        if count == 0:
+            messages.append(
+                f"embed {number} ({embed.clip}): the pinned block is missing or altered"
+            )
+        elif count > 1:
+            messages.append(
+                f"embed {number} ({embed.clip}): the pinned block occurs {count} times"
+            )
+        else:
+            starts.append(text.index(block))
+    if len(starts) == len(blocks) and starts != sorted(starts):
+        messages.append("the embeds are out of order")
+    for number, (embed, block) in enumerate(zip(embeds, blocks, strict=True), 1):
+        if text.count(block) == 1:
+            messages += _description_violations(text, number, embed, block)
+    remainder = text
+    for block in blocks:
+        remainder = remainder.replace(block, "\n" * block.count("\n"))
+    messages += [
+        f"unpinned video markup: line {number}"
+        for number, line in enumerate(remainder.split("\n"), start=1)
+        if any(marker in line.lower() for marker in _VIDEO_MARKUP)
+    ]
+    return messages
+
+
+def _description_violations(
+    text: str, number: int, embed: Embed, block: str
+) -> list[str]:
+    """Return how the description after an embed's one block departs from the pin."""
+    where = f"embed {number} ({embed.clip})"
+    div_id = _description_id(embed.clip)
+    messages: list[str] = []
+    following = text[text.index(block) + len(block) :].split("\n")
+    nonblank = [index for index, line in enumerate(following) if line.strip()]
+    opening = f"::: {{#{div_id}}}"
+    if not nonblank or following[nonblank[0]] != opening:
+        messages.append(f"{where}: not followed by its description `{opening}`")
+    else:
+        body = []
+        for line in following[nonblank[0] + 1 :]:
+            if _DIV_CLOSE.match(line):
+                break
+            body.append(line)
+        if not any(line.strip() for line in body):
+            messages.append(f"{where}: the description is empty")
+    count = text.count(f"{{#{div_id}}}")
+    if count > 1:
+        messages.append(f"{where}: the description id occurs {count} times")
+    return messages
+
+
+_DIV_OPEN = re.compile(r"^:{3,}[ \t]*\{#([^\s{}]+)\}[ \t]*$")
+
+
+def _descriptions(text: str) -> dict[str, str]:
+    """Map the id of each ``::: {#<id>}`` div to its whitespace-normalised body.
+
+    A body runs to the next closing ``:::`` line. Divs with classes or other
+    attributes (a callout, say) are not descriptions and are left out.
+    """
+    found: dict[str, str] = {}
+    lines = text.split("\n")
+    for index, line in enumerate(lines):
+        match = _DIV_OPEN.match(line)
+        if match is None:
+            continue
+        body = []
+        for following in lines[index + 1 :]:
+            if _DIV_CLOSE.match(following):
+                break
+            body.append(following)
+        found.setdefault(match.group(1), " ".join(" ".join(body).split()))
+    return found
+
+
+def _page_figures(text: str, page: str) -> list[tuple[str, int, str | None]]:
+    """Return a page's plot cells and pinned clip blocks, in source order.
+
+    A plot cell is ``("plot", height, None)``; each occurrence of a block that
+    ``REPLAY_EMBEDS`` lists for the page is ``("clip", height, clip)``.
+    """
+    found: list[tuple[int, tuple[str, int, str | None]]] = [
+        (match.start(), ("plot", _cell_height(match.group(1)), None))
+        for match in _CELL.finditer(text)
+        if _is_plot_cell(match.group(1))
+    ]
+    for embed in REPLAY_EMBEDS.get(page, ()):
+        block = _embed_block(embed, page)
+        found += [
+            (match.start(), ("clip", CLIP_HEIGHTS[embed.clip], embed.clip))
+            for match in re.finditer(re.escape(block), text)
+        ]
+    return [figure for _, figure in sorted(found, key=lambda item: item[0])]
+
+
+def _without(description: str, sentences: Sequence[str]) -> str:
+    """Return the description with each sentence removed once, in turn.
+
+    Raises AssertionError naming the first sentence not in what is left.
+    """
+    for sentence in sentences:
+        assert sentence in description, f"not in the description: {sentence!r}"
+        description = description.replace(sentence, "", 1)
+    return description
+
+
+@pytest.mark.parametrize("page", FIGURE_PAGES)
 def test_manifest_matches_the_source(page: str) -> None:
     figures = check_site_figures.EXPECTED_FIGURES[_manifest_page(page)]
-    assert all(fig.clip is None for fig in figures), page  # clips: pull request 3
-    from_manifest = tuple((fig.kind, fig.height) for fig in figures)
-    from_source = tuple(
-        ("plot", _cell_height(cell)) for cell in _plot_cells(SITE / page)
-    )
-    assert from_manifest == from_source
+    from_manifest = tuple((fig.kind, fig.height, fig.clip) for fig in figures)
+    text = (SITE / page).read_text(encoding="utf-8")
+    assert from_manifest == tuple(_page_figures(text, page))
 
 
-def test_the_manifest_lists_exactly_the_plot_pages() -> None:
+def test_the_manifest_lists_exactly_the_figure_pages() -> None:
     assert set(check_site_figures.EXPECTED_FIGURES) == {
-        _manifest_page(page) for page in PLOT_PAGES
+        _manifest_page(page) for page in FIGURE_PAGES
     }
     assert len(PLOT_PAGES) == 9
+
+
+_PAGE = "story/into-the-plane.qmd"
+_EMBED_2D = Embed("demo_2d", "Animation: the 2D search", "A caption.")
+
+
+def test_embed_block_is_the_pinned_markup() -> None:
+    """Only this catches a generated block that drifts from the design's markup."""
+    pinned = (
+        "```{=html}\n"
+        '<figure class="replay">\n'
+        '<video class="light-content" aria-label="Animation: the 2D search" '
+        'aria-describedby="demo-2d-text" src="../media/demo_2d.light.mp4" '
+        'poster="../media/demo_2d.light.png" width="750" height="450" '
+        'controls playsinline preload="none"></video>\n'
+        '<video class="dark-content" aria-label="Animation: the 2D search" '
+        'aria-describedby="demo-2d-text" src="../media/demo_2d.dark.mp4" '
+        'poster="../media/demo_2d.dark.png" width="750" height="450" '
+        'controls playsinline preload="none"></video>\n'
+        "<figcaption>A caption.</figcaption>\n"
+        "</figure>\n"
+        "```\n"
+    )
+    assert _embed_block(_EMBED_2D, _PAGE) == pinned
+    at_root = _embed_block(_EMBED_2D, "index.qmd")
+    paths = re.findall(r'(?:src|poster)="([^"]*)"', at_root)
+    assert len(paths) == 4
+    assert all(path.startswith("media/") for path in paths)
+    assert at_root == pinned.replace('"../media/', '"media/')
+
+
+# Built with _embed_block, which the test above pins, so each test below fails
+# for its own rule.
+_BLOCK_2D = _embed_block(_EMBED_2D, _PAGE)
+PAGE_TEXT = "A paragraph.\n\n" + _BLOCK_2D + "\n::: {#demo-2d-text}\nWords.\n:::\n"
+_ALTERED = ["embed 1 (demo_2d): the pinned block is missing or altered"]
+_NOT_FOLLOWED = [
+    "embed 1 (demo_2d): not followed by its description `::: {#demo-2d-text}`"
+]
+_MASS = Embed("demo_multi_mass", "Animation: one mass", "One.")
+_MASS_2D = Embed("demo_multi_mass_2d", "Animation: two masses", "Two.")
+_SWAPPED = (
+    _embed_block(_MASS_2D, _PAGE)
+    + "\n::: {#demo-multi-mass-2d-text}\nB.\n:::\n\n"
+    + _embed_block(_MASS, _PAGE)
+    + "\n::: {#demo-multi-mass-text}\nA.\n:::\n"
+)
+
+
+def _altered(pattern: str, new: str, count: int = 0) -> str:
+    """Return PAGE_TEXT with a change made where only the pinned block matches."""
+    return re.sub(pattern, new, PAGE_TEXT, count=count)
+
+
+@pytest.mark.parametrize(
+    ("text", "embeds", "expected"),
+    [
+        pytest.param(PAGE_TEXT, (_EMBED_2D,), [], id="canonical"),
+        pytest.param(
+            _altered("></video>", " autoplay></video>", 1),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="autoplay_added",
+        ),
+        pytest.param(
+            _altered("A caption.", "Another caption."),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="caption_changed",
+        ),
+        pytest.param(
+            _altered('height="450"', 'height="500"'),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="height_changed",
+        ),
+        pytest.param(
+            _altered('<video class="dark-content".*\n', ""),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="dark_video_removed",
+        ),
+        pytest.param(
+            _altered("```\\{=html\\}\n|(?<=</figure>\n)```\n", ""),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="fence_removed",
+        ),
+        pytest.param(
+            PAGE_TEXT + "\n" + _BLOCK_2D,
+            (_EMBED_2D,),
+            ["embed 1 (demo_2d): the pinned block occurs 2 times"],
+            id="block_twice",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<video src="x.mp4"></video>\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="a_second_video",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace(
+                "A paragraph.", "A paragraph, [the clip](../media/demo_2d.light.mp4)."
+            ),
+            (_EMBED_2D,),
+            ["unpinned video markup: line 1"],
+            id="a_link_to_a_clip",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<iframe src="x.html"></iframe>\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="an_iframe",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<source src="x.webm">\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="a_source_element",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<VIDEO SRC="x.webm"></VIDEO>\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="upper_case_video",
+        ),
+        pytest.param(
+            PAGE_TEXT + "\n```{=html}\n<p>Words.</p>\n```\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 15"],
+            id="another_raw_block",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace("\n::: {#demo-2d-text}\nWords.\n:::\n", ""),
+            (_EMBED_2D,),
+            _NOT_FOLLOWED,
+            id="description_missing",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace(
+                "\n::: {#demo-2d-text}", "\nA paragraph between.\n\n::: {#demo-2d-text}"
+            ),
+            (_EMBED_2D,),
+            _NOT_FOLLOWED,
+            id="description_not_adjacent",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace("Words.\n", "\n"),
+            (_EMBED_2D,),
+            ["embed 1 (demo_2d): the description is empty"],
+            id="description_empty",
+        ),
+        pytest.param(
+            PAGE_TEXT + "\n::: {#demo-2d-text}\nMore words.\n:::\n",
+            (_EMBED_2D,),
+            ["embed 1 (demo_2d): the description id occurs 2 times"],
+            id="description_id_twice",
+        ),
+        pytest.param(
+            _SWAPPED,
+            (_MASS, _MASS_2D),
+            ["the embeds are out of order"],
+            id="two_embeds_swapped",
+        ),
+    ],
+)
+def test_replay_embed_violations(
+    text: str, embeds: tuple[Embed, ...], expected: list[str]
+) -> None:
+    """Catches an embed edited by hand, a second video outside the table, and
+    a description that the videos name but that is not there.
+
+    An altered block is reported as missing, and its markup, no longer pinned,
+    as unpinned video markup.
+    """
+    messages = _replay_embed_violations(text, _PAGE, embeds)
+    if expected is _ALTERED:
+        assert messages[:1] == _ALTERED
+        assert len(messages) > 1
+        assert all(
+            message.startswith("unpinned video markup: line ")
+            for message in messages[1:]
+        )
+    else:
+        assert messages == expected
+
+
+def test_descriptions_are_found_by_id() -> None:
+    text = (
+        PAGE_TEXT
+        + "\n::: {#other}\nOther   words\nhere.\n:::\n"
+        + "\n::: {.callout-note}\nA note.\n:::\n"
+    )
+    assert _descriptions(text) == {
+        "demo-2d-text": "Words.",
+        "other": "Other words here.",
+    }
+
+
+def test_page_figures_merges_cells_and_embeds_in_source_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only this catches clips listed after all plots whatever their place."""
+    monkeypatch.setattr(sys.modules[__name__], "REPLAY_EMBEDS", {_PAGE: (_EMBED_2D,)})
+    text = (
+        "```{python}\n#| renderings: [light, dark]\n"
+        "fig, ax = plt.subplots(figsize=(7.5, 5.4))\n```\n\n"
+        + _BLOCK_2D
+        + "\n::: {#demo-2d-text}\nWords.\n:::\n\n"
+        "```{python}\n#| renderings: [light, dark]\nfig, ax = plt.subplots()\n```\n"
+    )
+    assert _page_figures(text, _PAGE) == [
+        ("plot", 540, None),
+        ("clip", 450, "demo_2d"),
+        ("plot", 420, None),
+    ]
+
+
+def test_without_removes_pinned_sentences_and_reports_a_missing_one() -> None:
+    assert _without("A 1. B 2.", ["A 1."]) == " B 2."
+    assert _without("A 1. B 2.", ["A 1.", " B 2."]) == ""
+    with pytest.raises(AssertionError, match="C 3"):
+        _without("A 1. B 2.", ["A 1.", "C 3."])
+
+
+def test_stray_numbers_are_found() -> None:
+    """Only this catches a subscript digit, which ``\\d`` does not match,
+    passing as no number."""
+    assert STRAY.pattern == r"[0-9₀-₉]"
+    assert STRAY.search("after 12 readings")
+    assert STRAY.search("x₃")
+    assert STRAY.search("0.4%")
+    assert not STRAY.search("after twelve readings, x and M")
+
+
+def test_embed_labels_and_captions_are_plain_text() -> None:
+    for page, embeds in REPLAY_EMBEDS.items():
+        for embed in embeds:
+            for text in (embed.label, embed.caption):
+                assert not set(text) & set('<>&"'), f"{page}: {embed.clip}: {text!r}"
 
 
 _RETIRED = ("demo_density.png",)
@@ -878,7 +1307,7 @@ _ONE_MENTION = ["line 1: demo_density.png"]
         ),
         pytest.param(
             '<picture><source srcset="../assets/demo_density.png">'
-            '<img src="../assets/demo_2d.gif" alt=""></picture>',
+            '<img src="../assets/kept.gif" alt=""></picture>',
             _ONE_MENTION,
             id="srcset",
         ),
@@ -930,7 +1359,7 @@ def test_retired_asset_mentions_are_found(text: str, expected: list[str]) -> Non
             id="command_output",
         ),
         pytest.param("[a](output/demo_density.png)", id="output_link"),
-        pytest.param("![a](../assets/demo_2d.gif)", id="other_asset"),
+        pytest.param("![a](../assets/kept.gif)", id="other_asset"),
         pytest.param("The density figure is drawn at build time.", id="no_mention"),
     ],
 )
@@ -955,6 +1384,20 @@ _MENTION_FILES = [REPO / "README.md"] + sorted(
 def test_no_page_mentions_a_retired_asset(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert _retired_asset_mentions(text, RETIRED_ASSETS) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(path, id=path.relative_to(REPO).as_posix())
+        for path in _MENTION_FILES
+        if path.suffix == ".qmd"
+    ],
+)
+def test_no_page_has_unpinned_video_markup(path: Path) -> None:
+    page = path.relative_to(SITE).as_posix()
+    text = path.read_text(encoding="utf-8")
+    assert _replay_embed_violations(text, page, REPLAY_EMBEDS.get(page, ())) == []
 
 
 @pytest.mark.parametrize("module", LIBRARY_DRAWING_MODULES)
@@ -1223,7 +1666,7 @@ _CANONICAL_CELL = _CANONICAL_OPTIONS + _SMALL_PROGRAM
             id="reordered",
         ),
         pytest.param(
-            _CANONICAL_CELL.replace("x = 1", "x = 1\n# | classes: [d-none]"),
+            _CANONICAL_OPTIONS + "# | classes: [d-none]\n" + _SMALL_PROGRAM,
             ["unexpected comment line: '# | classes: [d-none]'"],
             id="spaced_marker",
         ),
@@ -1278,9 +1721,11 @@ def test_builder_cell_options_are_exactly_the_three(
 def test_builder_cell_is_exactly_its_pinned_program(builder: str) -> None:
     """Each cell draws committed data that the Reproducibility page names.
 
-    So the whole cell is pinned, options included, compared by syntax tree
-    (comments and spacing do not matter; every statement, name, literal and
-    argument does): any change to a cell is a deliberate change to this test.
+    So the whole cell is pinned, options included: any change to a cell is a
+    deliberate change to this test. The program is compared by syntax tree, so
+    spacing inside a statement does not matter and every statement, name,
+    literal and argument does; the option block and every comment line are
+    compared as text, by ``_builder_cell_option_violations``.
     """
     page, cell = _builder_cell(builder)
     program = BUILDER_CELL_PROGRAMS[builder]
