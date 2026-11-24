@@ -7,12 +7,14 @@ tables with their clips.
 
 import functools
 import importlib
+import subprocess
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 from clocks._replay import Replay, load_replay, validate_replay
+from clocks._video import find_encoder
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -74,6 +76,18 @@ def two_candidates() -> Replay:
     replay = Replay(dict(base.meta), arrays)
     validate_replay(replay, "two candidates")
     return replay
+
+
+def first_pixel(clip: Path) -> bytes:
+    """The RGB bytes of the first pixel of ``clip``'s first frame, decoded by FFmpeg."""
+    command = [
+        find_encoder(), "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-i", str(clip), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ]  # fmt: skip
+    result = subprocess.run(command, capture_output=True, check=False)
+    assert result.returncode == 0, f"{clip}: {result.stderr.decode(errors='replace')}"
+    assert len(result.stdout) >= 3, f"{clip}: the decoder wrote no frame"
+    return result.stdout[:3]
 
 
 def _record(name: str, *, n_observations: int, n_particles: int) -> Replay:

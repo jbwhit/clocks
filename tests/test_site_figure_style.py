@@ -1005,7 +1005,11 @@ def _package_imports(path: Path) -> set[str]:
 
 @pytest.mark.parametrize(
     "path",
-    [*_clip_modules(), REPO / "src" / "clocks" / "_video.py"],
+    [
+        *_clip_modules(),
+        REPO / "src" / "clocks" / "_video.py",
+        REPO / "src" / "clocks" / "_site_media.py",
+    ],
     ids=lambda path: path.name,
 )
 def test_clip_modules_import_no_model_code(path: Path) -> None:
