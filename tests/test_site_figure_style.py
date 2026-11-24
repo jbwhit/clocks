@@ -120,6 +120,7 @@ LIBRARY_DRAWING_MODULES: tuple[str, ...] = (
     "src/clocks/_clip_maps.py",
     "src/clocks/_clip_models.py",
     "src/clocks/_clip_tracks.py",
+    "src/clocks/_clip_echo.py",
     "src/clocks/_clips.py",
 )
 

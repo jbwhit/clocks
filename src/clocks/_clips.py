@@ -13,6 +13,7 @@ from typing import NamedTuple
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
+from clocks._clip_echo import azimuth, build_echo
 from clocks._clip_maps import build_2d, build_multi_2d
 from clocks._clip_models import build_models
 from clocks._clip_parts import Clip
@@ -38,6 +39,7 @@ BUILDERS: dict[str, Callable[[Replay, Palette], Clip]] = {
     "demo_multi_mass": build_multi_1d,
     "demo_multi_mass_2d": build_multi_2d,
     "demo_model_comparison": build_models,
+    "demo_echolocation_3d": build_echo,
 }
 
 
@@ -50,9 +52,20 @@ class Shot(NamedTuple):
 
 
 def shots(replay: Replay) -> list[Shot]:
-    """Every drawing of the clip, in order, each held for its dwell."""
+    """Every drawing of the clip, in order, each held for its dwell.
+
+    The echolocation clip's camera turns through the F video frames before the
+    final hold, so each of those frames is a drawing of its own, at its own
+    azimuth; the last row is held at the azimuth of frame F - 1.
+    """
     dwell = dwell_frames(int(replay.meta["n_observations"]))
-    return [Shot(k, n) for k, n in enumerate(dwell)]
+    if replay.meta["demo"] != "demo_echolocation_3d":
+        return [Shot(k, n) for k, n in enumerate(dwell)]
+    turning = sum(dwell[:-1])
+    rows = [k for k, n in enumerate(dwell[:-1]) for _ in range(n)]
+    return [Shot(k, 1, azimuth(f, turning)) for f, k in enumerate(rows)] + [
+        Shot(len(dwell) - 1, dwell[-1], azimuth(turning - 1, turning))
+    ]
 
 
 def build_clip(replay: Replay, colors: Palette) -> Clip:

@@ -24,6 +24,7 @@ from _clip_replays import (
     two_candidates,
 )
 from _figure_artists import (
+    _point_count,
     all_axes,
     assert_hidden,
     assert_marks_drawn,
@@ -39,9 +40,11 @@ from matplotlib.colors import to_hex, to_rgba
 from matplotlib.figure import Figure
 from matplotlib.markers import MarkerStyle
 
+import clocks._clip_echo
 import clocks._clip_parts
 import clocks._clips
 import clocks.viz
+from clocks._clip_echo import azimuth, in_view, view_weight_text
 from clocks._clip_maps import clock_fill
 from clocks._clip_models import GUTTER, LABEL_GAP, build_models
 from clocks._clip_parts import (
@@ -64,7 +67,7 @@ from clocks._clips import (
     shots,
 )
 from clocks._figures import trace_header, trace_limits
-from clocks._replay import Replay
+from clocks._replay import DEMOS, Replay
 from clocks._style import THEMES, Palette, frame_rgba, palette, style
 from clocks._video import EncoderError, EncoderNotFound, StreamInfo, dwell_frames, probe
 
@@ -147,15 +150,25 @@ def nothing_to_draw(artist, kind: str) -> bool:
     if kind == "band":
         return len(artist.get_paths()) == 0
     if kind in ("line", "marks"):
-        points = len(np.atleast_1d(artist.get_xdata()))
+        # Not get_xdata(): a Line3D keeps there what it held at the last draw (Q18).
+        points = _point_count(artist)
         return points <= (1 if kind == "line" else 0)
     return False
 
 
-def shows(when: str, row: int) -> bool:
+def shows(when: str, row: int, replay: Replay) -> bool:
+    if when == "when any is in view":
+        low, high = replay.arrays["view_bounds"]
+        points = replay.arrays["cloud"][row][:, :3].astype(np.float64)
+        return bool(np.any(np.all((points >= low) & (points <= high), axis=1)))
     return {"always": True, "after the prior": row > 0, "only the prior": row == 0}[
         when
     ]
+
+
+def show_row(clip: Clip, replay: Replay, row: int) -> None:
+    """Show ``row`` at the azimuth of its first shot (None without a camera)."""
+    clip.show(row, next(shot.azimuth for shot in shots(replay) if shot.row == row))
 
 
 def faces(collection) -> np.ndarray:
@@ -308,13 +321,14 @@ def _placement(fig: Figure) -> dict[str, tuple]:
 
 @pytest.mark.parametrize("name", CLIPS)
 def test_axes_never_move(name: str) -> None:
-    with built(small(name)) as (clip, _):
-        clip.show(0)
+    replay = small(name)
+    with built(replay) as (clip, _):
+        show_row(clip, replay, 0)
         clip.fig.canvas.draw()
         first = _placement(clip.fig)
         assert first
         for row in (1, 4, 9):
-            clip.show(row)
+            show_row(clip, replay, row)
             clip.fig.canvas.draw()
             assert _placement(clip.fig) == first, f"row {row}"
 
@@ -338,11 +352,12 @@ def test_panels_are_on_the_canvas_and_apart(name: str) -> None:
 def test_the_layout_engine_stays_off(name: str) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        with built(small(name)) as (clip, _):
+        replay = small(name)
+        with built(replay) as (clip, _):
             noted = {id(ax): ax.get_position().bounds for ax in all_axes(clip.fig)}
             clip.fig.canvas.draw()
             for row in (0, 1, 2):
-                clip.show(row)
+                show_row(clip, replay, row)
                 frame_rgba(clip.fig)
             engine = type(clip.fig.get_layout_engine()).__name__
             after = {id(ax): ax.get_position().bounds for ax in all_axes(clip.fig)}
@@ -355,13 +370,14 @@ def test_the_layout_engine_stays_off(name: str) -> None:
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("name", CLIPS)
 def test_listed_artists_are_drawn(name: str, theme: str) -> None:
-    with built(small(name), theme) as (clip, _):
+    replay = small(name)
+    with built(replay, theme) as (clip, _):
         for row in (0, 1, 9):
-            clip.show(row)
+            show_row(clip, replay, row)
             clip.fig.canvas.draw()
             for axes, gid, kind, when in ARTISTS[name]:
                 artist = fetch(clip.fig, axes, gid)
-                if shows(when, row):
+                if shows(when, row, replay):
                     assert_shown(artist, kind)
                 elif not nothing_to_draw(artist, kind):
                     assert_hidden(artist)
@@ -372,9 +388,10 @@ def test_listed_artists_are_drawn(name: str, theme: str) -> None:
 def test_status_line(name: str, theme: str) -> None:
     expected = {0: "Before any observation", 1: "After 1 observation"}
     expected[9] = "After 9 observations"
-    with built(small(name), theme) as (clip, colors):
+    replay = small(name)
+    with built(replay, theme) as (clip, colors):
         for row, text in expected.items():
-            clip.show(row)
+            show_row(clip, replay, row)
             line = status(clip.fig)
             assert line.get_text() == text
             assert line.get_visible()
@@ -388,9 +405,10 @@ def test_status_line(name: str, theme: str) -> None:
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("name", CLIPS)
 def test_colours_are_the_palette_or_an_ink_blend(name: str, theme: str) -> None:
-    with built(small(name), theme) as (clip, colors):
+    replay = small(name)
+    with built(replay, theme) as (clip, colors):
         for row in (0, 9):
-            clip.show(row)
+            show_row(clip, replay, row)
             clip.fig.canvas.draw()
             assert off_palette(clip.fig, colors) == set(), f"row {row}"
 
@@ -403,7 +421,7 @@ def test_dots_are_the_archive_row(
     cx, cy = columns
     with built(replay) as (clip, colors):
         for row in (0, 4, 9):
-            clip.show(row)
+            show_row(clip, replay, row)
             line = fetch(clip.fig, axes, gid)
             x, y = line.get_data()
             cloud = replay.arrays["cloud"][row]
@@ -435,7 +453,7 @@ def test_traces_follow_the_archive(name: str, theme: str) -> None:
     last = len(mean) - 1
     with built(replay, theme) as (clip, colors):
         for row in (0, 4, 9):
-            clip.show(row)
+            show_row(clip, replay, row)
             for j, param in enumerate(_trace_names(name)):
                 ax = axes_named(clip.fig, f"trace-{param}")
                 truth = float(replay.arrays["true_params"][j])
@@ -558,7 +576,7 @@ def test_changing_the_last_mean_moves_the_trace_and_the_header(name: str) -> Non
     drawn = []
     for replay in (original, changed):
         with built(replay) as (clip, _):
-            clip.show(last)
+            show_row(clip, replay, last)
             data = {
                 gid: np.asarray(one(axes_named(clip.fig, gid), "trace-mean").get_data())
                 for gid in (first, *others)
@@ -591,7 +609,7 @@ def test_changing_a_middle_cloud_row_moves_only_that_rows_dots(
         with built(replay) as (clip, _):
             seen = {}
             for row in rows:
-                clip.show(row)
+                show_row(clip, replay, row)
                 seen[row] = np.array(fetch(clip.fig, axes, gid).get_data())
             drawn.append(seen)
     before, after = drawn
@@ -618,11 +636,13 @@ def test_a_one_particle_run_draws(name: str) -> None:
         warnings.simplefilter("error")
         with built(replay) as (clip, _):
             for row in (0, 1, 2):
-                clip.show(row)
+                show_row(clip, replay, row)
                 assert len(frame_rgba(clip.fig)) > 0
 
 
-@pytest.mark.parametrize("name", CLIPS)
+@pytest.mark.parametrize(
+    "name", [name for name in CLIPS if name != "demo_echolocation_3d"]
+)
 def test_shots_follow_the_dwell_schedule(name: str) -> None:
     expected = [Shot(k, n, None) for k, n in enumerate(dwell_frames(9))]
     assert shots(small(name)) == expected
@@ -1564,3 +1584,358 @@ def test_model_labels_fit_a_long_run(theme: str) -> None:
             box = one(ax, f"label-{k}").get_window_extent(renderer)
             assert frame.x0 <= box.x0 and box.x1 <= frame.x1, f"K = {k}"
         assert ax.get_xlim()[1] > 250 + GUTTER
+
+
+# ---------------------------------------------------------------- the echolocation clip
+
+ECHO = "demo_echolocation_3d"
+
+
+def _inside(points: np.ndarray, bounds) -> np.ndarray:
+    """Rows of ``points`` whose x, y and z all lie in the closed interval."""
+    low, high = bounds
+    xyz = np.asarray(points, dtype=np.float64)[:, :3]
+    return xyz[np.all((xyz >= low) & (xyz <= high), axis=1)]
+
+
+def _scene_dots(fig: Figure) -> np.ndarray:
+    """The close view's dots as an (n, 3) array."""
+    x, y, z = one(axes_named(fig, "scene"), "dots").get_data_3d()
+    return np.column_stack([x, y, z]).astype(np.float64)
+
+
+def test_every_clip_demo_has_a_builder() -> None:
+    assert set(BUILDERS) == set(CLIP_HEIGHTS) == set(DEMOS) - {"demo_density"}
+
+
+def test_azimuth() -> None:
+    for frame, expected in [
+        (0, -75.0),
+        (76, -69.17850576840875),
+        (152, -55.103002582480016),
+        (229, -40.82149423159126),
+        (305, -35.0),
+    ]:
+        assert azimuth(frame, 306) == pytest.approx(expected, abs=1e-9), frame
+    for frame, expected in [
+        (0, -75.0),
+        (6, -68.65106286437309),
+        (12, -53.63515173270658),
+        (23, -35.0),
+    ]:
+        assert azimuth(frame, 24) == pytest.approx(expected, abs=1e-9), frame
+
+
+def test_echo_shots_turn_the_camera_and_hold() -> None:
+    plan = shots(committed(ECHO))
+    assert len(plan) == 307
+    turning, hold = plan[:306], plan[306]
+    assert all(shot.repeat == 1 for shot in turning)
+    np.testing.assert_array_equal(
+        [shot.row for shot in turning], np.repeat(np.arange(80), dwell_frames(80)[:-1])
+    )
+    for f, shot in enumerate(turning):
+        assert shot.azimuth == pytest.approx(azimuth(f, 306), abs=1e-9), f
+    assert (hold.row, hold.repeat) == (80, 50)
+    assert hold.azimuth == pytest.approx(-35.0, abs=1e-9)
+    assert sum(shot.repeat for shot in plan) == 356
+
+    short = shots(shortest(ECHO))
+    assert len(short) == 25
+    assert (short[-1].row, short[-1].repeat) == (1, 50)
+    assert short[-1].azimuth == pytest.approx(-35.0, abs=1e-9)
+
+
+def test_echo_camera_follows_the_shot() -> None:
+    replay = committed(ECHO)
+    plan = shots(replay)
+    with built(replay) as (clip, _):
+        scene = axes_named(clip.fig, "scene")
+        for index in (0, 76, 306):
+            shot = plan[index]
+            clip.show(shot.row, shot.azimuth)
+            assert scene.azim == pytest.approx(shot.azimuth, abs=1e-9), index
+            assert scene.elev == 18
+        clip.show(0, plan[0].azimuth)
+        clip.show(80)
+        assert scene.azim == pytest.approx(-35.0, abs=1e-9)
+        assert scene.elev == 18
+
+
+def test_echo_scene_is_the_fixed_cube() -> None:
+    replay = committed(ECHO)
+    bounds = tuple(float(b) for b in replay.arrays["view_bounds"])
+    with built(replay) as (clip, _):
+        scene = axes_named(clip.fig, "scene")
+        for row in (0, 1, 80):
+            show_row(clip, replay, row)
+            assert scene.get_xlim() == bounds
+            assert scene.get_ylim() == bounds
+            assert scene.get_zlim() == bounds
+        aspect = scene.get_box_aspect()
+        assert aspect[0] == aspect[1] == aspect[2]
+
+
+def test_echo_close_view_holds_exactly_the_dots_inside_the_cube() -> None:
+    replay = committed(ECHO)
+    bounds = replay.arrays["view_bounds"]
+    cloud = replay.arrays["cloud"]
+    prior_inside = _inside(cloud[0], bounds)
+    assert len(prior_inside) == 2 and len(cloud[0]) == 500
+    with built(replay) as (clip, _):
+        show_row(clip, replay, 0)
+        np.testing.assert_array_equal(_scene_dots(clip.fig), prior_inside)
+        show_row(clip, replay, 1)
+        np.testing.assert_array_equal(
+            _scene_dots(clip.fig), cloud[1][:, :3].astype(np.float64)
+        )
+
+    base = small(ECHO)
+    changed_cloud = base.arrays["cloud"].copy()
+    changed_cloud[4, :3, 0] = base.arrays["view_bounds"][1] + 1.0
+    changed = edited(base, cloud=changed_cloud)
+    with built(changed) as (clip, _):
+        show_row(clip, changed, 4)
+        expected = changed_cloud[4][3:, :3].astype(np.float64)
+        assert len(expected) == 37
+        np.testing.assert_array_equal(_scene_dots(clip.fig), expected)
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_echo_close_view_draws_the_prior_dots_that_are_inside(theme: str) -> None:
+    replay = committed(ECHO)
+    with built(replay, theme) as (clip, colors):
+        for row, count in ((0, 2), (1, 500), (80, 500)):
+            show_row(clip, replay, row)
+            clip.fig.canvas.draw()
+            dots = one(axes_named(clip.fig, "scene"), "dots")
+            assert_shown(dots, "marks")
+            assert len(_scene_dots(clip.fig)) == count, row
+            assert to_hex(dots.get_color()) == colors.belief
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_echo_close_view_dots_reach_the_canvas(theme: str) -> None:
+    replay = committed(ECHO)
+    with built(replay, theme) as (clip, _):
+        fig = clip.fig
+        scene = axes_named(fig, "scene")
+        dots = one(scene, "dots")
+        for row in (0, 1, 80):
+            show_row(clip, replay, row)
+            shown = np.frombuffer(frame_rgba(fig), dtype=np.uint8).reshape(
+                1100, 1500, 4
+            )
+            dots.set_visible(False)
+            hidden = np.frombuffer(frame_rgba(fig), dtype=np.uint8).reshape(
+                1100, 1500, 4
+            )
+            dots.set_visible(True)
+            scale = 200 / fig.dpi
+            box = scene.get_window_extent()
+            left, right = int(np.floor(box.x0 * scale)), int(np.ceil(box.x1 * scale))
+            top = int(np.floor(1100 - box.y1 * scale))
+            bottom = int(np.ceil(1100 - box.y0 * scale))
+            differs = np.any(shown != hidden, axis=2)
+            inside = np.zeros_like(differs)
+            inside[max(top, 0) : bottom, max(left, 0) : right] = True
+            assert int(differs[inside].sum()) >= 10, row
+            assert int(differs[~inside].sum()) == 0, row
+
+
+def _nothing_inside_prior() -> Replay:
+    base = small(ECHO)
+    cloud = base.arrays["cloud"].copy()
+    cloud[0, :, 0] = base.arrays["view_bounds"][1] + 1.0
+    return edited(base, cloud=cloud)
+
+
+def _nothing_inside_after_a_full_row() -> Replay:
+    base = small(ECHO)
+    low, high = base.arrays["view_bounds"]
+    cloud = base.arrays["cloud"].copy()
+    cloud[3, :, :3] = (low + high) / 2
+    cloud[4, :, 0] = high + 1.0
+    return edited(base, cloud=cloud)
+
+
+@pytest.mark.parametrize(
+    ("make", "before", "row"),
+    [
+        pytest.param(_nothing_inside_prior, None, 0, id="prior"),
+        pytest.param(_nothing_inside_after_a_full_row, 3, 4, id="after_a_full_row"),
+    ],
+)
+def test_echo_close_view_with_nothing_inside_is_empty(make, before, row) -> None:
+    replay = make()
+    with built(replay) as (clip, _):
+        if before is not None:
+            show_row(clip, replay, before)
+            assert len(_scene_dots(clip.fig)) == 40
+        show_row(clip, replay, row)
+        x, y, z = one(axes_named(clip.fig, "scene"), "dots").get_data_3d()
+        assert (len(x), len(y), len(z)) == (0, 0, 0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert len(frame_rgba(clip.fig)) > 0
+
+
+def test_in_view_counts_the_faces() -> None:
+    points = np.array(
+        [
+            [-1.0, 0.0, 2.0],
+            [2.0, 2.0, 2.0],
+            [2.0000001, 0.0, 0.0],
+            [0.0, -1.0000001, 0.0],
+        ]
+    )
+    assert in_view(points, (-1.0, 2.0)).tolist() == [True, True, False, False]
+
+
+def test_echo_overview_spans_the_prior_and_marks_the_view() -> None:
+    replay = committed(ECHO)
+    with built(replay) as (clip, _):
+        ax = axes_named(clip.fig, "overview")
+        assert ax.get_xlim() == (-16.0, 16.0)
+        assert ax.get_ylim() == (-16.0, 16.0)
+        x, y = one(ax, "view-box").get_data()
+        corners = [(-1.3, -1.3), (4.8, -1.3), (4.8, 4.8), (-1.3, 4.8)]
+        visited = list(zip(np.asarray(x, float), np.asarray(y, float), strict=True))
+        assert len(visited) == 5
+        assert visited[0] == visited[-1]
+        assert set(visited[:4]) == set(corners)
+
+
+def test_view_weight_text() -> None:
+    replay = committed(ECHO)
+    with built(replay) as (clip, _):
+        for row, text in (
+            (0, "0.4% of the prior lies inside the close view"),
+            (1, "100.0% of the cloud's weight lies inside the close view"),
+            (80, "100.0% of the cloud's weight lies inside the close view"),
+        ):
+            show_row(clip, replay, row)
+            assert fetch(clip.fig, None, "view-weight").get_text() == text, row
+    assert (
+        view_weight_text(3, 0.5)
+        == "50.0% of the cloud's weight lies inside the close view"
+    )
+
+
+def test_the_weight_text_follows_the_archive() -> None:
+    base = small(ECHO)
+    weight = base.arrays["weight_in_view"].copy()
+    weight[3] = 0.5
+    replay = edited(base, weight_in_view=weight)
+    with built(replay) as (clip, _):
+        for row in (2, 3, 4):
+            show_row(clip, replay, row)
+            text = fetch(clip.fig, None, "view-weight").get_text()
+            share = "50.0" if row == 3 else f"{100 * weight[row]:.1f}"
+            expected = f"{share}% of the cloud's weight lies inside the close view"
+            assert text == expected, row
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_echo_fit_panel(theme: str) -> None:
+    replay = small(ECHO)
+    observations = replay.arrays["observations"]
+    predicted = replay.arrays["predicted_mean"]
+    with built(replay, theme) as (clip, colors):
+        ax = axes_named(clip.fig, "fit")
+        empty = one(ax, "fit-empty")
+        points = one(ax, "fit-points")
+        show_row(clip, replay, 0)
+        assert empty.get_visible() and empty.get_text() == "no readings yet"
+        assert not points.get_visible()
+        for row in (1, 4, 9):
+            show_row(clip, replay, row)
+            assert not empty.get_visible()
+            assert points.get_visible()
+            np.testing.assert_allclose(
+                points.get_xdata(),
+                observations[:row].mean(axis=0),
+                rtol=1e-12,
+                atol=1e-15,
+            )
+            np.testing.assert_allclose(
+                points.get_ydata(), predicted[row], rtol=1e-12, atol=1e-15
+            )
+            assert to_hex(points.get_color()) == colors.ink
+        assert ax.get_xlim() == ax.get_ylim()
+        assert ax.get_aspect() == 1.0
+        box = ax.get_position(original=True)
+        assert 7.5 * box.width == pytest.approx(5.5 * box.height, rel=1e-9)
+        diagonal = one(ax, "fit-diagonal")
+        low, high = ax.get_xlim()
+        np.testing.assert_array_equal(diagonal.get_xdata(), [low, high])
+        np.testing.assert_array_equal(diagonal.get_ydata(), [low, high])
+        assert to_hex(diagonal.get_color()) == colors.muted
+        assert ax.get_xlabel() == "observed mean"
+        assert ax.get_ylabel() == "fitted"
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_echo_truth_ring_and_drop_line(theme: str) -> None:
+    replay = small(ECHO)
+    x, y, z = (float(v) for v in replay.arrays["true_params"][:3])
+    low = float(replay.arrays["view_bounds"][0])
+    with built(replay, theme) as (clip, colors):
+        scene = axes_named(clip.fig, "scene")
+        truth = one(scene, "truth")
+        np.testing.assert_array_equal(
+            np.asarray(truth.get_data_3d(), dtype=float), [[x], [y], [z]]
+        )
+        assert truth.get_markerfacecolor() == "none"
+        assert to_hex(truth.get_markeredgecolor()) == colors.truth
+        assert truth.get_markeredgewidth() > 0
+        assert truth.get_markersize() > one(scene, "dots").get_markersize()
+        drop = one(scene, "truth-drop")
+        np.testing.assert_array_equal(
+            np.asarray(drop.get_data_3d(), dtype=float), [[x, x], [y, y], [z, low]]
+        )
+        assert to_hex(drop.get_color()) == colors.truth
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_echo_head_and_clocks(theme: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    made: list[tuple[object, list]] = []
+    real = clocks._clip_echo.Line3DCollection
+
+    class Recording(real):
+        def __init__(self, segments, *args, **kwargs) -> None:
+            made.append((self, [np.array(s, dtype=float) for s in segments]))
+            super().__init__(segments, *args, **kwargs)
+
+    monkeypatch.setattr(clocks._clip_echo, "Line3DCollection", Recording)
+    replay = small(ECHO)
+    positions = replay.arrays["clock_positions"]
+    with built(replay, theme) as (clip, colors):
+        scene = axes_named(clip.fig, "scene")
+        clocks_artist = one(scene, "clocks")
+        np.testing.assert_array_equal(
+            np.asarray(clocks_artist.get_data_3d(), dtype=float), positions.T
+        )
+        assert to_hex(clocks_artist.get_color()) == colors.ink
+        head = one(scene, "head")
+        assert to_hex(head.get_edgecolor()[0], keep_alpha=False) == colors.muted
+        assert len(made) == 1
+        instance, segments = made[0]
+        assert instance is head
+    low, high = positions.min(axis=0), positions.max(axis=0)
+    corners = [
+        (float(a), float(b), float(c))
+        for a in (low[0], high[0])
+        for b in (low[1], high[1])
+        for c in (low[2], high[2])
+    ]
+    edges = {
+        frozenset((p, q))
+        for i, p in enumerate(corners)
+        for q in corners[i + 1 :]
+        if sum(u != v for u, v in zip(p, q, strict=True)) == 1
+    }
+    assert len(edges) == 12
+    drawn = {frozenset(tuple(float(v) for v in end) for end in s) for s in segments}
+    assert len(segments) == 12
+    assert drawn == edges

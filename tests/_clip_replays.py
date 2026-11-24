@@ -93,6 +93,8 @@ DOTS = {
         ("map", "dots-1", (0, 1), "belief"),
         ("map", "dots-2", (2, 3), "belief_alt"),
     ],
+    # The close view's cloud is a subset of the row, so it is not listed here.
+    "demo_echolocation_3d": [("overview", "overview-dots", (0, 2), "belief")],
 }
 # demo -> (axes gid, artist gid, (i, j): the block of mean and cov, palette role)
 ELLIPSES = {
@@ -158,7 +160,8 @@ def _traces(*params: str) -> list[tuple[str, str, str, str]]:
 
 
 # demo -> (axes gid or None for a figure text, artist gid, kind of assert_shown,
-# when it shows: "always", "after the prior" or "only the prior")
+# when it shows: "always", "after the prior", "only the prior", or, for the close
+# view's cloud alone, "when any is in view" (some dot of the row in view_bounds)
 ARTISTS: dict[str, list[tuple[str | None, str, str, str]]] = {
     "demo_2d": [
         ("map", "dots", "marks", "always"),
@@ -206,5 +209,20 @@ ARTISTS: dict[str, list[tuple[str | None, str, str, str]]] = {
         *[("posterior", f"model-{k}", "line", "after the prior") for k in (1, 2, 3)],
         *[("posterior", f"label-{k}", "text", "always") for k in (1, 2, 3)],
         (None, "status", "text", "always"),
+    ],
+    "demo_echolocation_3d": [
+        ("scene", "dots", "marks", "when any is in view"),
+        ("scene", "clocks", "marks", "always"),
+        ("scene", "truth", "marks", "always"),
+        ("scene", "truth-drop", "line", "always"),
+        ("scene", "head", "segments", "always"),
+        ("overview", "overview-dots", "marks", "always"),
+        ("overview", "view-box", "line", "always"),
+        ("fit", "fit-points", "marks", "after the prior"),
+        ("fit", "fit-diagonal", "line", "always"),
+        ("fit", "fit-empty", "text", "only the prior"),
+        *_traces("x", "y", "z", "M"),
+        (None, "status", "text", "always"),
+        (None, "view-weight", "text", "always"),
     ],
 }
