@@ -1363,3 +1363,73 @@ The coordinator opens the pull request as a draft after Task 1 and, in its descr
 **Each task's tests at its own commit.** Tasks 3 to 6 parametrize over `BUILDERS`, so a clip's shared tests appear with its builder. Task 7's fixtures need Task 2's `probe` and a demo's `record()` only, and its media-set check passes on the real site because no build ships media before Task 10. Task 8's tests call the function directly. Task 9's page tests are vacuous until Task 10 fills the table. Task 10's description test reads the 0.15 archive, and Task 11 changes archive and text together.
 
 **The site after each task that touches it.** Tasks 7 to 9: pages and build unchanged. Task 10: the pre-render step and the media resources are switched on in the same commit as the embeds, the manifest and the guard; the GIFs go; the prose is true. Task 11: the 2D clip, descriptions and cell agree with the new truth. Task 12: prose only. At no commit does a page name a file that is not there or a build ship a media file that no page shows.
+
+## Probe results
+
+Task 1, recorded at `7338965` (the probe script `docs/plans/2026-11-19-replay-and-animation/clip_probe.py` and the seven sheets beside it). Run here on macOS arm64, Python 3.14.0, NumPy 2.4.2, Matplotlib 3.10.8, Quarto 1.9.32; on the runner by a temporary workflow on a throwaway branch (deleted afterwards), run <https://github.com/jbwhit/clocks/actions/runs/45456816717>, head `3363e0e` (the probe commit `7338965` plus the workflow file). The run concludes `failure` because its last step, the Quarto build, exits 1 on item (c); every earlier step succeeded.
+
+**Verdict of Step 7: stop.** Item (c) fails on Quarto 1.11.9 (and on 1.9.32 here). Every other item, the encoder, the format and the time hold. Details below.
+
+**The runner's environment.** `uv run --frozen` gives `3.12.16 (main, Nov 11 2026, 00:15:59) [Clang 23.1.3 ]`, a 3.12 as the site jobs assume (decision D42: no finding). Encoder: `imageio-ffmpeg` 0.8.1's `ffmpeg-linux-x86_64-v9.0.2`, version line `ffmpeg version n9.0.2-17-g2a571b6068-20260930 Copyright (c) 2000-2026 the FFmpeg developers`; it runs, encodes `libx264` and passes the decode probe. Here: `ffmpeg-macos-aarch64-v9.0`, `ffmpeg version 9.0 Copyright (c) 2000-2026 the FFmpeg developers`.
+
+**Quarto, items (a) to (h).** Measured: the same outcome on both versions.
+
+| Item | 1.9.32 (here) | 1.11.9 (runner) |
+|---|---|---|
+| (a) pre-render in the project directory, under the starting interpreter (same `sys.prefix`); `QUARTO_PROJECT_RENDER_ALL=1` on both full renders, unset on the single-page render | holds | holds (Python 3.12.16) |
+| (b) `_output/media/` holds the four files after a clean render | holds | holds |
+| (c) the two `<video>` lines, the `<figure class="replay">` line and the `<figcaption>` line unchanged | **fails** | **fails** |
+| (d) one `id="demo-2d-text"` holding the div's text, on each page | holds | holds |
+| (e) `<body>` has `quarto-light`; `site_libs` hides `.light-content` under `body.quarto-dark` and `.dark-content` under `body.quarto-light` | holds | holds |
+| (f) `_output/replay.css` byte for byte the source; both pages link it (`replay.css`, `../replay.css`), after `styles.css` | holds | holds |
+| (g) the render whose pre-render script exits 1 exits non-zero | holds | holds |
+| (h) `output-only.mp4` gone after the second full render | holds | holds |
+
+How (c) fails, identically on both versions and on both pages: Quarto's HTML post-processing rewrites the raw block. The `<figure>` gains a class, `class="replay figure"`; on each `<video>` the bare attributes become `controls=""` and `playsinline=""`. Every other attribute keeps its value and its order, the `src` and `poster` paths are untouched (`media/…` on the root page, `../media/…` in `story/`), and the `<figcaption>` line arrives unchanged. Pandoc may pass the block through, but the page Quarto writes is not byte for byte the block (decision D22's premise). What this touches downstream, for the coordinator: D22's statement and Task 10's guard (the source still holds the canonical block; only the rendered page differs); Task 7's parser, whose `_Video` attributes treat a bare `controls` as present with the value `None`, while the rendered page has `""`; and any rendered-site rule that compares the figure's class list for equality rather than membership (`replay` is still in it). Also recorded: `source-only.mp4` was copied to `_output/media/` by the second full render, as expected; and after the failing render (g) `_output/` does not exist at all, on both versions (a full render whose pre-render step fails leaves no site, not the previous one).
+
+**Decode probe** (Step 3's small clips), here and on the runner; exit status, first `Video:` line, last `frame=` and `progress=` lines.
+
+- Three solid frames of 64 by 48 written 2, 1 and 4 times: exit 0, `Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 64x48, 19 kb/s, 20 fps, 20 tbr, 10240 tbn (default)`, `frame=7`, `progress=end`; boxes `ftyp moov free mdat`; 1,793 bytes here, 1,798 on the runner. Both builds.
+- Re-encoded `-c:v mpeg4`: exit 0, `Video: mpeg4 (Simple Profile) (mp4v / 0x7634706D), yuv420p, 64x48 [SAR 1:1 DAR 4:3], 5 kb/s, 20 fps, 20 tbr, 10240 tbn (default)`, `frame=7`, `progress=end`.
+- Re-encoded `-c:v libx264 -pix_fmt yuv444p`: exit 0, `Video: h264 (High 4:4:4 Predictive) (avc1 / 0x31637661), yuv444p(progressive), 64x48, 19 kb/s, 20 fps, 20 tbr, 10240 tbn (default)`, `frame=7`, `progress=end`.
+- Made at 25 frames a second: exit 0, `… yuv420p(progressive), 64x48, 24 kb/s, 25 fps, 25 tbr, 12800 tbn (default)`, `frame=7`, `progress=end`.
+- Made at 64 by 40: exit 0, `… yuv420p(progressive), 64x40, 19 kb/s, 20 fps, 20 tbr, 10240 tbn (default)`, `frame=7`, `progress=end`.
+- Copied with `-c copy`, no `+faststart`: exit 0, the small clip's line, `frame=7`, `progress=end`; boxes `ftyp free mdat moov`.
+- Sixty frames of seeded noise, 117,086 bytes, cut to 58,543: exit 0, the stream line intact (`309 kb/s`), `frame=29`, `progress=end`.
+- A text file named `.mp4`: exit 183, no `Video:` line, no progress report.
+
+The probe's expectations hold on both builds (exit 0 here and on the runner).
+
+**Every clip, both themes** (drawings; seconds to draw and encode; seconds to decode; bytes; every clip decoded to its expected count, 296 or 356, ending `progress=end`, boxes `ftyp moov free mdat`, 1500 pixels wide by twice the declared height).
+
+| Clip, theme | Drawings | Here: draw+encode, decode, bytes | Runner: draw+encode, decode, bytes |
+|---|---|---|---|
+| `demo_1d` light | 51 | 3.32 s, 0.09 s, 512,412 | 5.56 s, 0.17 s, 513,145 |
+| `demo_1d` dark | 51 | 3.28 s, 0.09 s, 471,164 | 5.69 s, 0.22 s, 466,800 |
+| `demo_2d` light | 51 | 3.41 s, 0.10 s, 567,826 | 6.04 s, 0.18 s, 569,215 |
+| `demo_2d` dark | 51 | 3.36 s, 0.09 s, 519,673 | 5.89 s, 0.17 s, 518,414 |
+| `demo_multi_mass` light | 81 | 6.67 s, 0.12 s, 1,227,890 | 11.34 s, 0.24 s, 1,226,472 |
+| `demo_multi_mass` dark | 81 | 6.54 s, 0.14 s, 1,105,346 | 11.60 s, 0.27 s, 1,099,976 |
+| `demo_multi_mass_2d` light | 81 | 7.31 s, 0.14 s, 1,621,487 | 12.40 s, 0.30 s, 1,614,560 |
+| `demo_multi_mass_2d` dark | 81 | 7.23 s, 0.14 s, 1,475,456 | 12.89 s, 0.30 s, 1,468,208 |
+| `demo_model_comparison` light | 81 | 1.79 s, 0.08 s, 325,587 | 3.68 s, 0.18 s, 317,864 |
+| `demo_model_comparison` dark | 81 | 1.78 s, 0.08 s, 295,749 | 3.82 s, 0.20 s, 292,009 |
+| `demo_echolocation_3d` light | 307 | 21.68 s, 0.11 s, 822,361 | 35.11 s, 0.28 s, 821,501 |
+| `demo_echolocation_3d` dark | 307 | 21.49 s, 0.11 s, 793,699 | 34.76 s, 0.27 s, 790,821 |
+| **Total, all twelve** | | **89.1 s** | **151.6 s** |
+
+The probe job took 3 min 5 s on the runner (job 18:11:40 to 18:14:45 UTC); its timing step 2 min 32 s.
+
+**Time (Step 7).** t = 151.6 s on the runner, between 120 s and 240 s, so the sum rule applies: the latest `Site check` run (<https://github.com/jbwhit/clocks/actions/runs/45339815562>, job `render` 06:21:16 to 06:22:45 UTC) took 89 s; 89 + 151.6 = 240.6 s, under the 480 s that are eight of the job's ten minutes. Time alone would let the work go on. The design expected under two minutes; it is 2.5.
+
+**The format (Step 7).** Every panel was drawn from the keys `validate_replay` accepts, without importing `clocks.physics` or `clocks.inference` and without running a demo (the one `record()` call is the 2D run at 0.10 that Task 11 makes, done in memory for its sheet). No sheet shows a panel misleading for want of data: the 500 dots show the two-mass map's second mode (row 20: a dense lump of mass 2 near (0.5, 3) beside the sparse spread around its truth, which the ellipse cannot show); the insets show no float32 steps. The format holds.
+
+**The slowing panel (Step 7, decision D19).** The prior's bars are in view at k = 0 and do not flatten the later ones: including the prior row widens the y-range by 14% (`demo_1d`, −0.0011 to 0.0508 against 0.0050 to 0.0506 without it) and by 5% (`demo_multi_mass`). At 1500 pixels the predicted bars are 119 to 131 pixels long at k = 0, 11 to 47 at k = 1, 4 to 17 at k = 8 and 2 to 7 at the last row (the observed bar 47, 17 and 7); without the prior row the last would be 2 to 8. The last row's bars are short because the final uncertainty is small against the spread of slowing between clocks, not because of the prior. D19 stands.
+
+**Layout values.** `LAYOUTS`, `SIDE_OFFSET = 0.5` and `GUTTER = 22.0` as in the script at `7338965`. Every figure-level rectangle lies in the unit square and no two overlap; the echolocation whole-prior box sits at upper left beside the scene; in both track clips `strip` and `slowing` have the cloud's left edge (0.085) and width (0.50).
+
+**Drawing details settled by the sheets that `LAYOUTS` does not carry** (Tasks 3 to 6 need them to reproduce what was looked at): each inset sits flush with the top of its panel, and its zoom label is the inset's text placed just above it (`(0, 1.03)` in inset fractions, `clip_on=False`), so no label lies over data; the key `covariance, 2 s.d.` is the panel's text just above the panel's top right (`(1, 1.015)`; centred over the two-mass track cloud), and `stronger fill = slower clock` sits below the 2D map at its right (`(1, −0.085)`), with the map's tick labels padded 5 points; the `mass 1` and `mass 2` labels are placed, once, after the final row is shown, at whichever of eight compass offsets (9 and 7 points) covers the fewest final marks without leaving the panel or touching an inset (a fixed offset put them on the final clouds); the two-mass map's trace headers are 8.5 points (9.5 elsewhere), since at 9.5 the right column's headers left the canvas; the close view has `set_box_aspect((1, 1, 1), zoom=1.1)`, ticks at the even integers inside `view_bounds`, panes in `background` with `rule` edges; the fit panel's `no readings yet` sits at its top left, off the diagonal; the model clip's x ticks stop at T and its bottom spine is bounded at T.
+
+**Decisions D17, D18 and D20: unchanged.** D17's singular and D18's label are drawn as written (the labels read, for example, `zoom ×21 (x), ×8 (M)` and `zoom ×8 (x), ×6 (y)`); D20's rectangles are the probe's `LAYOUTS`.
+
+**Seen on the sheets but not a Step 2 item, for the coordinator.** In the model clip, a connector runs from a line's head to its label in the gutter, so at early rows each connector crosses the whole empty panel and reads like a projection of the line (thinned to 0.7 points at alpha 0.6 here; still visible). And at rows 0 and 1 the two-mass labels, which sit beside their truths inside the cloud panel, lie over prior dots, as any label inside a panel full of the prior would.
