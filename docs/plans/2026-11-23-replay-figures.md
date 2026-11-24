@@ -478,3 +478,154 @@ for theme in THEMES:
 - [ ] **Step 4: Tests pass; full gate; render the site and run both checks.** `check_site_figures.py` prints `Figure contract OK: 9 pages, 11 figures checked.` Confirm in the rendered `story/gravitational-echolocation.html` that the counts along the top read 12, 12, 11, 8, 3, 0, in both themes.
 
 - [ ] **Step 5: Commit and push** as `Draw the range-study figure at build time and retire its PNG`.
+
+---
+
+### Task 7: The site check runs when the figure data change; contact sheets
+
+**Files:**
+- Modify: `.github/workflows/site-check.yml`
+- Create: `tests/test_site_check_workflow.py`, `docs/plans/2026-11-23-replay-figures/contact_sheets.py`, the four sheets below
+
+**Interfaces:**
+- Consumes: `density_figure`, `range_study_figure`, `load_replay`, `style`, `THEMES` from `clocks.viz`.
+
+- [ ] **Step 1: Write the failing test** in `tests/test_site_check_workflow.py`, reading the workflow as text (no YAML library is a declared dependency):
+
+- `test_site_check_runs_when_the_figure_data_change` (IDs the two paths): among the lines of `.github/workflows/site-check.yml`, exactly one, stripped, equals `- "assets/replays/**"`, and exactly one equals `- "assets/echolocation_range_study.json"`. (The workflow has one trigger, `pull_request`.)
+
+- [ ] **Step 2: Run it; it fails** on both paths.
+
+- [ ] **Step 3: Add the two paths** under `pull_request.paths`, after `"src/clocks/**"`, with a comment: the site draws its density and range-study figures from these files.
+
+- [ ] **Step 4: Contact sheets.** `contact_sheets.py` takes `--out DIR`; for each figure and theme it draws through `clocks.viz` inside `style(theme)`, saves to memory at `dpi=200` (1500 by 1080), and composes one sheet per figure: the light and dark renderings at full width in the top row, and the same two resampled with Pillow to 780 pixels wide (390 CSS pixels at twice density, what a phone shows) in the bottom row, each labelled with its theme and width. It writes `density.jpg` and `range-study.jpg` (JPEG, quality 85) and prints their paths relative to the repository. It holds no absolute path and must pass `ruff format --check` and `ruff check` (the directory is not excluded). Run `uv run python docs/plans/2026-11-23-replay-figures/contact_sheets.py --out docs/plans/2026-11-23-replay-figures`.
+
+- [ ] **Step 5: Look at both sheets** and report, per sheet, each item as seen or not seen: no text overlaps other text or a data mark at either width; at 390 pixels the trace headers, the pass counts and the limit labels can be read; the density band is visible in both themes; the faint run dots are visible on the dark background; the dashed limits are told apart from the grid. A failed item is fixed in the figure code, with Tasks 3 or 5's tests re-run, before committing; say what moved.
+
+- [ ] **Step 6: Phone width on the rendered site.** Render the site. Load `story/beyond-point-masses.html` and `story/gravitational-echolocation.html` each in a 390-pixel `<iframe>` in headless Chrome (a window narrower than about 500 pixels is not laid out: PR #21) and record each page's document `scrollWidth` and the number of images wider than their container. Expected: at most 390 and 0. The numbers go to the coordinator for the pull request's description, not into a file.
+
+- [ ] **Step 7: Test passes; full gate; commit and push** the workflow, the test, the script and the two sheets as `Run the site check when the figure data change; add contact sheets of both figures`. The body lists Step 5's findings.
+
+---
+
+### Task 8: Follow-ups owed to the replay tests and documents
+
+Items 1, 2 and 5 of pull request 1's deferred list. No archive is re-recorded: every test below reads the committed `demo_2d` and echolocation archives, or records a one-particle run in memory.
+
+**Files:**
+- Modify: `tests/test_replay.py`, `tests/test_replays.py`, `docs/plans/2026-11-19-replay-and-animation-design.md`, `docs/plans/2026-11-19-replay-data.md`
+
+- [ ] **Step 1: The thinning tie.** In `tests/test_replay.py`, `PHI = (math.sqrt(5.0) - 1.0) / 2.0`, the call `_replay.THINNING_OFFSET` makes, so the tie case stays exact wherever `5**0.5` and `math.sqrt(5.0)` round differently. Nothing fails before or after on this machine; the change is for exactness, not a new check.
+
+- [ ] **Step 2: Write the failing tests** in `tests/test_replays.py`.
+
+Zero spread (spec, section 3's prediction invariant; P8). `ZERO_SPREAD_ATOL = 1e-7`, with a comment: where `predicted_std` is 0, as in a one-particle run, the dots' mean reading must be within this of `predicted_mean` and their standard deviation at most this; rounding a dot to float32 moves its reading by 6.4e-11 (`demo_1d`) and 1.4e-9 (`demo_multi_mass`) in one-particle recordings.
+
+- `test_a_one_particle_recording_passes_the_prediction_check` (IDs `demo_1d`, `demo_multi_mass`): `replay = module.record(n_observations=2, n_particles=1)`; `_assert_predictions_match_dots(predicted_mean, predicted_std, _readings_of_dots(cloud, clock_positions, track_offset, centred=False, first_row=0), 0)` does not raise.
+- `test_a_one_particle_prediction_off_the_dot_is_caught`: the `demo_1d` recording above with `predicted_mean[0, 0] += 1e-6` raises `AssertionError` matching `row 0, clock 0: the dots' mean reading differs from predicted_mean by 1e-06 where predicted_std is 0`.
+- `test_a_spread_where_none_is_predicted_is_caught`: on plain arrays, `predicted_mean = np.array([[1.0]])`, `predicted_std = np.array([[0.0]])`, dot readings `np.array([[[0.99], [1.01]]])`: raises matching `row 0, clock 0: the dots' s.d. is 0.01 where predicted_std is 0`.
+
+Prior cases declared on their own. `PRIOR_CHECKED_DEMOS = ("demo_1d", "demo_multi_mass")`, with the comment that their panels draw the prior's predicted bars. `_SHIFTS` builds its `prior` cases from this tuple, not by filtering `PREDICTING_DEMOS` through `FIRST_CHECKED_ROW`.
+
+- `test_prior_cases_and_the_skip_map_partition_the_predicting_demos`: `set(PRIOR_CHECKED_DEMOS).isdisjoint(FIRST_CHECKED_ROW)` and `set(PRIOR_CHECKED_DEMOS) | set(FIRST_CHECKED_ROW) == set(PREDICTING_DEMOS)`.
+
+Rows chosen at run time (P9):
+
+- `test_a_tilted_covariance_is_caught`: from `demo_2d`'s `cov`, the x–y correlation of every row; `row` is the index, after the prior, of the largest absolute value. First assert that value exceeds 0.2 (the spec: a reversed tilt is caught only where |r| exceeds about 0.2). Flip the sign of both off-diagonal entries of that row; `_assert_dots_share_orientation` raises matching `f"row {row}:"`. (Row 5 today, |r| 0.326.)
+- `test_a_weight_in_view_off_by_its_sampling_error_is_caught`: from echolocation's `cloud` and `view_bounds`, the fraction `p` of dots inside the view in every row; `row = int(np.argmin(p))`; set `weight_in_view[row] = p[row] + 0.036`. First assert, with `bound = max(0.01, 6 * sqrt(p (1 − p) / m))` at that row, that `bound < 0.036 < 0.05`: outside six sampling errors, inside the old fixed tolerance. Then the helper raises matching `f"row {row}:"`. (Row 0 today, `p` 0.004, bound 0.0169.)
+
+- [ ] **Step 3: Run** `uv run pytest tests/test_replays.py -q`; the two one-particle tests and the spread test fail (the first with "inf s.d./sqrt(m)"); the rest pass, being rewrites of passing tests.
+
+- [ ] **Step 4: Implement** in `_assert_predictions_match_dots`: per row, the clocks where `predicted_std == 0` are checked against `ZERO_SPREAD_ATOL` with the two messages above, and the others exactly as today; no division by a zero spread. In `assert_computed_input_matches`' docstring, "their last bit can differ" becomes "their low-order bits can differ".
+
+- [ ] **Step 5: Correct the two documents** that still describe clock positions as compared exactly.
+
+- Design, section 3, gate item 1 becomes: "**Schema and inputs.** Key set, shapes and dtypes; `meta` except `created_with`; `true_params`, `model_ks` and `model_prior`, exactly. The inputs computed in floating point (`clock_positions`, `true_rates`, `observations`, `filter_observations`) are compared with `rtol=1e-12` and `atol=1e-12`: a library's low-order bits are not the scenario, and centred and contrast values near zero need the absolute term. The two-mass 2D demo's clocks are drawn from a seeded generator, and the x86-64 runner rounds their scaling differently from the arm64 machine that recorded the archive (pull request 1, `a108783`)."
+- Design, section 3, first committed-archive invariant: "`meta` and the geometry equal the demo's `scenario()`" becomes "`meta` equals the demo's `scenario()`, and its clock positions match the scenario's at `rtol=1e-12, atol=1e-12`".
+- Plan for pull request 1: in Global Constraints, `clock_positions` joins the computed inputs; in Task 9, `test_archive_matches_its_scenario` reads "`true_params` is `np.array_equal` to the scenario's; `clock_positions` and `true_rates` match with `rtol=1e-12, atol=1e-12`", and `test_gate_inputs` moves `clock_positions` from the exact list to the `rtol=1e-12, atol=1e-12` list.
+- Each document's status paragraph gains one sentence: "Corrected after merge: clock positions are compared at `rtol=1e-12, atol=1e-12`, not exactly (`a108783`)."
+- Then `rg -n "clock_positions" docs/plans/2026-11-19-replay-and-animation-design.md docs/plans/2026-11-19-replay-data.md` and read every hit; none may still call them exact.
+
+- [ ] **Step 6: Tests pass; full gate; commit and push** as `Settle the replay tests' owed follow-ups: zero spread, prior cases, rows chosen at run time`.
+
+---
+
+### Task 9: Follow-ups owed to the replay report
+
+Items 3, 4 and the `meta` part of 6 of pull request 1's deferred list.
+
+**Files:**
+- Modify: `src/clocks/_replay.py`, `.github/workflows/replay-report.yml`
+- Test: `tests/test_replay.py`, `tests/test_record_replays_script.py`, `tests/test_replay_report_workflow.py`
+
+**Interfaces:**
+- Produces: `first_difference` returns `Difference(f"meta.{field}", None, math.nan)` for a `meta` difference, `field` being the first key in `sorted(set(reference.meta) | set(other.meta))`, `created_with` excluded, whose values differ or which one side lacks. The report line becomes, for example, `demo_1d: differs at meta.seed`.
+
+- [ ] **Step 1: Write the failing tests.**
+
+- `tests/test_replay.py`: `test_meta_difference_is_reported_first` expects `("meta.seed", None)`. New `test_meta_difference_names_the_first_field_in_sorted_order`: `seed` and `noise_std` both changed → `"meta.noise_std"`. New `test_a_meta_key_missing_on_one_side_is_named`: `cloud_size` deleted from `other.meta` → `"meta.cloud_size"`.
+- `tests/test_record_replays_script.py`: the two expected lines in `test_baselines_are_all_read_before_any_demo_is_recorded` become `"demo_1d: differs at meta.seed"` and `"demo_2d: differs at meta.seed"`; the line in `test_a_difference_that_is_not_numeric_omits_the_size` becomes `"demo_1d: differs at meta.seed"`.
+- `tests/test_replay_report_workflow.py`: `_run_last_step` gains `path_prefix: Path | None = None`, put before `/usr/bin:/bin` in `PATH`. New `test_a_failed_tail_gives_the_warning`: a directory holding an executable `tail` that is `#!/bin/sh\nexit 1\n`, and a report `"# report\n"` with upload `success`: standard output contains `the report for sample 2 could not be added to the summary`. New `test_the_upload_runs_on_node_24`: exactly one line of the workflow, stripped, starts with `uses: actions/upload-artifact@`, and it is `uses: actions/upload-artifact@v7` (P10).
+
+- [ ] **Step 2: Run** those three files; the new and changed tests fail (`meta` without a field; no warning, because `[ -z "$(tail ...)" ]` sees the failed `tail` as an empty last byte; `@v4`).
+
+- [ ] **Step 3: Implement.**
+
+- `first_difference` as in Interfaces. The report's text sanitizer is unchanged; `meta` keys are validated, so a field name is plain ASCII.
+- The summary line of the last step becomes:
+
+```bash
+{ echo '```text' && cat replay-report.md && last=$(tail -c1 replay-report.md) && { [ -z "$last" ] || echo; } && echo '```'; } >> "$GITHUB_STEP_SUMMARY" || echo "::warning title=Replay report::the report for sample $SAMPLE could not be added to the summary"
+```
+
+  An assignment's status is its command substitution's, so a failed `tail` now ends the chain.
+- `uses: actions/upload-artifact@v7`. Its inputs `name`, `path` and `if-no-files-found` are unchanged (P10).
+
+- [ ] **Step 4: Tests pass; full gate; commit and push** as `Name the first differing meta field; stop swallowing a failed tail; upload on Node 24`. The coordinator confirms on the first ready run that each report job's upload step succeeded on `@v7`.
+
+---
+
+### Task 10: Mutation checks
+
+No files change. This task proves the new tests can fail. Work in the task's own worktree; set `PYTHONDONTWRITEBYTECODE=1`; delete every `__pycache__` before each mutant; confirm `git status --porcelain` is empty before and after each; apply each mutant and restore it in a `try`/`finally` (a deleted file with `git checkout -- <path>`); run the whole suite including the slow tests (`uv run pytest -q -m ''`) for each mutant, in the foreground with a 600000 ms timeout. Workflow and prose mutants run only the test file named, since no other test reads those files.
+
+| Mutation | Tests that must fail, and no others |
+|---|---|
+| `_resolve_source` without the NUL check | `test_an_encoded_nul_is_a_failure` |
+| no comparison of the two images' bytes | `test_identical_light_and_dark_content` |
+| no scan of unlisted pages | `test_a_wrapper_on_an_unlisted_page` |
+| plot pairs formed as the i-th light wrapper with the i-th dark one, not in document order | `test_wrappers_out_of_order` |
+| `_style_violations` counts strings again (`len(strings) > (2 if has_data else 0)`) | `test_style_violations_reports_unstyled_calls[data_third_argument]` |
+| `_is_plot_cell` back to `"plt.subplots(" in cell or "plt.figure(" in cell` | `test_a_cell_is_a_plot_cell[renderings]`, `[show]`, `[figure_function]`; `test_manifest_matches_the_source[story/beyond-point-masses.qmd]`, `[story/gravitational-echolocation.qmd]` |
+| `_retired_asset_links` returns `[]` | `test_retired_asset_links_are_found`, all six IDs |
+| `density_figure`'s band from the 5th and 95th percentiles | `test_median_and_band_are_pointwise_percentiles_of_the_last_row[light]`, `[dark]`; `test_density_figure_on_the_committed_archive`; `test_profile_limits` |
+| `trace_limits` includes row 0 | `test_trace_limits[prior_row_left_out]`; `test_traces_follow_the_archive[light]`, `[dark]` |
+| the trace's truth line drawn at `mean[-1, j]` | `test_traces_follow_the_archive[light]`, `[dark]`; `test_changing_the_truth_moves_only_the_truth` |
+| `trace_header` shown for row 0 | `test_trace_headers`; `test_density_figure_on_the_committed_archive` |
+| `color="steelblue"` on the median-profile line | `test_median_and_band_are_pointwise_percentiles_of_the_last_row[light]`, `[dark]`; `test_every_visible_colour_is_in_the_palette` (density) `[light]`, `[dark]`; `test_library_drawing_code_has_no_unstyled_colour[src/clocks/_figures.py]` |
+| pass counts from the position limit alone | `test_pass_counts_use_both_limits` |
+| the position limit drawn at `ECHO_PASS_POS_TOL`, not the study's tolerance | `test_limits_follow_the_study` |
+| the spread line drawn from the median errors | `test_medians_and_spreads_come_from_summarize[light]`, `[dark]` |
+| `write_summary_figure` draws without `style("light")` | `test_write_summary_figure_is_the_light_range_study` |
+| `demo_density._run_demo` passes `n_particles=N_PARTICLES`, ignoring `--particles` | `test_density_command_prints_and_draws_the_recorded_run`, `test_density_command_draws_the_density_figure_in_the_light_theme` |
+| `demo_density._run_demo` saves at `dpi=100` | `test_density_command_prints_and_draws_the_recorded_run` |
+| `site/assets/demo_density.png` restored from `main` | `test_retired_visuals_are_gone_but_recorded[demo_density.png]` |
+| the Reproducibility page keeps "and the density PNG" in the CI paragraph | `test_density_provenance_names_its_run` |
+| `site-check.yml` without `"assets/replays/**"` | `test_site_check_runs_when_the_figure_data_change[assets/replays/**]` |
+| `FIRST_CHECKED_ROW` gains `"demo_1d": 1` | `test_a_shifted_prediction_is_caught[prior-demo_1d]`, `test_prior_cases_and_the_skip_map_partition_the_predicting_demos` |
+| `_assert_predictions_match_dots` without its zero-spread branch | `test_a_one_particle_recording_passes_the_prediction_check[demo_1d]`, `[demo_multi_mass]`; `test_a_one_particle_prediction_off_the_dot_is_caught`; `test_a_spread_where_none_is_predicted_is_caught` |
+| `ZERO_SPREAD_ATOL = 1.0` | `test_a_one_particle_prediction_off_the_dot_is_caught`, `test_a_spread_where_none_is_predicted_is_caught` |
+| `first_difference` returns `"meta"` without the field | `test_meta_difference_is_reported_first`, `test_meta_difference_names_the_first_field_in_sorted_order`, `test_a_meta_key_missing_on_one_side_is_named`, `test_baselines_are_all_read_before_any_demo_is_recorded`, `test_a_difference_that_is_not_numeric_omits_the_size` |
+| the summary step's `last=$(...) &&` put back inside `[ -z "$(tail -c1 replay-report.md)" ]` | `test_a_failed_tail_gives_the_warning` |
+| `actions/upload-artifact@v4` | `test_the_upload_runs_on_node_24` |
+
+Several expectations rest on measurement, not on a run of this code: the position-only count is indistinguishable from the true one on the committed study (P4), so only the literal study catches it; the `steelblue` mutant is caught by the role assertion, the palette walk and the source guard, three separate defences, which is why it names three tests; `test_profile_limits` fails on the percentile mutant because the top limit follows the band's 84th percentile. Where a test is expected to fail for one theme only, the table names both because the mutants above do not depend on the theme. Two changes have no mutant: the `PHI` spelling (Task 8 Step 1), which changes no result on this machine, and the runtime row choice in the two "is caught" tests, which is a refactor of passing tests with preconditions that fail loudly if the archives change.
+
+- [ ] **Step 1: Run each mutation** and record, for each, the exact set of failing test IDs.
+- [ ] **Step 2: Report** the table of results. Where the failing set differs from the expected set, say which tests were extra or missing; do not change tests or code to make the table match. A difference is a finding for the coordinator.
+
+---
+
+### Hand-over
+
+The coordinator opens the pull request as a draft and, in its description, gives: both contact sheets with Task 7's findings; the phone-width numbers of Task 7 Step 6; the local and runner Quarto versions; the mutation table of Task 10; and the command's changed run (P5). After review converges and the pull request is marked ready, the coordinator confirms on that head that CI's default and slow steps, the site check and all three replay-report jobs succeed, and that each report job's upload ran on `@v7`.
