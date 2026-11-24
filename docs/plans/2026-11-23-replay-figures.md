@@ -10,7 +10,7 @@
 
 **Status:** Draft, not yet reviewed.
 
-**Review:** Codex xhigh round 1 at `0bdb978`: NOT YET; revised in `18d534f`. Codex xhigh round 2 at `7c3894b`: NOT YET; revised in `cff34e2`. Codex xhigh round 3 at `6641ca4`: NOT YET (no Blocking); revised in ROUND3_SHA.
+**Review:** Codex xhigh round 1 at `0bdb978`: NOT YET; revised in `18d534f`. Codex xhigh round 2 at `7c3894b`: NOT YET; revised in `cff34e2`. Codex xhigh round 3 at `6641ca4`: NOT YET (no Blocking); revised in `30e6d79`.
 
 **Spec:** `docs/plans/2026-11-19-replay-and-animation-design.md`: section 6, the parts of section 9 named below, section 10, item 2 of section 11, the "Figures" and "Site" parts of "Testing", the mutation rows for figures, the rendered-site check and the source guard, and "Checks by eye". Read them before any task. Sections 1 to 3 describe the archive the density figure reads. Where this plan and the spec disagree, the spec wins and the disagreement is a plan bug to report, except for the departures listed under "Decisions this plan makes", each of which says why. The plan for pull request 1, `docs/plans/2026-11-19-replay-data.md`, shows the conventions this one follows.
 
