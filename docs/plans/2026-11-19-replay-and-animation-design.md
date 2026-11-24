@@ -4,7 +4,8 @@
 
 **Status:** Approved for implementation. Codex xhigh round 3, on `75ef763`:
 "SOUND ENOUGH TO IMPLEMENT", with three small findings that this revision folds
-in. Corrected after merge: clock positions are compared at `rtol=1e-12, atol=1e-12`, not exactly (`a108783`).
+in. Corrected after merge: clock positions are compared at `rtol=1e-12,
+atol=1e-12`, not exactly (`a108783`).
 
 **Source:** findings V1, V5 and C6 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), the visual reviewer's critique
@@ -724,7 +725,8 @@ section is retitled "Where the figures come from".
   and, except for the model-comparison run, a 500-particle sample for display.
   Tests run each demo again; they compare its inputs, the computed ones (clock
   positions, true rates and readings) at `rtol=1e-12, atol=1e-12` and the rest
-  exactly, and its summaries within stated bounds; they do not require the same random path.
+  exactly, and its summaries within stated bounds; they do not require the same
+  random path.
   Video files are build products. Each archive is one finite realization.
 - **Echolocation animation**: the opening sentences calling the GIF an old
   release whose panel "will change when the assets are next regenerated" are

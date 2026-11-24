@@ -259,12 +259,12 @@ def _assert_predictions_match_dots(
         dots_sd = readings.std(axis=0)
         zero = predicted_std[row] == 0
         # Clocks with no predicted spread: compared in absolute terms.
-        for clock in np.flatnonzero(zero & (mean_gap > ZERO_SPREAD_ATOL)):
+        for clock in np.flatnonzero(zero & ~(mean_gap <= ZERO_SPREAD_ATOL)):
             raise AssertionError(
                 f"row {row}, clock {clock}: the dots' mean reading differs from "
                 f"predicted_mean by {mean_gap[clock]:.3g} where predicted_std is 0"
             )
-        for clock in np.flatnonzero(zero & (dots_sd > ZERO_SPREAD_ATOL)):
+        for clock in np.flatnonzero(zero & ~(dots_sd <= ZERO_SPREAD_ATOL)):
             raise AssertionError(
                 f"row {row}, clock {clock}: the dots' s.d. is {dots_sd[clock]:.3g} "
                 "where predicted_std is 0"
@@ -465,6 +465,8 @@ def test_a_weight_in_view_off_by_its_sampling_error_is_caught() -> None:
     # The row with the fewest dots in view (row 0 today, 0.4%), its weight set
     # 0.036 above the dots' fraction: inside the old fixed 0.05, outside six
     # sampling errors.
+    OFFSET = 0.036
+    OLD_TOLERANCE = 0.05  # the weight check's fixed tolerance, before the bound
     arrays = _archive("demo_echolocation_3d").arrays
     cloud, low_high = arrays["cloud"], arrays["view_bounds"]
     low, high = low_high
@@ -473,9 +475,10 @@ def test_a_weight_in_view_off_by_its_sampling_error_is_caught() -> None:
     p = inside.mean(axis=1)
     row = int(np.argmin(p))
     bound = max(0.01, 6 * np.sqrt(p[row] * (1 - p[row]) / cloud.shape[1]))
-    assert bound < 0.036 < 0.05
+    assert bound < OFFSET
+    assert OFFSET < OLD_TOLERANCE  # why 0.036: inside the old fixed tolerance
     corrupted = arrays["weight_in_view"].copy()
-    corrupted[row] = p[row] + 0.036
+    corrupted[row] = p[row] + OFFSET
 
     with pytest.raises(AssertionError, match=f"row {row}:"):
         _assert_weight_matches_dots(corrupted, cloud, low_high)
@@ -544,14 +547,14 @@ def test_a_one_particle_prediction_off_the_dot_is_caught() -> None:
         first_row=0,
     )
     corrupted = arrays["predicted_mean"].copy()
-    corrupted[0, 0] += 1e-6
+    corrupted[0, 0] += 3e-7  # 3 x the tolerance, written out so loosening it fails
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         with pytest.raises(
             AssertionError,
             match="row 0, clock 0: the dots' mean reading differs from "
-            "predicted_mean by 1e-06 where predicted_std is 0",
+            "predicted_mean by .* where predicted_std is 0",
         ):
             _assert_predictions_match_dots(
                 corrupted, arrays["predicted_std"], readings, 0
@@ -561,12 +564,32 @@ def test_a_one_particle_prediction_off_the_dot_is_caught() -> None:
 def test_a_spread_where_none_is_predicted_is_caught() -> None:
     with pytest.raises(
         AssertionError,
-        match="row 0, clock 0: the dots' s.d. is 0.01 where predicted_std is 0",
+        match="row 0, clock 0: the dots' s.d. is .* where predicted_std is 0",
     ):
         _assert_predictions_match_dots(
             np.array([[1.0]]),
             np.array([[0.0]]),
-            np.array([[[0.99], [1.01]]]),
+            np.array([[[1.0 - 3e-7], [1.0 + 3e-7]]]),  # s.d. 3e-7, 3 x the tolerance
+            0,
+        )
+
+
+def test_a_nan_prediction_where_no_spread_is_predicted_is_caught() -> None:
+    with pytest.raises(AssertionError, match="row 0, clock 0:"):
+        _assert_predictions_match_dots(
+            np.array([[np.nan]]),
+            np.array([[0.0]]),
+            np.array([[[1.0], [1.0]]]),
+            0,
+        )
+
+
+def test_a_nan_dot_where_no_spread_is_predicted_is_caught() -> None:
+    with pytest.raises(AssertionError, match="row 0, clock 0:"):
+        _assert_predictions_match_dots(
+            np.array([[1.0]]),
+            np.array([[0.0]]),
+            np.array([[[np.nan], [1.0]]]),
             0,
         )
 
