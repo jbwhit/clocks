@@ -42,7 +42,11 @@ def trace_limits(
 
 
 def trace_decimals(prior_range: Sequence[float]) -> int:
-    """Decimals that show a parameter to two significant figures of its range."""
+    """Decimals that resolve a hundredth of the range's order of magnitude.
+
+    Never fewer than two: a range of width 16 gives 2, and one of width
+    0.029 gives 4.
+    """
     return max(2, 2 - math.floor(math.log10(prior_range[1] - prior_range[0])))
 
 
