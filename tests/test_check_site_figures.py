@@ -3,7 +3,6 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-import test_site_figure_style as site_style
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
 _SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
@@ -12,9 +11,6 @@ check_site_figures = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check_site_figures)
 
 Fig = check_site_figures.Fig
-
-# Captured before the autouse fixture below replaces the constant.
-REAL_EXPECTED_FIGURES = dict(check_site_figures.EXPECTED_FIGURES)
 
 PAGE = "story/demo.html"
 CAPTION = "Rate of <code>x</code> versus distance."
@@ -304,18 +300,6 @@ def test_urls_differing_only_in_query_are_the_same_file(tmp_path: Path) -> None:
 
 def test_a_missing_page_is_a_failure(tmp_path: Path) -> None:
     _single_failure(tmp_path, "page is missing")
-
-
-def test_the_manifest_lists_the_nine_plot_pages() -> None:
-    plot_pages = {page.replace(".qmd", ".html") for page in site_style.PLOT_PAGES}
-    assert len(plot_pages) == 9
-    assert set(REAL_EXPECTED_FIGURES) == plot_pages
-    for page, figures in REAL_EXPECTED_FIGURES.items():
-        assert len(figures) == 1, page
-        assert figures[0].kind == "plot" and figures[0].clip is None, page
-        cell = site_style._only_plot_cell(page.replace(".html", ".qmd"))
-        cell_height = 540 if "figsize=(7.5, 5.4)" in cell else 420
-        assert figures[0].height == cell_height, page
 
 
 TWO_PLOTS = (Fig("plot", 540), Fig("plot", 420))

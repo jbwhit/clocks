@@ -1,20 +1,37 @@
 """Source contract for the site's build-time plots.
 
-Every plotting cell draws its figure once per theme through the shared style
-and gives one identical caption per rendering. These are checks on the page
-source: the header and loop checks match text, and the colour and display check
-reads the cell's syntax tree. They stop a plot from bypassing the conventions,
-but they do not prove that a plot looks right or that the style block encloses
-the drawing.
+Every plot cell on a page (a page may hold several) draws its figure once per
+theme through the shared style and gives one identical caption per rendering.
+A cell that calls a figure builder from ``clocks.viz`` must have one canonical
+form. The page source is also checked against the figure manifest of
+``scripts/check_site_figures.py``, and no page or the README may mention a
+retired image file. Library modules that draw figures get the same colour check
+as the cells. These are checks on source: the header and loop checks match
+text, and the colour and display check reads the cell's syntax tree. They stop
+a plot from bypassing the conventions, but they do not prove that a plot looks
+right.
 """
 
 import ast
+import html
+import importlib.util
 import re
+import string
+import urllib.parse
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
-SITE = Path(__file__).parents[1] / "site"
+_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
+_SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+check_site_figures = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(check_site_figures)
+
+REPO = Path(__file__).resolve().parents[1]
+
+SITE = REPO / "site"
 PLOT_PAGES = (
     "method/the-particle-filter.qmd",
     "story/beyond-point-masses.qmd",
@@ -59,18 +76,216 @@ def _python_cells(path: Path) -> list[str]:
 
 
 def _plot_cells(path: Path) -> list[str]:
-    """Return the Python cells that create a matplotlib figure."""
-    return [
-        cell
-        for cell in _python_cells(path)
-        if "plt.subplots(" in cell or "plt.figure(" in cell
+    """Return every Python cell of a page that draws a figure, in order."""
+    return [cell for cell in _python_cells(path) if _is_plot_cell(cell)]
+
+
+# Heights of the figures the builders draw (CSS pixels), by name in clocks.viz.
+FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {}
+
+# Retired image files and library modules that draw figures; later tasks add to
+# these.
+RETIRED_ASSETS: tuple[str, ...] = ()
+LIBRARY_DRAWING_MODULES: tuple[str, ...] = ()
+
+
+def _is_plot_cell(cell: str) -> bool:
+    if any(line.startswith("#| renderings:") for line in cell.splitlines()):
+        return True
+    for node in ast.walk(ast.parse(cell)):
+        if not isinstance(node, ast.Call):
+            continue
+        if _is_show_call(node) or _dotted(node.func) in {"plt.subplots", "plt.figure"}:
+            return True
+    return bool(_facade_builders(cell))
+
+
+def _dotted(node: ast.expr) -> str | None:
+    """Return ``a.b.c`` for a chain of names and attributes, else None."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return None if base is None else f"{base}.{node.attr}"
+    return None
+
+
+def _is_show_call(node: ast.Call) -> bool:
+    return isinstance(node.func, ast.Name) and node.func.id == "show"
+
+
+def _builder_calls(tree: ast.AST) -> list[tuple[ast.Call, str]]:
+    """Return each call of a ``clocks.viz`` ``*_figure`` name, in call order.
+
+    Builders are resolved from imports in the same tree, so an unrelated
+    ``helper_figure()`` does not count.
+    """
+    names: dict[str, str] = {}
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "clocks.viz":
+            for alias in node.names:
+                if alias.name.endswith("_figure"):
+                    names[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "clocks.viz":
+                    modules.add(alias.asname or "clocks.viz")
+    found: list[tuple[ast.Call, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in names:
+            found.append((node, names[func.id]))
+        elif (
+            isinstance(func, ast.Attribute)
+            and func.attr.endswith("_figure")
+            and _dotted(func.value) in modules
+        ):
+            found.append((node, func.attr))
+    found.sort(key=lambda item: (item[0].lineno, item[0].col_offset))
+    return found
+
+
+def _facade_builders(cell: str) -> list[str]:
+    """Return the ``clocks.viz`` ``*_figure`` names the cell calls, in order."""
+    return [name for _, name in _builder_calls(ast.parse(cell))]
+
+
+def _parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    return {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+
+
+def _style_block(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.With | None:
+    """Return the innermost ``with`` around a node if it is a style block.
+
+    A style block is ``with style(v)`` as a statement of the body (not the
+    ``orelse``) of ``for v in THEMES``.
+    """
+    current = parents.get(node)
+    while current is not None and not isinstance(current, ast.With):
+        current = parents.get(current)
+    if current is None:
+        return None
+    loop = parents.get(current)
+    if not (
+        isinstance(loop, ast.For)
+        and isinstance(loop.target, ast.Name)
+        and isinstance(loop.iter, ast.Name)
+        and loop.iter.id == "THEMES"
+        and any(current is statement for statement in loop.body)
+    ):
+        return None
+    for item in current.items:
+        call = item.context_expr
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "style"
+            and len(call.args) == 1
+            and not call.keywords
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == loop.target.id
+        ):
+            return current
+    return None
+
+
+def _is_show_of(statement: ast.stmt, name: str) -> bool:
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and _is_show_call(statement.value)
+        and len(statement.value.args) == 1
+        and not statement.value.keywords
+        and isinstance(statement.value.args[0], ast.Name)
+        and statement.value.args[0].id == name
+    )
+
+
+def _is_canonical(
+    call: ast.Call, block: ast.With, parents: dict[ast.AST, ast.AST]
+) -> bool:
+    """Is the call ``<name> = <builder>(...)`` followed directly by show(name)?"""
+    statement: ast.AST = call
+    while parents[statement] is not block:
+        statement = parents[statement]
+    index = next(i for i, item in enumerate(block.body) if item is statement)
+    if not (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.value is call
+    ):
+        return False
+    following = block.body[index + 1 : index + 2]
+    return bool(following) and _is_show_of(following[0], statement.targets[0].id)
+
+
+def _style_block_violations(cell: str) -> list[str]:
+    """Return how a cell with figure builders departs from the canonical form."""
+    tree = ast.parse(cell)
+    parents = _parents(tree)
+    builders = _builder_calls(tree)
+    shows = sorted(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and _is_show_call(node)
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    blocks = {call: _style_block(call, parents) for call, _ in builders}
+    messages = [
+        f"{name}() is not inside a style(theme) block of a THEMES loop"
+        for call, name in builders
+        if blocks[call] is None
     ]
+    messages += [
+        "show() is not inside a style(theme) block of a THEMES loop"
+        for call in shows
+        if _style_block(call, parents) is None
+    ]
+    messages += [
+        f"{name}() is not `<name> = {name}(...)` followed immediately by `show(<name>)`"
+        for call, name in builders
+        if blocks[call] is not None and not _is_canonical(call, blocks[call], parents)
+    ]
+    return messages
 
 
-def _only_plot_cell(page: str) -> str:
-    cells = _plot_cells(SITE / page)
-    assert len(cells) == 1, f"{page}: expected one plot cell, found {len(cells)}"
-    return cells[0]
+def _cell_height(cell: str) -> int:
+    builders = _facade_builders(cell)
+    if builders:
+        return FIGURE_FUNCTION_HEIGHTS[builders[0]]
+    return 540 if "figsize=(7.5, 5.4)" in cell else 420
+
+
+def _retired_asset_mentions(text: str, retired: Sequence[str]) -> list[str]:
+    """Return each mention of a retired file that is not the demo's output path.
+
+    The text is normalised the way a reader of the link would resolve it, each
+    step working on what the one before decoded: HTML entities, percent
+    escapes, Markdown backslash escapes, then tabs and carriage returns (a URL
+    parser strips them; newlines stay so line numbers do not move). No link
+    grammar is parsed: a name must follow a standalone ``output/``.
+    """
+    text = html.unescape(text)
+    text = urllib.parse.unquote(text)
+    text = re.sub(rf"\\([{re.escape(string.punctuation)}])", r"\1", text)
+    text = text.replace("\t", "").replace("\r", "")
+    mentions = []
+    for number, line in enumerate(text.split("\n"), start=1):
+        for name in retired:
+            for match in re.finditer(re.escape(name), line):
+                if not re.search(r"(?<![\w./-])output/$", line[: match.start()]):
+                    mentions.append(f"line {number}: {name}")
+    return mentions
 
 
 def _caption_entries(cell: str) -> list[str]:
@@ -89,6 +304,13 @@ def _caption_entries(cell: str) -> list[str]:
     return entries
 
 
+PLOT_CELLS = [
+    pytest.param(page, index, id=f"{page}#{index + 1}")
+    for page in PLOT_PAGES
+    for index in range(len(_plot_cells(SITE / page)))
+]
+
+
 def test_plot_pages_are_exactly_the_known_nine() -> None:
     found = sorted(
         path.relative_to(SITE).as_posix()
@@ -98,23 +320,24 @@ def test_plot_pages_are_exactly_the_known_nine() -> None:
     assert found == sorted(PLOT_PAGES)
 
 
-@pytest.mark.parametrize("page", PLOT_PAGES)
-def test_cell_declares_both_renderings(page: str) -> None:
-    cell = _only_plot_cell(page)
+@pytest.mark.parametrize(("page", "index"), PLOT_CELLS)
+def test_cell_declares_both_renderings(page: str, index: int) -> None:
+    cell = _plot_cells(SITE / page)[index]
     assert "#| renderings: [light, dark]" in cell.splitlines()
 
 
-@pytest.mark.parametrize("page", PLOT_PAGES)
-def test_cell_gives_one_identical_caption_per_rendering(page: str) -> None:
-    entries = _caption_entries(_only_plot_cell(page))
-    assert len(entries) == 2, f"{page}: caption entries {entries!r}"
-    assert entries[0], f"{page}: empty caption"
-    assert entries[0] == entries[1], f"{page}: captions differ"
+@pytest.mark.parametrize(("page", "index"), PLOT_CELLS)
+def test_cell_gives_one_identical_caption_per_rendering(page: str, index: int) -> None:
+    entries = _caption_entries(_plot_cells(SITE / page)[index])
+    where = f"{page}#{index + 1}"
+    assert len(entries) == 2, f"{where}: caption entries {entries!r}"
+    assert entries[0], f"{where}: empty caption"
+    assert entries[0] == entries[1], f"{where}: captions differ"
 
 
-@pytest.mark.parametrize("page", PLOT_PAGES)
-def test_cell_draws_through_the_style_and_show(page: str) -> None:
-    cell = _only_plot_cell(page)
+@pytest.mark.parametrize(("page", "index"), PLOT_CELLS)
+def test_cell_draws_through_the_style_and_show(page: str, index: int) -> None:
+    cell = _plot_cells(SITE / page)[index]
     assert "for theme in THEMES:" in cell
     assert "with style(theme) as" in cell
     assert "show(fig)" in cell
@@ -146,11 +369,11 @@ def _style_violations(cell: str) -> list[str]:
                 if any(text != "none" for text in _string_constants(keyword.value)):
                     violations.append(f"literal colour in {keyword.arg}")
         if isinstance(func, ast.Attribute) and func.attr in _FORMAT_STRING_CALLS:
-            # With data=, the first two positional strings are column names;
-            # any further one is a format string.
+            # With data=, the first two positional arguments may be column
+            # names; a string at any later position is a format string.
             has_data = any(keyword.arg == "data" for keyword in node.keywords)
-            strings = [arg for arg in node.args if _is_string(arg)]
-            if len(strings) > (2 if has_data else 0):
+            positional = node.args[2:] if has_data else node.args
+            if any(_is_string(arg) for arg in positional):
                 violations.append("positional format string")
     return violations
 
@@ -165,10 +388,10 @@ def _string_constants(node: ast.expr) -> list[str]:
     return [element.value for element in elements if _is_string(element)]
 
 
-@pytest.mark.parametrize("page", PLOT_PAGES)
-def test_cell_has_no_unstyled_colour_or_display(page: str) -> None:
-    violations = _style_violations(_only_plot_cell(page))
-    assert violations == [], f"{page}: {violations}"
+@pytest.mark.parametrize(("page", "index"), PLOT_CELLS)
+def test_cell_has_no_unstyled_colour_or_display(page: str, index: int) -> None:
+    violations = _style_violations(_plot_cells(SITE / page)[index])
+    assert violations == [], f"{page}#{index + 1}: {violations}"
 
 
 @pytest.mark.parametrize(
@@ -185,6 +408,11 @@ def test_cell_has_no_unstyled_colour_or_display(page: str) -> None:
         ('ax.plot("step", "rate", "r-", data=frame)', "positional format string"),
         ('ax.vlines(x, 0, 1, colors="red")', "literal colour in colors"),
         ('ax.fill(x, y, "r")', "positional format string"),
+        pytest.param(
+            'ax.plot(x, "rate", "r-", data=frame)',
+            "positional format string",
+            id="data_third_argument",
+        ),
     ],
 )
 def test_style_violations_reports_unstyled_calls(source: str, violation: str) -> None:
@@ -211,3 +439,341 @@ def test_style_violations_reports_marker_colour_aliases() -> None:
 )
 def test_style_violations_allows_styled_calls(source: str) -> None:
     assert _style_violations(source) == []
+
+
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [
+        pytest.param("#| renderings: [light, dark]\nx = 1", True, id="renderings"),
+        pytest.param("fig, ax = plt.subplots()", True, id="subplots"),
+        pytest.param("fig = plt.figure()", True, id="figure"),
+        pytest.param("show(fig)", True, id="show"),
+        pytest.param(
+            "from clocks.viz import density_figure\n"
+            "fig = density_figure(replay, colors)",
+            True,
+            id="figure_function",
+        ),
+        pytest.param(
+            "from clocks.viz import density_figure as draw\nfig = draw(replay, colors)",
+            True,
+            id="aliased",
+        ),
+        pytest.param(
+            "import clocks.viz as viz\nfig = viz.range_study_figure(study, colors)",
+            True,
+            id="viz_module",
+        ),
+        pytest.param(
+            "import clocks.viz\nfig = clocks.viz.density_figure(replay, colors)",
+            True,
+            id="qualified",
+        ),
+        pytest.param(
+            "def helper_figure():\n    return 1\n\nhelper_figure()",
+            False,
+            id="helper_figure",
+        ),
+        pytest.param(
+            "import other\nfig = other.helper_figure()", False, id="attribute_helper"
+        ),
+        pytest.param(
+            "fig = density_figure(replay, colors)", False, id="unimported_figure"
+        ),
+        pytest.param("table = Markdown(text)\nprint(table)", False, id="not_a_plot"),
+        pytest.param("ax.figure.canvas.draw()", False, id="a_method_named_figure"),
+    ],
+)
+def test_a_cell_is_a_plot_cell(cell: str, expected: bool) -> None:
+    assert _is_plot_cell(cell) is expected
+
+
+def test_facade_builders_are_resolved() -> None:
+    cell = (
+        "from clocks.viz import density_figure as draw\n"
+        "import clocks.viz as viz\n"
+        "import clocks.viz\n"
+        "draw(r, c)\n"
+        "viz.range_study_figure(s, c)\n"
+        "clocks.viz.density_figure(r, c)\n"
+        "helper_figure()\n"
+        "other.helper_figure()"
+    )
+    assert _facade_builders(cell) == [
+        "density_figure",
+        "range_study_figure",
+        "density_figure",
+    ]
+
+
+_HEAD = "from clocks.viz import THEMES, density_figure, show, style\n"
+_NOT_IN_BLOCK = "density_figure() is not inside a style(theme) block of a THEMES loop"
+_SHOW_NOT_IN_BLOCK = "show() is not inside a style(theme) block of a THEMES loop"
+_NOT_CANONICAL = (
+    "density_figure() is not `<name> = density_figure(...)` "
+    "followed immediately by `show(<name>)`"
+)
+_CANONICAL = (
+    "for theme in THEMES:\n"
+    "    with style(theme) as colors:\n"
+    "        fig = density_figure(replay, colors)\n"
+    "        show(fig)\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param(_CANONICAL, [], id="canonical"),
+        pytest.param(
+            _CANONICAL.replace("style(theme)", 'style("light")'),
+            [_NOT_IN_BLOCK, _SHOW_NOT_IN_BLOCK],
+            id="fixed_theme",
+        ),
+        pytest.param(
+            "other_theme = THEMES[0]\n"
+            + _CANONICAL.replace("style(theme)", "style(other_theme)"),
+            [_NOT_IN_BLOCK, _SHOW_NOT_IN_BLOCK],
+            id="other_variable",
+        ),
+        pytest.param(
+            "for theme in THEMES:\n"
+            "    pass\n"
+            "else:\n"
+            "    with style(theme) as colors:\n"
+            "        fig = density_figure(replay, colors)\n"
+            "        show(fig)\n",
+            [_NOT_IN_BLOCK, _SHOW_NOT_IN_BLOCK],
+            id="loop_else",
+        ),
+        pytest.param(
+            "# for theme in THEMES: with style(theme) as colors: show(fig)\n"
+            "fig = density_figure(replay, colors)\n"
+            "show(fig)\n",
+            [_NOT_IN_BLOCK, _SHOW_NOT_IN_BLOCK],
+            id="comment_only",
+        ),
+        pytest.param(
+            "for theme in THEMES:\n"
+            "    with style(theme) as colors:\n"
+            "        fig = density_figure(replay, colors)\n"
+            "    show(fig)\n",
+            [_SHOW_NOT_IN_BLOCK, _NOT_CANONICAL],
+            id="show_outside",
+        ),
+        pytest.param(
+            "for theme in THEMES:\n"
+            "    fig = density_figure(replay, colors)\n"
+            "    with style(theme) as colors:\n"
+            "        show(fig)\n",
+            [_NOT_IN_BLOCK],
+            id="builder_outside",
+        ),
+        pytest.param(
+            "for theme in THEMES:\n"
+            "    with style(theme) as colors:\n"
+            "        fig = density_figure(replay, colors)\n"
+            "    with style(theme) as colors:\n"
+            "        show(fig)\n",
+            [_NOT_CANONICAL],
+            id="two_blocks",
+        ),
+        pytest.param(
+            _CANONICAL.replace("show(fig)", "# show(fig)"),
+            [_NOT_CANONICAL],
+            id="commented_out_show",
+        ),
+        pytest.param(
+            _CANONICAL.replace(
+                "        fig = density_figure",
+                "        other = plt.figure()\n        fig = density_figure",
+            ).replace("show(fig)", "show(other)"),
+            [_NOT_CANONICAL],
+            id="show_of_another_figure",
+        ),
+        pytest.param(
+            _CANONICAL.replace(
+                "        show(fig)",
+                "        fig = plt.figure(figsize=(7.5, 5.4))\n        show(fig)",
+            ),
+            [_NOT_CANONICAL],
+            id="reassigned_before_show",
+        ),
+        pytest.param(
+            _CANONICAL.replace(
+                "        show(fig)", "        print(theme)\n        show(fig)"
+            ),
+            [_NOT_CANONICAL],
+            id="statement_between",
+        ),
+        pytest.param(
+            "for theme in THEMES:\n"
+            "    with style(theme) as colors:\n"
+            "        show(density_figure(replay, colors))\n",
+            [_NOT_CANONICAL],
+            id="show_of_the_call",
+        ),
+    ],
+)
+def test_style_block_violations(body: str, expected: list[str]) -> None:
+    assert _style_block_violations(_HEAD + body) == expected
+
+
+BUILDER_CELLS = [
+    case
+    for case in PLOT_CELLS
+    if _facade_builders(_plot_cells(SITE / case.values[0])[case.values[1]])
+]
+
+
+@pytest.mark.parametrize(("page", "index"), BUILDER_CELLS)
+def test_builder_calls_and_show_are_inside_the_style_block(
+    page: str, index: int
+) -> None:
+    cell = _plot_cells(SITE / page)[index]
+    assert _style_block_violations(cell) == [], f"{page}#{index + 1}"
+
+
+def _manifest_page(page: str) -> str:
+    return page.replace(".qmd", ".html")
+
+
+@pytest.mark.parametrize("page", PLOT_PAGES)
+def test_manifest_matches_the_source(page: str) -> None:
+    figures = check_site_figures.EXPECTED_FIGURES[_manifest_page(page)]
+    from_manifest = tuple((fig.kind, fig.height) for fig in figures)
+    from_source = tuple(
+        ("plot", _cell_height(cell)) for cell in _plot_cells(SITE / page)
+    )
+    assert from_manifest == from_source
+
+
+def test_the_manifest_lists_exactly_the_plot_pages() -> None:
+    assert set(check_site_figures.EXPECTED_FIGURES) == {
+        _manifest_page(page) for page in PLOT_PAGES
+    }
+    assert len(PLOT_PAGES) == 9
+
+
+_RETIRED = ("demo_density.png",)
+_ONE_MENTION = ["line 1: demo_density.png"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param("![a](../assets/demo_density.png)", _ONE_MENTION, id="md_image"),
+        pytest.param("[a](assets/demo_density.png)", _ONE_MENTION, id="md_link"),
+        pytest.param(
+            "[a]: ../site/assets/demo_density.png", _ONE_MENTION, id="reference"
+        ),
+        pytest.param(
+            '<img src="../assets/demo_density.png" alt="">', _ONE_MENTION, id="html_img"
+        ),
+        pytest.param(
+            "[a](https://github.com/example/clocks/blob/main/assets/demo_density.png)",
+            _ONE_MENTION,
+            id="github_url",
+        ),
+        pytest.param(
+            "![a](../assets/demo_density.png?v=2)", _ONE_MENTION, id="with_query"
+        ),
+        pytest.param(
+            "![a](../assets/%64emo_density.png)", _ONE_MENTION, id="encoded_basename"
+        ),
+        pytest.param(
+            "![a](<../assets/demo_density.png>)", _ONE_MENTION, id="angle_brackets"
+        ),
+        pytest.param(
+            '<img src="../assets/demo_density&#46;png" alt="">',
+            _ONE_MENTION,
+            id="html_entity",
+        ),
+        pytest.param(
+            '<a href="../assets/demo_density&#46;png">a</a>',
+            _ONE_MENTION,
+            id="href_entity",
+        ),
+        pytest.param(
+            "![retired][density]\n\n  [density]: ../assets/demo_density.png",
+            ["line 3: demo_density.png"],
+            id="indented_reference",
+        ),
+        pytest.param(
+            '<picture><source srcset="../assets/demo_density.png">'
+            '<img src="../assets/demo_2d.gif" alt=""></picture>',
+            _ONE_MENTION,
+            id="srcset",
+        ),
+        pytest.param("`assets/demo_density.png`", _ONE_MENTION, id="inline_code"),
+        pytest.param("see demo_density.png", _ONE_MENTION, id="bare_mention"),
+        pytest.param(
+            "![a](../assets/demo_density\\.png)", _ONE_MENTION, id="backslash_escape"
+        ),
+        pytest.param(
+            '<img src="../assets/demo_density.&#9;png">', _ONE_MENTION, id="tab_entity"
+        ),
+        pytest.param(
+            "![a](../assets/output/demo_density.png)",
+            _ONE_MENTION,
+            id="output_under_assets",
+        ),
+    ],
+)
+def test_retired_asset_mentions_are_found(text: str, expected: list[str]) -> None:
+    assert _retired_asset_mentions(text, _RETIRED) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            "uv run demo-density             # → output/demo_density.png",
+            id="command_output",
+        ),
+        pytest.param("[a](output/demo_density.png)", id="output_link"),
+        pytest.param("![a](../assets/demo_2d.gif)", id="other_asset"),
+        pytest.param("The density figure is drawn at build time.", id="no_mention"),
+    ],
+)
+def test_allowed_mentions(text: str) -> None:
+    assert _retired_asset_mentions(text, _RETIRED) == []
+
+
+_MENTION_FILES = [REPO / "README.md"] + sorted(
+    path
+    for path in SITE.rglob("*.qmd")
+    if not _EXCLUDED_DIRS & set(path.relative_to(SITE).parts)
+)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(path, id=path.relative_to(REPO).as_posix())
+        for path in _MENTION_FILES
+    ],
+)
+def test_no_page_mentions_a_retired_asset(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert _retired_asset_mentions(text, RETIRED_ASSETS) == []
+
+
+@pytest.mark.parametrize("module", LIBRARY_DRAWING_MODULES)
+def test_library_drawing_code_has_no_unstyled_colour(module: str) -> None:
+    text = (REPO / module).read_text(encoding="utf-8")
+    assert _style_violations(text) == []
+
+
+@pytest.mark.xfail(strict=True, reason="Task 5 replaces the range-study drawing")
+def test_every_figure_builder_module_is_scanned() -> None:
+    defining = {
+        path.relative_to(REPO).as_posix()
+        for path in (REPO / "src" / "clocks").rglob("*.py")
+        if any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.endswith("_figure")
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        )
+    }
+    assert defining <= set(LIBRARY_DRAWING_MODULES)
