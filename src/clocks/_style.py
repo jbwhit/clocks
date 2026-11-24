@@ -164,10 +164,26 @@ def save_png(fig: Figure, path: Path) -> None:
     cropped, opaque, and PNG whatever the path's suffix and whatever
     ``savefig.*`` settings the caller has in force. It does not close ``fig``.
     """
+    _save_canvas(fig, path, "png")
+
+
+def frame_rgba(fig: Figure) -> bytes:
+    """Return the pixels ``save_png`` writes, as rows of RGBA with no header.
+
+    One video frame: the same 200 dpi, uncropped, opaque canvas as the poster.
+    It does not close ``fig``.
+    """
+    buffer = io.BytesIO()
+    _save_canvas(fig, buffer, "rgba")
+    return buffer.getvalue()
+
+
+def _save_canvas(fig: Figure, target: Path | io.BytesIO, format: str) -> None:
+    """Save ``fig``'s whole canvas at 200 dpi on its own face colour."""
     with matplotlib.rc_context({"savefig.bbox": None}):
         fig.savefig(
-            path,
-            format="png",
+            target,
+            format=format,
             dpi=200,
             bbox_inches=None,
             transparent=False,
