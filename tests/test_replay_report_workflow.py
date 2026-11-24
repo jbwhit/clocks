@@ -261,12 +261,12 @@ def test_the_last_step_shows_or_warns(
         assert summary == ""
 
 
-def test_a_failed_tail_leaves_the_summary_untouched(tmp_path: Path) -> None:
+def test_a_failed_read_leaves_the_summary_untouched(tmp_path: Path) -> None:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
-    fake_tail = fake_bin / "tail"
-    fake_tail.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    fake_tail.chmod(0o755)
+    fake_cat = fake_bin / "cat"
+    fake_cat.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fake_cat.chmod(0o755)
 
     stdout, summary = _run_last_step(
         tmp_path,
@@ -279,6 +279,15 @@ def test_a_failed_tail_leaves_the_summary_untouched(tmp_path: Path) -> None:
 
     assert "the report for sample 2 could not be added to the summary" in stdout
     assert summary == "previous summary\n"
+
+
+def test_a_report_with_format_characters_is_added_unchanged(tmp_path: Path) -> None:
+    report = "100% done \\n and %s\n"
+
+    stdout, summary = _run_last_step(tmp_path, report, "success", _SUMMARY)
+
+    assert summary == f"```text\n{report}```\n"
+    assert "::warning" not in stdout
 
 
 def test_the_upload_runs_on_node_24() -> None:
