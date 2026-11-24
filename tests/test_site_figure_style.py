@@ -82,12 +82,12 @@ def _plot_cells(path: Path) -> list[str]:
 
 
 # Heights of the figures the builders draw (CSS pixels), by name in clocks.viz.
-FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {}
+FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {"density_figure": 540}
 
 # Retired image files and library modules that draw figures; later tasks add to
 # these.
 RETIRED_ASSETS: tuple[str, ...] = ()
-LIBRARY_DRAWING_MODULES: tuple[str, ...] = ()
+LIBRARY_DRAWING_MODULES: tuple[str, ...] = ("src/clocks/_figures.py",)
 
 
 def _is_plot_cell(cell: str) -> bool:
@@ -849,3 +849,30 @@ def test_every_figure_builder_module_is_scanned() -> None:
         )
     }
     assert defining <= set(LIBRARY_DRAWING_MODULES)
+
+
+def _draw_density_figure(colors):
+    from clocks._figures import density_figure
+    from clocks._replay import load_replay
+
+    return density_figure(
+        load_replay(REPO / "assets" / "replays" / "demo_density.npz"), colors
+    )
+
+
+_FIGURE_DRAWERS = {"density_figure": _draw_density_figure}
+
+
+@pytest.mark.parametrize("name", sorted(FIGURE_FUNCTION_HEIGHTS))
+def test_figure_function_heights_are_the_drawn_ones(name: str) -> None:
+    import matplotlib.pyplot as plt
+
+    from clocks._style import style
+
+    with style("light") as colors:
+        fig = _FIGURE_DRAWERS[name](colors)
+    try:
+        assert round(fig.get_figheight() * 100) == FIGURE_FUNCTION_HEIGHTS[name]
+        assert round(fig.get_figwidth() * 100) == 750
+    finally:
+        plt.close(fig)
