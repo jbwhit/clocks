@@ -255,10 +255,18 @@ def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, 
     stops and its status is returned. An exception from ``frames`` itself ends
     the encoder and propagates. Either way the process is reaped before this
     returns, and its input is closed (or it is terminated) before it is waited
-    for. Standard error goes to a file, so a chatty encoder cannot block.
+    for. Standard error goes to a file, so a chatty encoder cannot block. An
+    encoder that cannot be started at all raises ``EncoderError`` naming it.
     """
     with tempfile.TemporaryFile() as errors:
-        process = subprocess.Popen(list(command), stdin=subprocess.PIPE, stderr=errors)
+        try:
+            process = subprocess.Popen(
+                list(command), stdin=subprocess.PIPE, stderr=errors
+            )
+        except OSError as error:
+            raise EncoderError(
+                f"the encoder {command[0]} could not be started: {error}"
+            ) from error
         try:
             _feed(process.stdin, frames)
         except BaseException:

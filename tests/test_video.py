@@ -298,6 +298,29 @@ def test_run_encoder_reports_a_failing_encoder_without_raising(
     assert text.strip() != ""
 
 
+@pytest.mark.parametrize("kind", ["missing", "not_executable"])
+def test_an_encoder_that_cannot_start_is_an_encoder_error(
+    tmp_path: Path, kind: str
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    encoder = tools / "ffmpeg"
+    if kind == "not_executable":
+        encoder.write_text("not a program\n")
+        encoder.chmod(0o644)
+    clips = tmp_path / "clips"
+    clips.mkdir()
+
+    with pytest.raises(EncoderError) as raised:
+        encode(
+            _small_clip(), clips / "clip.mp4", width=64, height=48, encoder=str(encoder)
+        )
+
+    assert str(encoder) in str(raised.value)
+    assert isinstance(raised.value.__cause__, OSError)
+    assert _names(clips) == []
+
+
 def test_an_error_while_drawing_leaves_no_clip(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
