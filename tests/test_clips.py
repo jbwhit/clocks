@@ -1908,7 +1908,14 @@ def test_echo_head_and_clocks(theme: str, monkeypatch: pytest.MonkeyPatch) -> No
             super().__init__(segments, *args, **kwargs)
 
     monkeypatch.setattr(clocks._clip_echo, "Line3DCollection", Recording)
-    replay = small(ECHO)
+    base = small(ECHO)
+    # The recording's clocks fill the cube from -1 to 1 exactly, which a head
+    # of constant size would match; stretched and moved per axis, they do not.
+    replay = edited(
+        base,
+        clock_positions=base.arrays["clock_positions"] * [1.5, 0.75, 1.25]
+        + [0.25, -0.5, 0.1],
+    )
     positions = replay.arrays["clock_positions"]
     with built(replay, theme) as (clip, colors):
         scene = axes_named(clip.fig, "scene")
