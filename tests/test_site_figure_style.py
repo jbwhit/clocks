@@ -14,10 +14,13 @@ block encloses the drawing (a builder cell does get that check).
 
 For the two cells that draw committed data through a ``clocks.viz`` builder,
 this module pins the cell's program and its option block exactly, and requires
-any cell that calls a builder, however it was imported, to be one of them. It
-checks page source, so it does not try to prove that a figure is visible on the
-rendered page: a surrounding block that hides its contents, a stylesheet, or a
-script could still hide one. The rendered-site check
+any cell in which a builder call is found to be one of them. A builder call
+is found when it is resolved from a ``clocks.viz`` import in the cell (any of
+the four import forms, with aliases) or when the called name itself is a
+builder's name; a builder imported from a private module under another name is
+not found. It checks page source, so it does not try to prove that a figure is
+visible on the rendered page: a surrounding block that hides its contents, a
+stylesheet, or a script could still hide one. The rendered-site check
 (``scripts/check_site_figures.py``) covers the rendered structure, and the
 contact sheets and the phone-width measurements cover what a visitor sees.
 """
@@ -526,6 +529,13 @@ def test_style_violations_allows_styled_calls(source: str) -> None:
         ),
         pytest.param(
             "fig = density_figure(replay, colors)", True, id="unimported_figure"
+        ),
+        # The stated limit: a builder imported from a private module under
+        # another name is found by neither route.
+        pytest.param(
+            "from clocks._figures import density_figure as draw\nfig = draw(r, c)",
+            False,
+            id="private_alias",
         ),
         pytest.param(
             "from clocks import viz\nfig = viz.density_figure(replay, colors)",
@@ -1039,46 +1049,57 @@ def _builder_cell(builder: str) -> tuple[Path, str]:
     return found[0]
 
 
+_OPTION_LINES = (
+    "#| code-fold: true",
+    "#| renderings: [light, dark]",
+    "#| fig-cap:",
+)
 _CAPTION_LINE = re.compile(r'^#\|   - ".*"$')
-_OPTION_LINES = ("#| code-fold: true", "#| renderings: [light, dark]", "#| fig-cap:")
 
 
-def _builder_cell_option_violations(cell: str) -> list[str]:
-    """Return how a builder cell's ``#|`` options depart from the exact three.
+def _comment_lines(text: str) -> list[str]:
+    """Return the stripped lines of ``text`` that start with ``#``."""
+    return [line.strip() for line in text.splitlines() if line.strip().startswith("#")]
 
-    The options are the lines from the top of the cell up to the first line
-    that does not start with ``#|``: ``code-fold``, ``renderings`` and
-    ``fig-cap``, in that order, with two identical caption entries.
+
+def _builder_cell_option_violations(cell: str, program: str) -> list[str]:
+    """Return how a builder cell's header and comments depart from the pin.
+
+    The first five lines must be, by position, ``#| code-fold: true``,
+    ``#| renderings: [light, dark]``, ``#| fig-cap:`` and two identical caption
+    entries. Every other comment line of the cell, whatever follows its ``#``,
+    must be one of ``program``'s comment lines, in order, so no spelling of an
+    option marker can be missed. A trailing comment on a code line is not a
+    comment line here, and cannot be an option: Quarto reads options only from
+    the whole lines at the very top of a cell (its pattern is ``^#\\s*\\| ?``).
     """
     lines = cell.splitlines()
-    head: list[str] = []
-    for line in lines:
-        if not line.startswith("#|"):
-            break
-        head.append(line)
+    head = [*lines[:5], *[""] * (5 - len(lines[:5]))]
     messages = [
-        f"option line after the code: {line!r}"
-        for line in lines[len(head) :]
-        if line.startswith("#|")
+        f"line {number} is not {text!r}"
+        for number, text in enumerate(_OPTION_LINES, start=1)
+        if head[number - 1] != text
     ]
-    named = [line for line in head if not _CAPTION_LINE.match(line)]
-    keys = [line[2:].split(":")[0].strip() for line in named]
-    if len(set(keys)) != len(keys):
-        messages.append("an option is given twice")
+    captions = head[3:5]
     messages += [
-        f"option {key!r} is not one of the three"
-        for key in keys
-        if key not in {"code-fold", "renderings", "fig-cap"}
+        f"line {number} is not a caption entry"
+        for number, line in enumerate(captions, start=4)
+        if not _CAPTION_LINE.match(line)
     ]
-    if not messages and tuple(named) != _OPTION_LINES:
-        messages.append("the options are out of order or have other values")
-    captions = head[3:]
-    if tuple(head[:3]) == _OPTION_LINES and (
-        len(captions) != 2 or not all(_CAPTION_LINE.match(c) for c in captions)
+    if all(_CAPTION_LINE.match(line) for line in captions) and (
+        captions[0] != captions[1]
     ):
-        messages.append("fig-cap does not have exactly two caption entries")
-    elif len(captions) == 2 and captions[0] != captions[1]:
         messages.append("the two captions differ")
+    actual = _comment_lines("\n".join(lines[5:]))
+    expected = _comment_lines(program)
+    messages += [
+        f"unexpected comment line: {line!r}" for line in actual if line not in expected
+    ]
+    messages += [
+        f"missing comment line: {line!r}" for line in expected if line not in actual
+    ]
+    if not messages and actual != expected:
+        messages.append("the comment lines are out of order")
     return messages
 
 
@@ -1089,72 +1110,110 @@ _CANONICAL_OPTIONS = (
     '#|   - "A caption."\n'
     '#|   - "A caption."\n'
 )
+_SMALL_PROGRAM = "# A note.\nx = 1\n"
+_CANONICAL_CELL = _CANONICAL_OPTIONS + _SMALL_PROGRAM
 
 
 @pytest.mark.parametrize(
     ("cell", "expected"),
     [
-        pytest.param(_CANONICAL_OPTIONS + "x = 1\n", [], id="canonical"),
+        pytest.param(_CANONICAL_CELL, [], id="canonical"),
         pytest.param(
-            _CANONICAL_OPTIONS.replace(
-                "#| fig-cap:", "#| classes: [d-none]\n#| fig-cap:"
-            )
-            + "x = 1\n",
-            ["option 'classes' is not one of the three"],
+            _CANONICAL_CELL.replace("#| fig-cap:", "#| classes: [d-none]\n#| fig-cap:"),
+            [
+                "line 3 is not '#| fig-cap:'",
+                "line 4 is not a caption entry",
+                "unexpected comment line: '#|   - \"A caption.\"'",
+            ],
             id="extra_option",
         ),
         pytest.param(
-            _CANONICAL_OPTIONS.replace(
-                '#|   - "A caption."\n#|   - "A caption."\n',
-                '#|   - "A caption."\n#|   - "A caption."\n#| eval: false\n',
-            )
-            + "x = 1\n",
-            [
-                "option 'eval' is not one of the three",
-                "fig-cap does not have exactly two caption entries",
-            ],
+            _CANONICAL_CELL + "#| eval: false\n",
+            ["unexpected comment line: '#| eval: false'"],
             id="eval_false",
         ),
         pytest.param(
-            _CANONICAL_OPTIONS.replace(
-                "#| fig-cap:",
-                "#| renderings: [light, dark]\n#| fig-cap:",
-            )
-            + "x = 1\n",
-            ["an option is given twice"],
+            _CANONICAL_CELL.replace(
+                "#| fig-cap:", "#| renderings: [light, dark]\n#| fig-cap:"
+            ),
+            [
+                "line 3 is not '#| fig-cap:'",
+                "line 4 is not a caption entry",
+                "unexpected comment line: '#|   - \"A caption.\"'",
+            ],
             id="duplicate_renderings",
         ),
         pytest.param(
-            _CANONICAL_OPTIONS.replace(
-                '#|   - "A caption."\n', '#|   - "Another."\n', 1
-            )
-            + "x = 1\n",
+            _CANONICAL_CELL.replace('#|   - "A caption."\n', '#|   - "Another."\n', 1),
             ["the two captions differ"],
             id="captions_differ",
         ),
         pytest.param(
-            _CANONICAL_OPTIONS.replace('#|   - "A caption."\n', "", 1) + "x = 1\n",
-            ["fig-cap does not have exactly two caption entries"],
+            _CANONICAL_CELL.replace('#|   - "A caption."\n', "", 1),
+            [
+                "line 5 is not a caption entry",
+                "missing comment line: '# A note.'",
+            ],
             id="one_caption",
         ),
         pytest.param(
-            _CANONICAL_OPTIONS + "import json\n#| eval: false\nx = 1\n",
-            ["option line after the code: '#| eval: false'"],
+            _CANONICAL_OPTIONS + "import json\n#| eval: false\n" + _SMALL_PROGRAM,
+            ["unexpected comment line: '#| eval: false'"],
             id="option_after_code",
         ),
         pytest.param(
             "#| renderings: [light, dark]\n#| code-fold: true\n"
-            + _CANONICAL_OPTIONS.split("\n", 2)[2]
-            + "x = 1\n",
-            ["the options are out of order or have other values"],
+            + _CANONICAL_CELL.split("\n", 2)[2],
+            [
+                "line 1 is not '#| code-fold: true'",
+                "line 2 is not '#| renderings: [light, dark]'",
+            ],
             id="reordered",
+        ),
+        pytest.param(
+            _CANONICAL_CELL.replace("x = 1", "x = 1\n# | classes: [d-none]"),
+            ["unexpected comment line: '# | classes: [d-none]'"],
+            id="spaced_marker",
+        ),
+        pytest.param(
+            _CANONICAL_CELL + "# | classes: [d-none]",
+            ["unexpected comment line: '# | classes: [d-none]'"],
+            id="spaced_marker_at_end",
+        ),
+        pytest.param(
+            _CANONICAL_CELL.replace(
+                "#| code-fold: true\n", '#|   - "x"\n#| code-fold: true\n'
+            ),
+            [
+                "line 1 is not '#| code-fold: true'",
+                "line 2 is not '#| renderings: [light, dark]'",
+                "line 3 is not '#| fig-cap:'",
+                "line 4 is not a caption entry",
+                "unexpected comment line: '#|   - \"A caption.\"'",
+            ],
+            id="caption_before_header",
+        ),
+        pytest.param(
+            _CANONICAL_CELL + "# note\n",
+            ["unexpected comment line: '# note'"],
+            id="extra_plain_comment",
+        ),
+        pytest.param(
+            _CANONICAL_CELL.replace("# A note.\n", ""),
+            ["missing comment line: '# A note.'"],
+            id="program_comment_removed",
+        ),
+        pytest.param(
+            _CANONICAL_CELL.replace("x = 1", "x = 1  # a trailing note"),
+            [],
+            id="trailing_comment_is_not_a_comment_line",
         ),
     ],
 )
 def test_builder_cell_options_are_exactly_the_three(
     cell: str, expected: list[str]
 ) -> None:
-    assert _builder_cell_option_violations(cell) == expected
+    assert _builder_cell_option_violations(cell, _SMALL_PROGRAM) == expected
 
 
 @pytest.mark.parametrize(
@@ -1173,7 +1232,7 @@ def test_builder_cell_is_exactly_its_pinned_program(builder: str) -> None:
     """
     page, cell = _builder_cell(builder)
     program = BUILDER_CELL_PROGRAMS[builder]
-    assert _builder_cell_option_violations(cell) == []
+    assert _builder_cell_option_violations(cell, program) == []
     assert ast.dump(ast.parse(cell)) == ast.dump(ast.parse(program))
 
     literals = [
