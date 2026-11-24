@@ -11,6 +11,15 @@ text, and the colour and display check reads the cell's syntax tree. They stop
 a plot from bypassing the conventions, but they do not prove that a plot looks
 right, nor, for a cell that calls no ``clocks.viz`` builder, that its style
 block encloses the drawing (a builder cell does get that check).
+
+For the two cells that draw committed data through a ``clocks.viz`` builder,
+this module pins the cell's program and its option block exactly, and requires
+any cell that calls a builder, however it was imported, to be one of them. It
+checks page source, so it does not try to prove that a figure is visible on the
+rendered page: a surrounding block that hides its contents, a stylesheet, or a
+script could still hide one. The rendered-site check
+(``scripts/check_site_figures.py``) covers the rendered structure, and the
+contact sheets and the phone-width measurements cover what a visitor sees.
 """
 
 import ast
@@ -24,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+import clocks.viz
+
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
 _SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
@@ -31,6 +42,11 @@ check_site_figures = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check_site_figures)
 
 REPO = Path(__file__).resolve().parents[1]
+
+# The figure builders of the facade, by name, whatever way a cell reaches them.
+BUILDER_NAMES = frozenset(
+    name for name in clocks.viz.__all__ if name.endswith("_figure")
+)
 
 SITE = REPO / "site"
 PLOT_PAGES = (
@@ -126,10 +142,13 @@ def _is_show_call(node: ast.Call) -> bool:
 
 
 def _builder_calls(tree: ast.AST) -> list[tuple[ast.Call, str]]:
-    """Return each call of a ``clocks.viz`` ``*_figure`` name, in call order.
+    """Return each call of a figure builder, in call order.
 
-    Builders are resolved from imports in the same tree, so an unrelated
-    ``helper_figure()`` does not count.
+    Two routes find them. By import: a ``clocks.viz`` ``*_figure`` name, alias
+    or module imported in the same tree. By name: any call whose function is a
+    name, or an attribute whose last part, equal to a real builder's name, so
+    a builder reached through another module still counts. An unrelated
+    ``helper_figure()`` is neither.
     """
     names: dict[str, str] = {}
     modules: set[str] = set()
@@ -138,6 +157,10 @@ def _builder_calls(tree: ast.AST) -> list[tuple[ast.Call, str]]:
             for alias in node.names:
                 if alias.name.endswith("_figure"):
                     names[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module == "clocks":
+            for alias in node.names:
+                if alias.name == "viz":
+                    modules.add(alias.asname or "viz")
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "clocks.viz":
@@ -149,11 +172,15 @@ def _builder_calls(tree: ast.AST) -> list[tuple[ast.Call, str]]:
         func = node.func
         if isinstance(func, ast.Name) and func.id in names:
             found.append((node, names[func.id]))
+        elif isinstance(func, ast.Name) and func.id in BUILDER_NAMES:
+            found.append((node, func.id))
         elif (
             isinstance(func, ast.Attribute)
             and func.attr.endswith("_figure")
             and _dotted(func.value) in modules
         ):
+            found.append((node, func.attr))
+        elif isinstance(func, ast.Attribute) and func.attr in BUILDER_NAMES:
             found.append((node, func.attr))
     found.sort(key=lambda item: (item[0].lineno, item[0].col_offset))
     return found
@@ -498,7 +525,27 @@ def test_style_violations_allows_styled_calls(source: str) -> None:
             "import other\nfig = other.helper_figure()", False, id="attribute_helper"
         ),
         pytest.param(
-            "fig = density_figure(replay, colors)", False, id="unimported_figure"
+            "fig = density_figure(replay, colors)", True, id="unimported_figure"
+        ),
+        pytest.param(
+            "from clocks import viz\nfig = viz.density_figure(replay, colors)",
+            True,
+            id="from_clocks_import_viz",
+        ),
+        pytest.param(
+            "from clocks import viz as v\nfig = v.density_figure(replay, colors)",
+            True,
+            id="from_clocks_import_viz_aliased",
+        ),
+        pytest.param(
+            "from clocks import _figures\nfig = _figures.density_figure(r, c)",
+            True,
+            id="through_another_module",
+        ),
+        pytest.param(
+            "from clocks._figures import density_figure\nfig = density_figure(r, c)",
+            True,
+            id="bare_name_from_private_module",
         ),
         pytest.param("table = Markdown(text)\nprint(table)", False, id="not_a_plot"),
         pytest.param("ax.figure.canvas.draw()", False, id="a_method_named_figure"),
@@ -506,6 +553,11 @@ def test_style_violations_allows_styled_calls(source: str) -> None:
 )
 def test_a_cell_is_a_plot_cell(cell: str, expected: bool) -> None:
     assert _is_plot_cell(cell) is expected
+
+
+def test_builder_names_are_the_two_real_builders() -> None:
+    assert BUILDER_NAMES == {"density_figure", "range_study_figure"}
+    assert BUILDER_NAMES == set(BUILDER_CELL_PROGRAMS)
 
 
 def test_facade_builders_are_resolved() -> None:
@@ -987,28 +1039,142 @@ def _builder_cell(builder: str) -> tuple[Path, str]:
     return found[0]
 
 
-def _cell_code(cell: str) -> str:
-    """The cell's source without its ``#|`` option lines."""
-    return "\n".join(line for line in cell.splitlines() if not line.startswith("#|"))
+_CAPTION_LINE = re.compile(r'^#\|   - ".*"$')
+_OPTION_LINES = ("#| code-fold: true", "#| renderings: [light, dark]", "#| fig-cap:")
+
+
+def _builder_cell_option_violations(cell: str) -> list[str]:
+    """Return how a builder cell's ``#|`` options depart from the exact three.
+
+    The options are the lines from the top of the cell up to the first line
+    that does not start with ``#|``: ``code-fold``, ``renderings`` and
+    ``fig-cap``, in that order, with two identical caption entries.
+    """
+    lines = cell.splitlines()
+    head: list[str] = []
+    for line in lines:
+        if not line.startswith("#|"):
+            break
+        head.append(line)
+    messages = [
+        f"option line after the code: {line!r}"
+        for line in lines[len(head) :]
+        if line.startswith("#|")
+    ]
+    named = [line for line in head if not _CAPTION_LINE.match(line)]
+    keys = [line[2:].split(":")[0].strip() for line in named]
+    if len(set(keys)) != len(keys):
+        messages.append("an option is given twice")
+    messages += [
+        f"option {key!r} is not one of the three"
+        for key in keys
+        if key not in {"code-fold", "renderings", "fig-cap"}
+    ]
+    if not messages and tuple(named) != _OPTION_LINES:
+        messages.append("the options are out of order or have other values")
+    captions = head[3:]
+    if tuple(head[:3]) == _OPTION_LINES and (
+        len(captions) != 2 or not all(_CAPTION_LINE.match(c) for c in captions)
+    ):
+        messages.append("fig-cap does not have exactly two caption entries")
+    elif len(captions) == 2 and captions[0] != captions[1]:
+        messages.append("the two captions differ")
+    return messages
+
+
+_CANONICAL_OPTIONS = (
+    "#| code-fold: true\n"
+    "#| renderings: [light, dark]\n"
+    "#| fig-cap:\n"
+    '#|   - "A caption."\n'
+    '#|   - "A caption."\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [
+        pytest.param(_CANONICAL_OPTIONS + "x = 1\n", [], id="canonical"),
+        pytest.param(
+            _CANONICAL_OPTIONS.replace(
+                "#| fig-cap:", "#| classes: [d-none]\n#| fig-cap:"
+            )
+            + "x = 1\n",
+            ["option 'classes' is not one of the three"],
+            id="extra_option",
+        ),
+        pytest.param(
+            _CANONICAL_OPTIONS.replace(
+                '#|   - "A caption."\n#|   - "A caption."\n',
+                '#|   - "A caption."\n#|   - "A caption."\n#| eval: false\n',
+            )
+            + "x = 1\n",
+            [
+                "option 'eval' is not one of the three",
+                "fig-cap does not have exactly two caption entries",
+            ],
+            id="eval_false",
+        ),
+        pytest.param(
+            _CANONICAL_OPTIONS.replace(
+                "#| fig-cap:",
+                "#| renderings: [light, dark]\n#| fig-cap:",
+            )
+            + "x = 1\n",
+            ["an option is given twice"],
+            id="duplicate_renderings",
+        ),
+        pytest.param(
+            _CANONICAL_OPTIONS.replace(
+                '#|   - "A caption."\n', '#|   - "Another."\n', 1
+            )
+            + "x = 1\n",
+            ["the two captions differ"],
+            id="captions_differ",
+        ),
+        pytest.param(
+            _CANONICAL_OPTIONS.replace('#|   - "A caption."\n', "", 1) + "x = 1\n",
+            ["fig-cap does not have exactly two caption entries"],
+            id="one_caption",
+        ),
+        pytest.param(
+            _CANONICAL_OPTIONS + "import json\n#| eval: false\nx = 1\n",
+            ["option line after the code: '#| eval: false'"],
+            id="option_after_code",
+        ),
+        pytest.param(
+            "#| renderings: [light, dark]\n#| code-fold: true\n"
+            + _CANONICAL_OPTIONS.split("\n", 2)[2]
+            + "x = 1\n",
+            ["the options are out of order or have other values"],
+            id="reordered",
+        ),
+    ],
+)
+def test_builder_cell_options_are_exactly_the_three(
+    cell: str, expected: list[str]
+) -> None:
+    assert _builder_cell_option_violations(cell) == expected
 
 
 @pytest.mark.parametrize(
     "builder",
     [
-        pytest.param("density_figure", id="density"),
-        pytest.param("range_study_figure", id="range_study"),
+        pytest.param(name, id=name.removesuffix("_figure"))
+        for name in BUILDER_CELL_PROGRAMS
     ],
 )
 def test_builder_cell_is_exactly_its_pinned_program(builder: str) -> None:
     """Each cell draws committed data that the Reproducibility page names.
 
-    So the whole cell is pinned, compared by syntax tree (comments and spacing
-    do not matter; every statement, name, literal and argument does): any
-    change to a cell is a deliberate change to this test.
+    So the whole cell is pinned, options included, compared by syntax tree
+    (comments and spacing do not matter; every statement, name, literal and
+    argument does): any change to a cell is a deliberate change to this test.
     """
     page, cell = _builder_cell(builder)
     program = BUILDER_CELL_PROGRAMS[builder]
-    assert ast.dump(ast.parse(_cell_code(cell))) == ast.dump(ast.parse(program))
+    assert _builder_cell_option_violations(cell) == []
+    assert ast.dump(ast.parse(cell)) == ast.dump(ast.parse(program))
 
     literals = [
         node.value

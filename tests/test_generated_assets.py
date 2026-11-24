@@ -309,7 +309,7 @@ def test_the_ci_bullets_link_exactly_the_workflow_files() -> None:
     section = raw.split("Four workflows run on GitHub Actions:")[1]
     section = section.split("\n## ")[0]
     links = re.findall(
-        r"^- \[`([\w-]+\.yml)`\]\(\S*/\.github/workflows/([\w-]+\.yml)\)",
+        r"^- \[`([\w-]+\.yml)`\]\((\S+)\)",
         section,
         re.MULTILINE,
     )
@@ -318,7 +318,8 @@ def test_the_ci_bullets_link_exactly_the_workflow_files() -> None:
     assert "Four workflows run on GitHub Actions:" in page
     assert len(links) == 4
     assert len({text for text, _ in links}) == 4
-    assert all(text == target for text, target in links)
+    base = "https://github.com/jbwhit/clocks/blob/main/.github/workflows/"
+    assert all(target == f"{base}{text}" for text, target in links)
     assert {text for text, _ in links} == files
 
 
