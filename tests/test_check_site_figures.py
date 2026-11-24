@@ -549,8 +549,10 @@ def _video(theme: str, overrides: Mapping[str, object]) -> str:
         "preload": "none",
         **overrides,
     }
-    pending = [f'{name}=""' for name in flags if name not in values]
-    pending += [name for name in bare if name not in flags]
+    pending = [
+        f'{name}=""' for name in flags if name not in values and name not in bare
+    ]
+    pending += list(bare)
     parts: list[str] = []
     for name, value in values.items():
         if name == "preload":
@@ -661,6 +663,10 @@ def _failures(site: Path, *reasons: str) -> None:
 
 def test_the_fixture_writes_the_embed_as_quarto_does() -> None:
     assert _clip_figure({}, {}, "A caption.", "replay figure") == QUARTO_FIGURE
+    bare = _video("light", {"bare_flags": ("controls", "playsinline")})
+    assert bare.endswith(
+        ' height="450" controls playsinline preload="none"></video>'
+    ), bare
 
 
 def test_a_well_formed_clip_passes(clip_site: Callable[..., Path]) -> None:
