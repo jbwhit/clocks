@@ -92,14 +92,19 @@ def test_extreme_finite_density_candidate_rejects_without_warning() -> None:
     np.testing.assert_array_equal(valid, np.array([False]))
 
 
-def _estimate_lines(replay_arrays: dict, row: int, n_particles: int) -> list[str]:
+def _estimate_lines(
+    replay_arrays: dict,
+    row: int,
+    n_particles: int,
+    truth: tuple[float, float, float] = (1.5, 2.0, 0.01),
+) -> list[str]:
     mean = replay_arrays["mean"][row]
     std = np.sqrt(np.diagonal(replay_arrays["cov"][row]))
     ess = replay_arrays["ess"][row]
     return [
-        f"  mu    = {mean[0]:.3f} ± {std[0]:.3f}  (true: 1.5)",
-        f"  sigma = {mean[1]:.3f} ± {std[1]:.3f}  (true: 2.0)",
-        f"  A     = {mean[2]:.3f} ± {std[2]:.3f}  (true: 0.01)",
+        f"  mu    = {mean[0]:.3f} ± {std[0]:.3f}  (true: {truth[0]})",
+        f"  sigma = {mean[1]:.3f} ± {std[1]:.3f}  (true: {truth[1]})",
+        f"  A     = {mean[2]:.3f} ± {std[2]:.3f}  (true: {truth[2]})",
         f"  ESS   = {ess:.0f} / {n_particles}",
     ]
 
@@ -128,7 +133,11 @@ def test_density_command_prints_progress_from_the_replay(
     archive = load_replay(ROOT / "assets/replays/demo_density.npz")
     edited = archive.arrays["true_rates"].copy()
     edited[0] = 0.5
-    stub_replay = Replay(archive.meta, {**archive.arrays, "true_rates": edited})
+    edited_truth = np.array([1.25, 2.5, 0.02])
+    stub_replay = Replay(
+        archive.meta,
+        {**archive.arrays, "true_rates": edited, "true_params": edited_truth},
+    )
     calls: list[dict] = []
 
     def stub_record(**keywords: int) -> Replay:
@@ -150,13 +159,19 @@ def test_density_command_prints_progress_from_the_replay(
 
     assert calls == [{"n_observations": 40, "n_particles": 16}]
     out = capsys.readouterr().out
-    assert out.startswith("True density: mu=1.5, sigma=2.0, amplitude=0.01")
+    assert out.startswith("True density: mu=1.25, sigma=2.5, amplitude=0.02")
     assert f"True rates: {edited}" in out
     lines = out.splitlines()
     n_particles = archive.meta["n_particles"]
     for k in (20, 40, 60):
         at = lines.index(f"After {k} observations:")
-        assert lines[at + 1 : at + 5] == _estimate_lines(archive.arrays, k, n_particles)
+        assert lines[at + 1 : at + 5] == _estimate_lines(
+            archive.arrays, k, n_particles, tuple(edited_truth)
+        )
+    at = lines.index("Final estimate:")
+    assert lines[at + 1 : at + 5] == _estimate_lines(
+        archive.arrays, -1, n_particles, tuple(edited_truth)
+    )
 
 
 def test_density_command_saves_the_figure_it_drew(
@@ -167,8 +182,8 @@ def test_density_command_saves_the_figure_it_drew(
     real_figure, real_save = demo_density.density_figure, demo_density.save_png
 
     def figure_spy(replay: Replay, colors: object) -> object:
-        fig = real_figure(replay, colors)
         face = to_hex(matplotlib.rcParams["figure.facecolor"])
+        fig = real_figure(replay, colors)
         built.append((replay, colors, fig, face))
         return fig
 

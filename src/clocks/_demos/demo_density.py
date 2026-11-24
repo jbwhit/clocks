@@ -75,10 +75,10 @@ def record(
 ) -> Replay:
     """Run the density inference once and return it as a validated replay.
 
-    Unlike the command, every reading is drawn first, from its own
-    ``study_generator`` of the scenario's seed, and the filter gets a second
-    one, so the readings do not depend on how many random numbers the sampler
-    consumed. The ``demo-density`` command runs exactly this and draws the result.
+    Every reading is drawn first, from its own ``study_generator`` of the
+    scenario's seed, and the filter runs on them with a second one, so the
+    readings do not depend on how many random numbers the sampler consumed. The
+    ``demo-density`` command runs exactly this and draws the result.
     """
     packaged = scenario()
     reading_rng = study_generator(packaged.seed)
@@ -189,7 +189,8 @@ def _run_demo(args: argparse.Namespace) -> None:
     replay = record(n_observations=args.observations, n_particles=args.particles)
     arrays, meta = replay.arrays, replay.meta
     n_particles = meta["n_particles"]
-    print(f"True density: mu={TRUE_MU}, sigma={TRUE_SIGMA}, amplitude={TRUE_AMPLITUDE}")
+    mu, sigma, amplitude = (float(value) for value in arrays["true_params"])
+    print(f"True density: mu={mu}, sigma={sigma}, amplitude={amplitude}")
     print(f"True rates: {arrays['true_rates']}\n")
     for row in range(20, meta["n_observations"] + 1, 20):
         print(f"After {row} observations:")
@@ -208,9 +209,12 @@ def _run_demo(args: argparse.Namespace) -> None:
 def _print_estimate(replay: Replay, row: int, n_particles: int) -> None:
     mean = replay.arrays["mean"][row]
     std = np.sqrt(np.diagonal(replay.arrays["cov"][row]))
-    print(_format_estimate("mu   ", float(mean[0]), float(std[0]), TRUE_MU))
-    print(_format_estimate("sigma", float(mean[1]), float(std[1]), TRUE_SIGMA))
-    print(_format_estimate("A    ", float(mean[2]), float(std[2]), TRUE_AMPLITUDE))
+    truth = (float(value) for value in replay.arrays["true_params"])
+    labels = ("mu   ", "sigma", "A    ")
+    for index, (label, true_value) in enumerate(zip(labels, truth, strict=True)):
+        print(
+            _format_estimate(label, float(mean[index]), float(std[index]), true_value)
+        )
     print(f"  ESS   = {replay.arrays['ess'][row]:.0f} / {n_particles}")
 
 

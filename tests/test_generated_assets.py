@@ -239,6 +239,17 @@ def test_density_provenance_names_its_run() -> None:
     assert "density PNG" not in page
 
 
+def test_deploy_sentence_says_how_each_figure_is_redrawn() -> None:
+    page = " ".join(_reproducibility_page().split())
+
+    assert (
+        "so every figure drawn by an executed cell is redrawn at deploy time: "
+        "most by running the model again from source, and the density figure "
+        "from a committed data file."
+    ) in page
+    assert "regenerated from source at deploy time" not in page
+
+
 def test_provenance_section_describes_figures_drawn_at_build_time() -> None:
     raw = _reproducibility_page()
     page = " ".join(raw.split())

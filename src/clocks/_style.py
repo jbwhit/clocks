@@ -160,7 +160,7 @@ def show(fig: Figure) -> None:
 def save_png(fig: Figure, path: Path) -> None:
     """Write ``fig`` to ``path`` as PNG bytes, the pixels ``show`` displays.
 
-    The file is 2 dpi-scaled like ``show`` (200 dpi for the style's 100), never
+    The file is rendered at 200 dpi, twice the style's 100, as ``show`` does, never
     cropped, opaque, and PNG whatever the path's suffix and whatever
     ``savefig.*`` settings the caller has in force. It does not close ``fig``.
     """

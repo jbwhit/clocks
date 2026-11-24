@@ -35,9 +35,10 @@ Three workflows run on GitHub Actions:
   targeting `main`, including when a draft is marked ready for review.
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
   is triggered by each push to `main` and re-renders and redeploys this site, so every
-  executed-cell figure you see is regenerated from source at deploy time. The
-  demo GIFs and the echolocation range-study PNG are the exceptions: they are
-  committed files, described in the next section.
+  figure drawn by an executed cell is redrawn at deploy time: most by running
+  the model again from source, and the density figure from a committed data
+  file. The demo GIFs and the echolocation range-study PNG are the exceptions:
+  they are committed images, described in the next section.
 - [`site-check.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site-check.yml)
   renders this site and runs the link and figure checks on non-draft pull
   requests targeting `main` that touch the site or the library, so a broken
