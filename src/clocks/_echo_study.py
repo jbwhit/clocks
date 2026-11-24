@@ -6,11 +6,14 @@ clocks._scenarios).
 """
 
 import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 from clocks._calibration import (
     build_study_document,
@@ -31,6 +34,7 @@ from clocks._scenarios import (
     build_head_lattice,
     echo_mass_config,
 )
+from clocks._style import Palette, save_png, style
 from clocks.physics import clock_rates
 
 
@@ -117,68 +121,142 @@ def summarize(results: list[dict]) -> list[dict]:
     return summary
 
 
-def write_summary_figure(study: dict, png_path: Path) -> None:
-    """Two aligned subplots: position and mass error vs range, with the
-    filter's own claimed uncertainty (posterior std) as dashed medians."""
+def range_study_figure(study: Mapping[str, Any], colors: Palette) -> Figure:
+    """Position and mass error against range, with each run and the pass limits.
+
+    Draws with the rcParams in force: call it inside ``with style(theme) as
+    colors:``. It never shows, saves or closes the figure it returns.
+    """
     results = study["results"]
+    tolerances = study["tolerances"]
     summary = summarize(results)
     ranges = [row["range_r"] for row in summary]
-
     fig, (ax_pos, ax_mass) = plt.subplots(
-        2, 1, figsize=(8, 7), sharex=True, constrained_layout=True
+        2, 1, figsize=(7.5, 5.4), sharex=True, gridspec_kw={"top": 0.88}
     )
-    for result in results:
-        ax_pos.plot(
-            result["range_r"],
-            result["position_error"],
-            "o",
-            color="steelblue",
-            alpha=0.35,
+    panels = (
+        (ax_pos, "position-error", "position error", "position_error", "pos_std"),
+        (ax_mass, "mass-error", "mass error", "mass_error", "mass_std"),
+    )
+    for ax, gid, label, key, spread_key in panels:
+        ax.set_gid(gid)
+        tolerance = tolerances[f"{key}_max"]
+        ax.plot(
+            [r["range_r"] for r in results],
+            [r[key] for r in results],
+            color=colors.ink,
+            marker="o",
             markersize=4,
-        )
-        ax_mass.plot(
-            result["range_r"],
-            result["mass_error"],
-            "o",
-            color="steelblue",
+            linestyle="none",
             alpha=0.35,
-            markersize=4,
+            gid="runs",
         )
-    ax_pos.plot(
-        ranges,
-        [r["med_position_error"] for r in summary],
-        "-o",
-        color="tab:blue",
-        label="median error",
-    )
-    ax_pos.plot(
-        ranges,
-        [r["med_pos_std"] for r in summary],
-        "--s",
-        color="tab:orange",
-        label="median posterior std",
-    )
-    ax_mass.plot(
-        ranges,
-        [r["med_mass_error"] for r in summary],
-        "-o",
-        color="tab:blue",
-        label="median error",
-    )
-    ax_mass.plot(
-        ranges,
-        [r["med_mass_std"] for r in summary],
-        "--s",
-        color="tab:orange",
-        label="median posterior std",
-    )
-    ax_pos.set_yscale("log")
-    ax_mass.set_yscale("log")
-    ax_pos.set_ylabel("position error")
-    ax_mass.set_ylabel("mass error")
+        ax.plot(
+            ranges,
+            [row[f"med_{key}"] for row in summary],
+            color=colors.ink,
+            marker="o",
+            linestyle="-",
+            gid="median-error",
+        )
+        ax.plot(
+            ranges,
+            [row[f"med_{spread_key}"] for row in summary],
+            color=colors.belief,
+            marker="s",
+            linestyle="-",
+            gid="median-spread",
+        )
+        ax.axhline(
+            tolerance,
+            color=colors.threshold,
+            linestyle="--",
+            gid="limit",
+        )
+        ax.set_yscale("log")
+        ax.set_ylabel(label)
+        ax.annotate(
+            f"limit {tolerance}",
+            xy=(0.0, tolerance),
+            xycoords=("axes fraction", "data"),
+            xytext=(4, 3),
+            textcoords="offset points",
+            color=colors.threshold,
+            ha="left",
+            va="bottom",
+        )
     ax_mass.set_xlabel("range (circumradii)")
-    ax_pos.legend(fontsize=8)
-    ax_mass.legend(fontsize=8)
-    ax_pos.set_title("Echolocation resolution vs range")
-    fig.savefig(png_path, dpi=150)
-    plt.close(fig)
+    _label_lines(ax_pos, colors, summary)
+    _label_pass_counts(ax_pos, colors, results, tolerances, ranges)
+    return fig
+
+
+def _label_lines(ax: Axes, colors: Palette, summary: list[dict]) -> None:
+    """Direct labels at the middle range: the spread up and left of its line,
+    the error down and right of its own, where nothing else is drawn."""
+    first = summary[max(0, len(summary) // 2 - 1)]
+    ax.annotate(
+        "median posterior s.d.",
+        xy=(first["range_r"], first["med_pos_std"]),
+        xytext=(-8, 10),
+        textcoords="offset points",
+        color=colors.belief,
+        ha="right",
+        va="bottom",
+    )
+    ax.annotate(
+        "median error",
+        xy=(first["range_r"], first["med_position_error"]),
+        xytext=(10, -12),
+        textcoords="offset points",
+        color=colors.ink,
+        ha="left",
+        va="top",
+    )
+
+
+def _label_pass_counts(
+    ax: Axes,
+    colors: Palette,
+    results: list[dict],
+    tolerances: Mapping[str, Any],
+    ranges: list[float],
+) -> None:
+    """Counts of runs within both limits, in a row just above the axes."""
+    for range_r in ranges:
+        count = sum(
+            r["position_error"] <= tolerances["position_error_max"]
+            and r["mass_error"] <= tolerances["mass_error_max"]
+            for r in results
+            if r["range_r"] == range_r
+        )
+        ax.text(
+            range_r,
+            1.02,
+            str(count),
+            transform=ax.get_xaxis_transform(),
+            color=colors.muted,
+            ha="center",
+            va="bottom",
+            gid="pass-count",
+        )
+    ax.text(
+        0.0,
+        1.13,
+        "runs within both limits",
+        transform=ax.transAxes,
+        color=colors.muted,
+        ha="left",
+        va="bottom",
+        gid="pass-count-label",
+    )
+
+
+def write_summary_figure(study: dict, png_path: Path) -> None:
+    """Write the range-study figure, light theme, as the site shows it."""
+    with style("light") as colors:
+        fig = range_study_figure(study, colors)
+    try:
+        save_png(fig, png_path)
+    finally:
+        plt.close(fig)

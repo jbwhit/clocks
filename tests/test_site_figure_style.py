@@ -82,7 +82,10 @@ def _plot_cells(path: Path) -> list[str]:
 
 
 # Heights of the figures the builders draw (CSS pixels), by name in clocks.viz.
-FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {"density_figure": 540}
+FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {
+    "density_figure": 540,
+    "range_study_figure": 540,
+}
 
 # Retired image files and library modules that draw figures; later tasks add to
 # these.
@@ -90,6 +93,7 @@ RETIRED_ASSETS: tuple[str, ...] = ("demo_density.png",)
 LIBRARY_DRAWING_MODULES: tuple[str, ...] = (
     "src/clocks/_figures.py",
     "src/clocks/_demos/demo_density.py",
+    "src/clocks/_echo_study.py",
 )
 
 
@@ -836,11 +840,6 @@ def test_library_drawing_code_has_no_unstyled_colour(module: str) -> None:
     assert _style_violations(text) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="Task 5 replaces the range-study drawing",
-)
 def test_every_figure_builder_module_is_scanned() -> None:
     defining = {
         path.relative_to(REPO).as_posix()
@@ -863,7 +862,18 @@ def _draw_density_figure(colors):
     )
 
 
-_FIGURE_DRAWERS = {"density_figure": _draw_density_figure}
+def _draw_range_study_figure(colors):
+    from clocks._echo_study import load_study, range_study_figure
+
+    return range_study_figure(
+        load_study(REPO / "assets" / "echolocation_range_study.json"), colors
+    )
+
+
+_FIGURE_DRAWERS = {
+    "density_figure": _draw_density_figure,
+    "range_study_figure": _draw_range_study_figure,
+}
 
 
 @pytest.mark.parametrize("name", sorted(FIGURE_FUNCTION_HEIGHTS))

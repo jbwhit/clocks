@@ -13,6 +13,7 @@ from clocks._animate import (
     animate_inference_multi_2d,
     animate_model_comparison,
 )
+from clocks._echo_study import range_study_figure
 from clocks._figures import density_figure
 from clocks._panels import (
     create_inference_dashboard,
@@ -59,6 +60,7 @@ __all__ = [
     "plot_particle_cloud_multi_2d",
     "palette",
     "plot_scene_3d",
+    "range_study_figure",
     "show",
     "style",
 ]
