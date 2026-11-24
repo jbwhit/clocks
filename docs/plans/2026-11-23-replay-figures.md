@@ -285,3 +285,196 @@ In `tests/test_site_figure_style.py`: `FIGURE_FUNCTION_HEIGHTS["density_figure"]
 - `clocks.viz`: import `density_figure` from `clocks._figures` and `load_replay` from `clocks._replay`; add both to `__all__`; name `_figures` in the module docstring.
 
 - [ ] **Step 4: Tests pass; full gate; commit and push** as `Draw the density figure from a replay, with shared trace helpers`.
+
+---
+
+### Task 4: `demo-density` draws the recorded run, and the density figure replaces its PNG
+
+One change, as section 11 requires: the command's switch to `record()` and the new figure, the page cell, the removal of the PNG and its hash row, and the provenance sentences that describe them.
+
+**Files:**
+- Modify: `src/clocks/_demos/demo_density.py`, `site/story/beyond-point-masses.qmd`, `site/reproduce/reproducibility.qmd`, `docs/2026-08-16-development-calibration.md`, `scripts/check_site_figures.py`
+- Delete: `assets/demo_density.png`, `site/assets/demo_density.png`
+- Test: `tests/test_density_demo.py`, `tests/test_generated_assets.py`, `tests/test_site_figure_style.py`
+
+**Interfaces:**
+- Consumes: `record()` (already in `demo_density.py` from pull request 1), `density_figure` (Task 3), `style` from `clocks._style`; `RETIRED_ASSETS`, `LIBRARY_DRAWING_MODULES` (Task 2); `EXPECTED_FIGURES` (Task 1).
+- Produces: `demo_density._run_demo(args)` as described below; `_save_summary` is deleted. `build_parser`, `main`, `build_density_filter`, `scenario` and `record` keep their signatures. In `tests/test_generated_assets.py`, `RETIRED_VISUALS: dict[str, str]` (file name to the SHA-256 it was released with), which Task 6 extends.
+
+- [ ] **Step 1: Write the failing tests.**
+
+In `tests/test_density_demo.py` (each reads the PNG size with `png_size` from `tests/_figure_artists.py`):
+
+- `test_density_command_prints_and_draws_the_recorded_run`: `main(["--output", str(tmp_path / "new" / "density.png"), "--observations", "3", "--particles", "64"]) == 0`. With `expected = demo_density.record(n_observations=3, n_particles=64)`, `m = expected.arrays["mean"][-1]`, `s` its standard deviations and `ess = expected.arrays["ess"][-1]`, standard output holds the line `Final estimate:` followed by exactly these four lines: `f"  mu    = {m[0]:.3f} ± {s[0]:.3f}  (true: 1.5)"`, `f"  sigma = {m[1]:.3f} ± {s[1]:.3f}  (true: 2.0)"`, `f"  A     = {m[2]:.3f} ± {s[2]:.3f}  (true: 0.01)"`, `f"  ESS   = {ess:.0f} / 64"`; and `png_size(tmp_path / "new" / "density.png") == (1500, 1080)`. (P5: today's command prints μ = 1.182 here, `record()` 1.768.)
+- `test_density_command_draws_the_density_figure_in_the_light_theme`: with `demo_density.density_figure` wrapped by a spy that records its arguments and calls through, one run at 2 observations and 16 particles calls it once, with a replay whose `meta["n_observations"] == 2` and `meta["n_particles"] == 16` and with `colors == palette("light")`.
+- `test_density_command_writes_only_its_png`: with the working directory changed to `tmp_path` (`monkeypatch.chdir`), `main(["--output", "out/d.png", "--observations", "1", "--particles", "16"])` leaves exactly one file under `tmp_path`, `out/d.png`.
+
+In `tests/test_generated_assets.py`:
+
+- Remove the `"demo_density.png"` row from `EXPECTED_VISUAL_HASHES`.
+- `RETIRED_VISUALS = {"demo_density.png": "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"}`.
+- `test_retired_visuals_are_gone_but_recorded` (each of `RETIRED_VISUALS`): neither `ASSETS / name` nor `SITE_ASSETS / name` exists; the calibration report still contains the hash; and the report matches `rf"`{re.escape(name)}` was removed from both trees on \d{{4}}-\d{{2}}-\d{{2}};"`.
+- `test_density_provenance_names_its_run`: with `meta = load_replay(ROOT / "assets/replays/demo_density.npz").meta`, the whitespace-normalised Reproducibility page contains `"**Replay data.** The density figure on [Beyond Point Masses](../story/beyond-point-masses.qmd) is drawn when the site is built, from `assets/replays/demo_density.npz`, the recorder's archive of the demo's packaged run: "` + `f"{meta['n_observations']} observations, {meta['n_particles']:,} particles and seed {meta['seed']}. "`; and does not contain `"density PNG"`.
+- `test_provenance_section_describes_figures_drawn_at_build_time`: the raw page contains `"## Where the figures come from {#sec-figures}"`; the normalised page contains `"[development calibration report](https://github.com/jbwhit/clocks/blob/main/docs/2026-08-16-development-calibration.md) is the record of the August 2026 release"`.
+- `PROVENANCE_VOCABULARY` gains `"committed replay"` and `"replay file"`.
+
+In `tests/test_site_figure_style.py`: `RETIRED_ASSETS = ("demo_density.png",)`; `LIBRARY_DRAWING_MODULES` gains `"src/clocks/_demos/demo_density.py"`. In `scripts/check_site_figures.py`, `"story/beyond-point-masses.html": (Fig("plot", 540), Fig("plot", 420))`.
+
+- [ ] **Step 2: Run** `uv run pytest tests/test_density_demo.py tests/test_generated_assets.py tests/test_site_figure_style.py tests/test_check_site_figures.py -q`. The command tests fail (today's run, a 2250 by 600 PNG); the retired-asset, provenance and manifest tests fail.
+
+- [ ] **Step 3: Implement.**
+
+`demo_density._run_demo(args)`: `replay = record(n_observations=args.observations, n_particles=args.particles)`; print the truth and the true rates from `replay.arrays` in today's format (`True density: mu=1.5, sigma=2.0, amplitude=0.01`, then `True rates: [...]`); for k = 20, 40, … up to the last observation, print today's `After k observations:` block from row k of `mean`, the standard deviations of `cov` and `ess`; then `Final estimate:` from the last row; then, inside `with style("light") as colors:`, `fig = density_figure(replay, colors)`, `args.output.parent.mkdir(parents=True, exist_ok=True)`, `fig.savefig(args.output, dpi=200)`, `plt.close(fig)`; then `Saved: <path>`. `_format_estimate` takes the mean, the standard deviation and the truth as floats. Delete `_save_summary` and every import only it used. Imports stay after `matplotlib.use("Agg")` (`tests/test_cli.py::test_demo_selects_agg_before_importing_pyplot`). Update `record()`'s docstring: the command now runs exactly this.
+
+`site/story/beyond-point-masses.qmd`: replace the Markdown image on line 17 with this cell, in the same place:
+
+````markdown
+```{python}
+#| code-fold: true
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "The density demo, one simulated run. Top: the true profile and, from 500 particles sampled from the final posterior, the pointwise median profile with its central 68% band; squares mark the clocks. Below: each parameter's posterior mean after each observation, with a band of one standard deviation, and its true value."
+#|   - "The density demo, one simulated run. Top: the true profile and, from 500 particles sampled from the final posterior, the pointwise median profile with its central 68% band; squares mark the clocks. Below: each parameter's posterior mean after each observation, with a band of one standard deviation, and its true value."
+from pathlib import Path
+
+from clocks.viz import THEMES, density_figure, load_replay, show, style
+
+# A cell runs in its page's directory: the archive is two levels up.
+replay = load_replay(Path("../../assets/replays/demo_density.npz"))
+for theme in THEMES:
+    with style(theme) as colors:
+        fig = density_figure(replay, colors)
+        show(fig)
+```
+````
+
+`git rm assets/demo_density.png site/assets/demo_density.png`.
+
+`docs/2026-08-16-development-calibration.md`: after the hash table, a paragraph whose first sentence is "`demo_density.png` was removed from both trees on <today's date, YYYY-MM-DD>; the density figure is now drawn when the site is built, from `assets/replays/demo_density.npz`, and its old bytes remain in git history under the hash above." The table is not edited.
+
+`site/reproduce/reproducibility.qmd` (line numbers as on `main`):
+
+- Lines 38 to 40 become "…regenerated from source at deploy time. The demo GIFs and the echolocation range-study PNG are the exceptions: they are committed files, described in the next section."
+- Line 46 becomes `## Where the figures come from {#sec-figures}`, and lines 48 to 52 become: "The story pages keep commentary on these figures' origin to a short caveat. This section summarizes where each came from and what it does and does not establish. The [development calibration report](https://github.com/jbwhit/clocks/blob/main/docs/2026-08-16-development-calibration.md) is the record of the August 2026 release: the generating commit and the hashes of the files that release shipped, not of every figure now on this site."
+- Lines 54 to 62 become two paragraphs. **Demo animations.** Today's paragraph with the density figure taken out: "Each committed GIF is the packaged default output of its `uv run demo-*` command, …", "Each animation depicts one named finite realization …", the rest unchanged. Then: "**Replay data.** The density figure on [Beyond Point Masses](../story/beyond-point-masses.qmd) is drawn when the site is built, from `assets/replays/demo_density.npz`, the recorder's archive of the demo's packaged run: 60 observations, 2,000 particles and seed 42. The archive holds the configuration, seed and observations, a summary of the cloud before any observation and after each, and a 500-particle sample for display. Tests run the demo again and compare its inputs, to within 1e-12 where they are computed, and its summaries within stated bounds; they do not require the same random path. `uv run demo-density` repeats this run and draws the same figure. The archive is one finite realization: it establishes no population recovery rate."
+- Lines 64 to 66 (the density prior) are unchanged.
+
+- [ ] **Step 4: Tests pass; full gate; render the site and run both checks.** `check_site_figures.py` prints `Figure contract OK: 9 pages, 10 figures checked.` Open the rendered `story/beyond-point-masses.html` in a browser, switch theme, and confirm the figure shows in both; confirm `site/_output/assets/` holds no `demo_density.png`.
+
+- [ ] **Step 5: Commit and push** as `Draw the density figure from its replay; demo-density runs the recorded scenario`. The body states that the command's run changed (P5) and that the archive was not re-recorded.
+
+---
+
+### Task 5: `range_study_figure`, with `write_summary_figure` as its wrapper
+
+**Files:**
+- Modify: `src/clocks/_echo_study.py`, `src/clocks/viz.py`, `tests/test_site_figure_style.py`
+- Test: `tests/test_echo_study.py`
+
+**Interfaces:**
+- Consumes: `summarize` (same module); `Palette`, `style`, `THEMES`; the helpers in `tests/_figure_artists.py`.
+- Produces: `range_study_figure(study: Mapping[str, Any], colors: Palette) -> Figure` in `clocks._echo_study`, exported from `clocks.viz`; `write_summary_figure(study: dict, png_path: Path) -> None`, same signature, now `with style("light") as colors:` → `range_study_figure` → `savefig(png_path, dpi=200)` → close. `scripts/scan_echolocation_range.py` and the monkeypatch in `tests/test_scenarios.py` are untouched.
+
+**The range-study figure's artists.** Two stacked axes sharing x, both log-scaled in y, gids `"position-error"` (top) and `"mass-error"`. In each: a `Line2D` `"runs"`, one point per record in record order, `linestyle="none"`, `marker="o"`, colour `ink`, alpha 0.35; a `Line2D` `"median-error"` over the ranges `summarize` returns, `marker="o"`, colour `ink`; a `Line2D` `"median-spread"`, `marker="s"`, solid, colour `belief`; and an `axhline` `"limit"` at the study's tolerance (`position_error_max`, `mass_error_max`), dashed, colour `threshold`, labelled `f"limit {tolerance}"` in `threshold` (so `limit 1.0`, `limit 0.04`). In the top axes only: the direct labels `"median error"` (`ink`) and `"median posterior s.d."` (`belief`), one each in the whole figure; one `Text` per range with gid `"pass-count"`, x at the range in data coordinates and y just above the axes, reading the count of runs at that range whose position error and mass error are both within the tolerances; and one `Text` `"runs within both limits"` (gid `"pass-count-label"`). Y labels "position error" and "mass error", x label "range (circumradii)" on the bottom axes, no title on either axes and no figure title. `figsize=(7.5, 5.4)`.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_echo_study.py`, on a literal study (a plain dict; it does not go through `save_study`):
+
+```python
+TOLERANCES = {"position_error_max": 1.0, "mass_error_max": 0.04, "far_std_factor_min": 20.0}
+
+
+def _run(range_r, position_error, mass_error, pos_std, mass_std, passed):
+    return {"range_r": range_r, "position_error": position_error,
+            "mass_error": mass_error, "pos_std": pos_std, "mass_std": mass_std,
+            "passed": passed}
+
+
+def literal_study() -> dict:
+    return {"tolerances": dict(TOLERANCES), "ranges": [2.0, 4.0], "results": [
+        _run(2.0, 0.05, 0.002, 0.04, 0.002, True),
+        _run(2.0, 0.10, 0.050, 0.06, 0.003, False),  # inside position, outside mass
+        _run(2.0, 0.20, 0.004, 0.08, 0.004, True),
+        _run(4.0, 1.50, 0.010, 1.20, 0.020, False),  # outside position
+        _run(4.0, 0.80, 0.020, 0.90, 0.030, True),
+        _run(4.0, 2.50, 0.030, 1.60, 0.025, False),
+    ]}
+```
+
+By hand: medians at 2.0 and 4.0 are position error 0.10 and 1.50, mass error 0.004 and 0.020, position s.d. 0.06 and 1.20, mass s.d. 0.003 and 0.025; runs within both limits 2 and 1 (the position limit alone gives 3 and 1, the mass limit alone 2 and 3).
+
+- `test_range_study_figure_size_and_axes` (each theme): size `(7.5, 5.4)`; gids `["position-error", "mass-error"]`; both y scales `"log"`; the two axes share x; both titles `""` and `fig._suptitle is None`; labels as above.
+- `test_runs_are_faint_ink_dots` (each theme): in each axes, `"runs"` has x data `[2.0, 2.0, 2.0, 4.0, 4.0, 4.0]` and y data the six errors of that panel in record order; marker `"o"`, line style `"None"`, colour `colors.ink`, alpha below 1.
+- `test_medians_and_spreads_come_from_summarize` (each theme): `"median-error"` and `"median-spread"` have x data `[2.0, 4.0]` and y data `[0.10, 1.50]`, `[0.06, 1.20]` (top) and `[0.004, 0.020]`, `[0.003, 0.025]` (bottom), each also equal to the matching `summarize` field; colours `ink` and `belief`; markers `"o"` and `"s"`; the spread line's style `"-"`.
+- `test_limits_are_the_studys_tolerances` (each theme): `"limit"` y data `[1.0, 1.0]` and `[0.04, 0.04]`, style `"--"`, colour `colors.threshold`; texts `"limit 1.0"` and `"limit 0.04"` exist.
+- `test_limits_follow_the_study`: with `position_error_max` 2.0, the top `"limit"` is at `[2.0, 2.0]`, `"limit 2.0"` exists, and the pass counts read `["2", "2"]`.
+- `test_pass_counts_use_both_limits`: the `"pass-count"` texts, as `(x, text)` pairs in x order, are `[(2.0, "2"), (4.0, "1")]`; exactly one text in the figure reads `"runs within both limits"`.
+- `test_the_lines_are_labelled_once`: exactly one text in the figure reads `"median posterior s.d."`, and exactly one `"median error"`.
+- `test_changing_one_run_moves_its_artists`: with the first record's position error 0.5, the top `"runs"` y data start with 0.5 and the top `"median-error"` y data are `[0.20, 1.50]`; the bottom axes' `"runs"`, `"median-error"` and `"median-spread"` data are `np.array_equal` to the original's.
+- `test_range_study_on_the_committed_study` (P4): from `load_study(ROOT / "assets/echolocation_range_study.json")`, the `"pass-count"` texts are `["12", "12", "11", "8", "3", "0"]` at x `[2.0, 2.6, 3.5, 4.6, 6.1, 8.0]`; the limits are at 1.0 and 0.04; the `"median-error"` y data equal `summarize`'s `med_position_error` and `med_mass_error`, exactly.
+- `test_every_visible_colour_is_in_the_palette` (each theme), on the committed study: `visible_colours(fig) <= palette_hexes(colors)`.
+- `test_write_summary_figure_is_the_light_range_study`: written from the literal study, `png_size(path) == (1500, 1080)`, and the pixel at (0, 0) of `matplotlib.image.imread(path)` equals `to_rgb(palette("light").background)` within `1 / 255`.
+- `test_write_summary_figure_creates_png` (existing, fake records with `mass_error=0.0`) still passes unchanged.
+- `test_viz_exports_the_range_study_figure`: `clocks.viz.range_study_figure is clocks._echo_study.range_study_figure`, and the name is in `__all__`.
+
+In `tests/test_site_figure_style.py`: `FIGURE_FUNCTION_HEIGHTS["range_study_figure"] = 540`, with its drawer reading the committed study; `LIBRARY_DRAWING_MODULES` gains `"src/clocks/_echo_study.py"`; remove the `xfail` mark from `test_every_figure_builder_module_is_scanned`.
+
+- [ ] **Step 2: Run** `uv run pytest tests/test_echo_study.py tests/test_site_figure_style.py -q`; the new tests fail on the missing name, and the library colour check fails on today's `write_summary_figure` (`"o"`, `color="steelblue"`).
+
+- [ ] **Step 3: Implement** as "The range-study figure's artists" says. Ranges, medians and spreads come from `summarize(study["results"])`; the counts are computed per range from the records and `study["tolerances"]`, never from `passed`. Keyword styling only. In `clocks.viz`, import and export `range_study_figure`.
+
+- [ ] **Step 4: Tests pass; full gate; commit and push** as `Draw the echolocation range study in the figure style; keep write_summary_figure as a wrapper`.
+
+---
+
+### Task 6: The range-study figure replaces its PNG
+
+**Files:**
+- Modify: `site/story/gravitational-echolocation.qmd`, `site/reproduce/reproducibility.qmd`, `docs/2026-08-16-development-calibration.md`, `scripts/check_site_figures.py`
+- Delete: `assets/echolocation_range_study.png`, `site/assets/echolocation_range_study.png`
+- Test: `tests/test_generated_assets.py`, `tests/test_site_figure_style.py`
+
+**Interfaces:**
+- Consumes: `range_study_figure` (Task 5); `RETIRED_VISUALS` (Task 4); `RETIRED_ASSETS` (Task 2).
+
+- [ ] **Step 1: Write the failing tests.**
+
+- `tests/test_generated_assets.py`: remove the `"echolocation_range_study.png"` row from `EXPECTED_VISUAL_HASHES`; add `"echolocation_range_study.png": "6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc"` to `RETIRED_VISUALS`. New `test_range_study_provenance_names_its_source`: the normalised Reproducibility page contains `"The figure is drawn when the site is built, from the certified block-400 records in `assets/echolocation_range_study.json`. The frozen cell passed "` and does not contain `"range-study PNG"`. The existing pinned sentence beginning "The frozen cell passed" is unchanged and still asserted.
+- `tests/test_site_figure_style.py`: `RETIRED_ASSETS` gains `"echolocation_range_study.png"`.
+- `scripts/check_site_figures.py`: `"story/gravitational-echolocation.html": (Fig("plot", 420), Fig("plot", 540))`.
+
+- [ ] **Step 2: Run** `uv run pytest tests/test_generated_assets.py tests/test_site_figure_style.py tests/test_check_site_figures.py -q`; the retired-asset, provenance and manifest tests fail.
+
+- [ ] **Step 3: Implement.**
+
+`site/story/gravitational-echolocation.qmd`: replace the Markdown image on line 116 with this cell, in the same place. The prose around it, including the pinned pass-count sentence, is unchanged.
+
+````markdown
+```{python}
+#| code-fold: true
+#| renderings: [light, dark]
+#| fig-cap:
+#|   - "Resolution against range, twelve runs at each of six ranges. Top: position error; bottom: mass error. Dots are individual runs and circles their median; squares are the filter's own uncertainty, the median posterior standard deviation; dashed lines are the pass limits. The counts along the top are the runs within both limits."
+#|   - "Resolution against range, twelve runs at each of six ranges. Top: position error; bottom: mass error. Dots are individual runs and circles their median; squares are the filter's own uncertainty, the median posterior standard deviation; dashed lines are the pass limits. The counts along the top are the runs within both limits."
+import json
+from pathlib import Path
+
+from clocks.viz import THEMES, range_study_figure, show, style
+
+# A cell runs in its page's directory: the study is two levels up.
+study = json.loads(Path("../../assets/echolocation_range_study.json").read_text())
+for theme in THEMES:
+    with style(theme) as colors:
+        fig = range_study_figure(study, colors)
+        show(fig)
+```
+````
+
+`git rm assets/echolocation_range_study.png site/assets/echolocation_range_study.png`.
+
+`docs/2026-08-16-development-calibration.md`: add to Task 4's paragraph "`echolocation_range_study.png` was removed from both trees on <today's date>; the range-study figure is now drawn when the site is built, from `echolocation_range_study.json`, whose row above is unchanged."
+
+`site/reproduce/reproducibility.qmd`: the CI bullet's last sentence becomes "The demo GIFs are the exceptions: they are committed files, described in the next section."; the sentence "The displayed study was regenerated directly from the certified block-400 records." becomes "The figure is drawn when the site is built, from the certified block-400 records in `assets/echolocation_range_study.json`."
+
+- [ ] **Step 4: Tests pass; full gate; render the site and run both checks.** `check_site_figures.py` prints `Figure contract OK: 9 pages, 11 figures checked.` Confirm in the rendered `story/gravitational-echolocation.html` that the counts along the top read 12, 12, 11, 8, 3, 0, in both themes.
+
+- [ ] **Step 5: Commit and push** as `Draw the range-study figure at build time and retire its PNG`.
