@@ -59,7 +59,7 @@ LAYOUT_MULTI_1D: dict[str, Rect] = {
 }
 HEIGHT_1D = 450
 HEIGHT_MULTI_1D = 500
-MASS_AXIS = "M"  # the cloud's y label, and its insets' y name
+MASS_AXIS = "M"  # the cloud's y label
 SIDE_OFFSET = 0.5  # x distance between a clock's three marks in "slowing"
 BAR_WIDTH = 1.4
 
@@ -226,7 +226,7 @@ def _draw_inset(
     inset.text(
         0.0,
         1.03,
-        zoom_label(x_factor, y_factor, MASS_AXIS),
+        zoom_label(x_factor, y_factor, str(replay.meta["param_names"][pair[1]])),
         transform=inset.transAxes,
         ha="left",
         va="bottom",

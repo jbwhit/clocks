@@ -86,8 +86,8 @@ INSETS = {
     "demo_1d": [("cloud", "inset", (0, 1), "M", ("dots", "truth", "ellipse"))],
     "demo_2d": [("map", "inset", (0, 1), "y", ("dots", "truth", "ellipse"))],
     "demo_multi_mass": [
-        ("cloud", "inset-1", (0, 2), "M", ("dots-1", "truth-1", "ellipse-1")),
-        ("cloud", "inset-2", (1, 3), "M", ("dots-2", "truth-2", "ellipse-2")),
+        ("cloud", "inset-1", (0, 2), "M₁", ("dots-1", "truth-1", "ellipse-1")),
+        ("cloud", "inset-2", (1, 3), "M₂", ("dots-2", "truth-2", "ellipse-2")),
     ],
 }
 

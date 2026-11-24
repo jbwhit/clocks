@@ -287,7 +287,7 @@ def running_slowing(observations: NDArray) -> NDArray[np.float64]:
 def label_masses(
     ax: Axes, points: Sequence[tuple[float, float]], colors: Palette
 ) -> list[Annotation]:
-    """Label point n ``mass n`` at the offset that covers the fewest final marks.
+    """Label point n ``mass n``: fewest exclusions, then marks covered, then order.
 
     Call once, after the final row is shown; the labels then stay put. Each
     candidate of ``MASS_LABEL_OFFSETS`` is ranked by its exclusions (one for
