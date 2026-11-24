@@ -562,4 +562,453 @@ INSETS = {"demo_2d": [("map", "inset", (0, 1), "y", ("dots", "truth", "ellipse")
 
 ---
 
+### Task 7: The rendered-site check learns clips
+
+No page changes: the manifest still lists plots only, so the real site passes as before. The clip branch is exercised by fixtures here and by the real site from Task 10.
+
+**Files:**
+- Modify: `scripts/check_site_figures.py`
+- Test: `tests/test_check_site_figures.py`
+
+**Interfaces:**
+- Consumes: `probe`, `dwell_frames`, `find_encoder`, `encode`, `EncoderNotFound` from `clocks._video`; `load_replay`, `save_replay` from `clocks._replay`.
+- Produces, in `scripts/check_site_figures.py`:
+  - `ARCHIVES = ROOT / "assets" / "replays"` and `RESPONSIVE_RULE = "figure.replay video { max-width: 100%; height: auto; }"`.
+  - `_FigureParser` also collects: `themed`, every themed element in document order, each a plot wrapper (`_Wrapper`, as today) or a clip rendering (`_Video`: its themes, its attributes as a dict in which a bare attribute such as `controls` is present with the value `None`, and the index of its replay figure); `replay_captions`, one list of caption texts per `<figure>` whose class list holds `replay`; and `texts`, a dict from each `id` on the page to the list of whitespace-normalised text contents of the elements carrying it. A themed `<video>` that opens inside a replay figure and outside any plot wrapper is a clip rendering; **any other themed element is a plot wrapper**, as section 10 says. A `figcaption` inside a replay figure belongs to that figure.
+  - `_resolve_source(src, page_path, output_dir, what="image")`: the same rules, with `what` as the first word of each message (`"video"`, `"poster"`).
+  - `figure_failures(output_dir: Path) -> list[str]`, signature unchanged. `EXPECTED_FIGURES` is unchanged in this task.
+
+**What the check does with a clip.** In `_page_failures`, after the both-classes, nesting and count checks (which now count every themed element; the count message keeps its words), figure `i`'s two themed elements are checked in this order, and the first failure of the first two ends the checks on that figure:
+  1. Kind: `f"{page}: figure {i}: expected a clip, found a plot wrapper"` or `f"{page}: figure {i}: expected a plot, found a clip video"`.
+  2. Order: today's `expected light-content then dark-content, found ...`.
+  3. A `Fig` whose kind is neither `"plot"` nor `"clip"` raises `ValueError(f"{page}: figure {i}: no check for kind {kind!r}")`, as today.
+  4. For a clip, with `label = f"{page}: figure {i}"`, `h = figure.height` and `clip = figure.clip`:
+     - `f"{label}: the two videos are not in one <figure class=\"replay\">"`, and nothing more for this figure;
+     - the figure's captions: `f"{label}: expected 1 figcaption, found {n}"`, or `f"{label}: empty caption"`;
+     - per theme, with `t = f"{label} {theme}-content"`: `f"{t}: width {value}, expected 750"`; `f"{t}: height {value}, expected {h}"`; `f"{t}: no controls attribute"`; `f"{t}: no playsinline attribute"`; `f"{t}: preload {value!r}, expected 'none'"`; `f"{t}: autoplay is set"`; `f"{t}: loop is set"`; `f"{t}: empty aria-label"`; `f"{t}: no aria-describedby"`, or `f"{t}: aria-describedby {name!r} names no element on the page"`, or `f"{t}: aria-describedby {name!r} names {n} elements"`, or `f"{t}: the description {name!r} is empty"`;
+     - per theme, the files: `_resolve_source` on `src` (`what="video"`) and on `poster` (`what="poster"`); then `f"{t}: video is {name!r}, expected {clip}.{theme}.mp4"` and `f"{t}: poster is {name!r}, expected {clip}.{theme}.png"` on the resolved files' names; `f"{t}: poster is not a PNG file"`, or `f"{t}: poster is {w} by {h2} pixels, expected 1500 by {2 * h}"` from the PNG header;
+     - per theme, the decoded stream, when the video file resolved and an encoder was found: `f"{t}: video cannot be decoded: {error}"` when `probe` raises `ValueError`; else each of `f"{t}: video codec {codec}, expected h264"`, `f"{t}: video pixel format {pix_fmt}, expected yuv420p"`, `f"{t}: video is {w} by {h2} pixels, expected 1500 by {2 * h}"`, `f"{t}: video runs at {fps:g} frames per second, expected 20"`, `f"{t}: video decodes to {frames} frames, expected {n}"`, `f"{t}: video has mdat before moov"` that applies. `n` is `sum(dwell_frames(T))` for the `n_observations` of `ARCHIVES / f"{clip}.npz"`; an archive that cannot be read gives `f"{label}: no readable archive for clip {clip!r}: {error}"` and no frame-count check;
+     - the pair: `f"{label}: aria-describedby differs between themes: {a!r} vs {b!r}"`; `f"{label}: light and dark use the same video file"`, else `f"{label}: light and dark videos have the same content"`; the same two for posters, with `poster` for `video`.
+  Two checks are made once per site, and only when the manifest lists at least one clip: the encoder is looked up before any page is read, and `EncoderNotFound` gives the single failure `f"clips cannot be decoded: {error}"` (the other clip checks still run); and `output_dir / "styles.css"`, with all whitespace removed, must contain `RESPONSIVE_RULE` with all whitespace removed, else `f"styles.css: the rule {RESPONSIVE_RULE!r} is missing"`.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_check_site_figures.py`.
+
+  Fixtures. `CLIP = Fig("clip", 450, "demo_2d")`. A module-scoped fixture `clip_media` makes one directory holding: `archives/demo_2d.npz`, `save_replay` of `demo_2d.record(n_observations=2, n_particles=16)`, so 92 frames are expected; `demo_2d.light.mp4` and `demo_2d.dark.mp4`, each 92 different frames of 1500 by 900 encoded with `clocks._video.encode`: a solid frame in that theme's background colour with a 64 by 64 block of seeded noise that moves ten pixels a frame (measured: 0.9 s to encode, 249 kB, and cut in half it decodes to 45 frames with exit status 0); and `demo_2d.light.png`, `demo_2d.dark.png`, written with `matplotlib.image.imsave` from a (900, 1500, 3) array of the same colour. A builder `_clip_page(tmp_path, clip_media, *, light=None, dark=None, caption="A caption.", description="Words.", page=PAGE, before="", after="") -> Path` copies the four media files to `tmp_path / "media"`, writes `tmp_path / "styles.css"` holding `RESPONSIVE_RULE`, and writes the page with the markup of the design's section 4: `light` and `dark` are dicts of attribute overrides applied to the default attributes of each `<video>` (a value of `None` removes the attribute; the key `"flags"` replaces the bare attributes `controls playsinline`). An autouse fixture points `check_site_figures.ARCHIVES` at `clip_media / "archives"`; clip tests set the manifest to `{PAGE: (CLIP,)}`. `_single_failure` is used as today.
+
+  - `test_a_well_formed_clip_passes`: `[]`. Only this catches a clip branch that rejects the design's own markup.
+  - `test_a_clip_and_two_plots_in_order_pass`: manifest `(Fig("plot", 540), CLIP, Fig("plot", 420))`, a page holding `_pair(1, 540)`, the clip figure, `_pair(2, 420)`: `[]`. Only this catches clip and plot elements being counted in separate sequences.
+  - Negative fixtures, each asserting exactly one failure containing the text given, unless stated:
+    - `test_a_missing_dark_video` (the dark `<video>` left out): `expected 1 figure(s), 2 theme wrappers; found 1`.
+    - `test_a_plot_where_a_clip_is_listed` (the page holds `_pair(1, 450)`): `figure 1: expected a clip, found a plot wrapper`.
+    - `test_a_clip_where_a_plot_is_listed` (manifest `(Fig("plot", 420),)`, the page a clip): `figure 1: expected a plot, found a clip video`.
+    - `test_a_themed_video_outside_a_replay_figure` (the two videos in a plain `<div>`): `figure 1: expected a clip, found a plot wrapper`.
+    - `test_dark_video_before_light`: `figure 1: expected light-content then dark-content, found dark-content then light-content`.
+    - `test_videos_in_two_replay_figures`: `the two videos are not in one <figure class="replay">`.
+    - `test_a_clip_out_of_order` (manifest `(CLIP, Fig("plot", 420))`, the page a plot pair then the clip): two failures, `figure 1: expected a clip, found a plot wrapper` and `figure 2: expected a plot, found a clip video`.
+    - `test_a_clip_on_an_unlisted_page` (a second page, not in the manifest, holding the clip): `story/other.html: not in the figure manifest, but has 2 theme wrapper(s)`.
+    - `test_wrong_clip_height` (both videos `height="500"`): two failures, `figure 1 light-content: height 500, expected 450` and the same for dark.
+    - `test_wrong_clip_width` (dark `width="700"`): `figure 1 dark-content: width 700, expected 750`.
+    - `test_autoplay` (light flags `controls playsinline autoplay`): `figure 1 light-content: autoplay is set`.
+    - `test_loop`: `loop is set`. `test_no_controls` (flags `playsinline`): `no controls attribute`. `test_no_playsinline`: `no playsinline attribute`. `test_preload_auto` (dark `preload="auto"`): `preload 'auto', expected 'none'`.
+    - `test_missing_aria_label` (light `aria-label` removed) and `test_blank_aria_label` (`aria-label="  "`): `figure 1 light-content: empty aria-label`.
+    - `test_missing_description` (the described element left out): two failures, each `aria-describedby 'demo-2d-text' names no element on the page`.
+    - `test_empty_description` (`description="  "`): two failures, each `the description 'demo-2d-text' is empty`.
+    - `test_description_differs_between_themes` (dark `aria-describedby="other-text"`, with a second non-empty element of that id on the page): `aria-describedby differs between themes: 'demo-2d-text' vs 'other-text'`.
+    - `test_two_elements_share_the_description_id`: two failures, each `names 2 elements`.
+    - `test_no_caption` (`caption=None`): `expected 1 figcaption, found 0`. `test_empty_clip_caption` (`caption=" "`): `figure 1: empty caption`.
+    - `test_missing_poster` (the dark poster file deleted): `figure 1 dark-content: poster '../media/demo_2d.dark.png' does not exist`.
+    - `test_wrong_clip_name` (both `src` and `poster` of both themes naming `demo_1d.<theme>.*`, those files present as copies): four failures, `video is 'demo_1d.light.mp4', expected demo_2d.light.mp4`, `poster is 'demo_1d.light.png', expected demo_2d.light.png`, and the same two for dark.
+    - `test_wrong_theme_file` (light `src` naming the dark video): `video is 'demo_2d.dark.mp4', expected demo_2d.light.mp4` and `light and dark use the same video file`.
+    - `test_identical_light_and_dark_videos` (the dark video's bytes replaced by the light one's): `figure 1: light and dark videos have the same content`. `test_identical_light_and_dark_posters`: `light and dark posters have the same content`.
+    - `test_poster_of_the_wrong_size` (the light poster rewritten at (450, 750, 3)): `poster is 750 by 450 pixels, expected 1500 by 900`. `test_poster_that_is_not_a_png` (its bytes `b"JPEG"`): `poster is not a PNG file`.
+    - `test_a_truncated_video` (the dark video cut to half its bytes): exactly one failure, matching `figure 1 dark-content: video decodes to (\d+) frames, expected 92`, with the captured number between 1 and 91. The number is not pinned: it depends on the encoder build.
+    - `test_a_video_in_another_codec` (the light video re-encoded by the encoder with `-c:v mpeg4 -movflags +faststart`): `video codec mpeg4, expected h264`. `test_a_video_in_another_pixel_format` (`-c:v libx264 -pix_fmt yuv444p -movflags +faststart`): `video pixel format yuv444p, expected yuv420p`. `test_a_video_without_faststart` (copied with `-c copy` and no flag): `video has mdat before moov`. Both builds here report those two re-encodings as the lines quoted in Task 2 (Q2).
+    - `test_a_video_of_the_wrong_frame_count` (the manifest's archive replaced by a one-observation recording, so 74 frames are expected): two failures, each `video decodes to 92 frames, expected 74`.
+    - `test_a_file_that_is_not_a_video` (the light video's bytes `b"not a video"`): `figure 1 light-content: video cannot be decoded:`.
+    - `test_an_encoded_nul_in_a_video_path` (dark `src="../media/demo_2d.dark%00.mp4"`): `video path contains a NUL`.
+    - `test_a_video_outside_the_site` (light `src="/media/demo_2d.light.mp4"`): `video is outside the site`.
+    - `test_no_archive_for_the_clip` (`ARCHIVES` pointed at an empty directory): `figure 1: no readable archive for clip 'demo_2d'`.
+    - `test_no_encoder` (`check_site_figures.find_encoder` raising `EncoderNotFound("none")`): exactly `["clips cannot be decoded: none"]`.
+    - `test_the_responsive_rule_is_required` (`styles.css` emptied): exactly one failure, `styles.css: the rule 'figure.replay video { max-width: 100%; height: auto; }' is missing`; and `test_the_responsive_rule_may_be_minified` (`styles.css` holding `figure.replay video{max-width:100%;height:auto;}`): `[]`.
+    - `test_plot_pages_need_no_stylesheet`: the existing `_build(tmp_path)` with no `styles.css` still gives `[]`.
+  - Deferred from pull request 2: `test_pages_under_site_libs_are_not_scanned` (`site_libs/x/y.html` holding a light wrapper, the manifest page well formed): `[]`; and `test_an_unknown_kind_is_a_programming_error` (manifest `{PAGE: (Fig("map", 420),)}` on a well-formed plot page): `pytest.raises(ValueError, match="figure 1: no check for kind 'map'")`.
+
+  Each negative fixture is the only test that fails when its one check is deleted; the mutation table of Task 16 names them check by check.
+
+- [ ] **Step 2: Stage, then run.** Add `ARCHIVES`, `RESPONSIVE_RULE`, the `what` parameter, and to `_FigureParser` the three new collections left empty; import the `clocks._video` names. Run `uv run pytest tests/test_check_site_figures.py -q`: every clip test fails: where the page is otherwise well formed, with today's `ValueError: ... no check for kind 'clip'` (two themed videos are two plot wrappers today), and elsewhere on its assertion; the two deferred tests pass (they pin present behaviour), and every existing test passes.
+
+- [ ] **Step 3: Implement** as "What the check does with a clip" says. Update the module docstring: clips, what is decoded, and that the stylesheet and encoder checks apply only when a clip is listed.
+
+- [ ] **Step 4: Tests pass; full gate; render the site and run both checks** (the checker changed): `Figure contract OK: 9 pages, 11 figures checked.`
+
+- [ ] **Step 5: Commit and push** as `Teach the rendered-site check clips: markup, files, posters and the decoded stream`.
+
+---
+
+### Task 8: The pre-render step
+
+After this task a site build draws the twelve clips and posters into `site/media/` and copies them to the output; no page embeds them until Task 10.
+
+**Files:**
+- Create: `src/clocks/_site_media.py`, `site/prerender.py`, `tests/test_site_media.py`
+- Modify: `site/_quarto.yml`, `site/styles.css`, `.gitignore`
+
+**Interfaces:**
+- Consumes: `CLIP_HEIGHTS`, `render_clip`, `final_frame` from `clocks._clips`; `find_encoder`, `encoder_version` from `clocks._video`; `load_replay`, `DEMOS` from `clocks._replay`; `style`, `save_png`, `THEMES` from `clocks._style`.
+- Produces, in `src/clocks/_site_media.py`:
+
+```python
+CLIP_DEMOS: tuple[str, ...]  # DEMOS without "demo_density", in DEMOS order
+PACKAGE: Path                # the directory of the installed clocks package
+
+def media_paths(media: Path, demo: str, theme: str) -> tuple[Path, Path]: ...
+def render_site_media(archives: Path, media: Path, *, full: bool,
+                      demos: Sequence[str] = CLIP_DEMOS, sources: Path = PACKAGE,
+                      report: Callable[[str], None] = print) -> list[Path]: ...
+```
+
+  `media_paths` returns `(media / f"{demo}.{theme}.mp4", media / f"{demo}.{theme}.png")`. `render_site_media`, in this order:
+  1. finds the encoder; `EncoderNotFound` propagates before anything is created, written or removed. Reports `f"encoder: {encoder} ({encoder_version(encoder)})"`.
+  2. creates `media` if missing.
+  3. for each demo, then each theme of `THEMES`: the pair is *stale* when `full` is true, or either file is missing, or the older of the two is not strictly newer than both `archives / f"{demo}.npz"` and the newest regular file under `sources` (directories named `__pycache__` skipped). A stale pair is rewritten: the clip by `render_clip(replay, clip_path, theme=theme, encoder=encoder)`, then the poster by `save_png(final_frame(replay, colors), temporary)` inside `with style(theme) as colors:`, the temporary file being `.<poster name>.<random>.tmp` in `media`, moved over the poster with `os.replace`, and the figure closed in a `finally`. Reports `f"rendered {clip_path.name} ({frames} frames, {seconds:.1f} s)"`, or `f"kept {clip_path.name}"`.
+  4. when `full`, removes every regular file directly inside `media` whose suffix is `.mp4`, `.png` or `.tmp` and which is not one of the files of step 3, reporting `f"removed {name}"`. It never enters a subdirectory and never removes a file with another suffix.
+  5. returns the paths it wrote, clip then poster, in the order written.
+- `site/prerender.py`, whole:
+
+```python
+"""Quarto pre-render step: draw the site's clips and posters into media/."""
+
+import os
+from pathlib import Path
+
+from clocks._site_media import render_site_media
+
+SITE = Path(__file__).resolve().parent
+render_site_media(
+    SITE.parent / "assets" / "replays",
+    SITE / "media",
+    full=os.environ.get("QUARTO_PROJECT_RENDER_ALL") == "1",
+)
+```
+
+- `site/_quarto.yml`: under `project:`, after `output-dir`, the lines `  pre-render: prerender.py` and `  resources:` with the two entries `    - "media/*.mp4"` and `    - "media/*.png"`. `site/styles.css` gains the rule of Global Constraints, with a comment that a clip is declared 750 pixels wide and must shrink with a narrow column. `.gitignore` gains `site/media/` under "Quarto build products".
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_site_media.py`. A fixture `archives` holds `demo_2d.npz`, `save_replay` of `demo_2d.record(n_observations=2, n_particles=16)`; `sources` is a directory holding one file `a.py`; every call passes `demos=("demo_2d",)`, `sources=sources` and a `report` that appends to a list. "Times set" means `os.utime` on the archive, the source file and the four outputs.
+
+  - `test_a_full_render_writes_each_clip_and_poster`: the result is `[demo_2d.light.mp4, demo_2d.light.png, demo_2d.dark.mp4, demo_2d.dark.png]` under `media`, which holds exactly those; each clip's `probe` is `StreamInfo("h264", "yuv420p", 1500, 900, 20.0, 92, True)`; each poster's `png_size` is (1500, 900) and its first pixel that theme's background. Only this catches a poster in the wrong theme or a pair written under the wrong names.
+  - `test_a_full_render_removes_other_media_and_nothing_else`: with `old.mp4`, `old.png`, `.x.tmp`, `notes.txt` and `sub/keep.mp4` in `media` beforehand, a full render leaves the four outputs, `notes.txt` and `sub/keep.mp4`, and reports `removed old.mp4`, `removed old.png` and `removed .x.tmp`. Only this catches a stale clip surviving a full render, or a cleanup that deletes what it does not own (decision D14).
+  - `test_a_partial_render_keeps_fresh_media`: after a full render, times set to 1,000 for the archive and source and 2,000 for the outputs; `full=False` returns `[]`, reports `kept demo_2d.light.mp4` and `kept demo_2d.dark.mp4`, and `clocks._site_media.render_clip`, wrapped by a spy, is not called. Only this catches a preview that redraws everything.
+  - `test_a_partial_render_rebuilds_what_is_stale` (IDs and the change after the same setup): `archive_newer` (archive at 3,000) → all four rewritten; `source_newer` (the source file at 3,000) → all four; `tie` (archive at 2,000, the outputs' own time) → all four (decision D15); `poster_missing` (the light poster deleted) → the two light files only; `clip_older` (the light clip at 500) → the two light files only; `stray_file_kept` (`media/old.mp4` added, nothing stale) → `[]`, and `old.mp4` still there. Each asserts the returned paths. Only this catches, case by case, a staleness rule that ignores the archive, the sources, a missing file or the older of the two, and a partial render that deletes.
+  - `test_a_cached_bytecode_file_does_not_make_media_stale`: `sources / "__pycache__" / "a.pyc"` at 3,000 with everything else fresh → `[]`. Only this catches every test run re-rendering the site's media.
+  - `test_no_encoder_stops_before_anything_is_touched`: `clocks._site_media.find_encoder` raises `EncoderNotFound("none")`; with `media` absent, a full render raises it and `media` still does not exist; with `media/old.mp4` present, it is still there. Only this catches a full render that clears the directory and then cannot refill it.
+  - `test_the_poster_is_the_last_row_of_its_archive`: three full renders into three directories in one process: from the fixture archive; from a copy with 0.5 added to `cloud[-1]`; from a copy with 0.5 added to `cloud[1]`. Read with `matplotlib.image.imread`, the light poster of the second differs from the first's, and the third's equals the first's (`np.array_equal`). Only this catches a poster drawn from another row, or media rendered from another archive than the one given.
+  - `test_a_failed_poster_leaves_the_pair_stale`: `clocks._site_media.save_png` raises `OSError("disk")` on its first call; a full render raises it; `media` holds `demo_2d.light.mp4` and no `.png` and no `.tmp` file; a following partial render, with the fault removed, returns all four paths. Only this catches a half-written poster left under its final name or a temporary file left behind.
+  - `test_the_report_names_the_encoder_and_each_file`: the first report line starts `encoder: ` and contains `ffmpeg version`; the next two match `rendered demo_2d\.(light|dark)\.mp4 \(92 frames, \d+\.\d s\)`. Only this catches a build log that cannot say which encoder ran.
+  - `test_site_media_covers_the_clip_demos`: `CLIP_DEMOS == tuple(name for name in DEMOS if name != "demo_density")` and `set(CLIP_DEMOS) == set(CLIP_HEIGHTS)`.
+  - `test_the_prerender_script_is_its_pinned_program`: `ast.dump(ast.parse(<site/prerender.py>)) == ast.dump(ast.parse(PINNED))`, `PINNED` being the program above. Only this catches the script pointed at another directory or always passing `full=True`.
+  - `test_quarto_runs_the_script_and_ships_the_media`: `site/_quarto.yml`, as text, has `  pre-render: prerender.py` and, after a line `  resources:`, the two entries, all before the first line that starts a new top-level key; `.gitignore` has the line `site/media/`; `site/styles.css` with whitespace removed contains `figure.replayvideo{max-width:100%;height:auto;}`. Only this catches media drawn but never copied to the site, or committed by accident.
+
+- [ ] **Step 2: Stage the names, then run.** Create `_site_media.py` with `CLIP_DEMOS`, `PACKAGE`, `media_paths` and a `render_site_media` that returns `[]`; create `site/prerender.py` as above. Run `uv run pytest tests/test_site_media.py -q`: the render tests fail on their assertions, the configuration test on the missing lines; the pinned-program and demo-list tests pass.
+
+- [ ] **Step 3: Implement** as Interfaces says. `tests/test_site_figure_style.py`'s `test_clip_modules_import_no_model_code` (Task 3) now covers `_site_media.py`.
+
+- [ ] **Step 4: Tests pass; full gate; render the site and run both checks.** Delete `site/_output` and `site/media` first, so the build is a clean one. Expected: the render's log shows the `encoder:` line and twelve `rendered` lines; `site/_output/media/` holds 24 files; `check_site_figures.py` prints `Figure contract OK: 9 pages, 11 figures checked.` Then run `cd site && uv run --frozen quarto render index.qmd && cd ..` and confirm its log shows twelve `kept` lines. Record the twelve times and the two renders' wall-clock times for the pull request.
+
+- [ ] **Step 5: Commit and push** as `Draw the site's clips and posters in a Quarto pre-render step`. The body gives the local Quarto version and the render times.
+
+---
+
+### Task 9: The source guard learns replay embeds; two notes owed from pull request 2
+
+Helpers and their tests only. The table of real embeds is empty until Task 10, so every page still passes.
+
+**Files:**
+- Modify: `tests/test_site_figure_style.py`
+
+**Interfaces:**
+- Consumes: `CLIP_HEIGHTS` from `clocks._clips`; `Fig`, `EXPECTED_FIGURES` from the script, as today.
+- Produces, in `tests/test_site_figure_style.py`:
+
+```python
+class Embed(NamedTuple):
+    clip: str
+    label: str    # the aria-label of both videos
+    caption: str
+
+REPLAY_EMBEDS: dict[str, tuple[Embed, ...]] = {}  # page, relative to site/, to its embeds in order
+FIGURE_PAGES: tuple[str, ...]                      # sorted(set(PLOT_PAGES) | set(REPLAY_EMBEDS))
+
+def _description_id(clip: str) -> str: ...        # "demo_2d" -> "demo-2d-text"
+def _embed_block(embed: Embed, page: str) -> str: ...
+def _replay_embed_violations(text: str, page: str, embeds: Sequence[Embed]) -> list[str]: ...
+def _descriptions(text: str) -> dict[str, str]: ...
+def _page_figures(text: str, page: str) -> list[tuple[str, int, str | None]]: ...
+def _without(description: str, sentences: Sequence[str], allowed: Sequence[str] = ()) -> str: ...
+```
+
+  - `_embed_block(embed, page)` returns exactly this text, with `{id}` from `_description_id`, `{h}` from `CLIP_HEIGHTS[embed.clip]` and `{up}` being `"../"` once per directory level of `page` (`""` for `index.qmd`):
+
+````text
+```{=html}
+<figure class="replay">
+<video class="light-content" aria-label="{label}" aria-describedby="{id}" src="{up}media/{clip}.light.mp4" poster="{up}media/{clip}.light.png" width="750" height="{h}" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="{label}" aria-describedby="{id}" src="{up}media/{clip}.dark.mp4" poster="{up}media/{clip}.dark.png" width="750" height="{h}" controls playsinline preload="none"></video>
+<figcaption>{caption}</figcaption>
+</figure>
+```
+````
+
+  - `_replay_embed_violations(text, page, embeds)`: for embed number n (from 1), `f"embed {n} ({clip}): the pinned block is missing or altered"` when `_embed_block` does not occur in `text`, or `f"embed {n} ({clip}): the pinned block occurs {k} times"`; `"the embeds are out of order"` when all occur once but not in the table's order; for each embed found once, `f"embed {n} ({clip}): not followed by its description `::: {{#{id}}}`"` unless the next non-blank line after the block is exactly `::: {#<id>}`, or `f"embed {n} ({clip}): the description is empty"` when no non-blank line lies between that line and the closing `:::`, or `f"embed {n} ({clip}): the description id occurs {k} times"` when `{#<id>}` occurs more than once in `text`; and, in the text with every pinned block removed, one `f"unpinned video markup: line {m}"` for each line (numbered in the original text) that contains, in any letter case, `<video`, `<source`, `<figure`, `<iframe`, `.mp4` or `{=html}`.
+  - `_descriptions(text)` maps the id of each `::: {#<id>}` div to its body, whitespace-normalised.
+  - `_page_figures(text, page)` returns, in source order, `("plot", _cell_height(cell), None)` for each plot cell and `("clip", CLIP_HEIGHTS[clip], clip)` for each of the page's pinned blocks.
+  - `_without(description, sentences, allowed)` returns the description with each of `sentences` and then each of `allowed` removed; it raises `AssertionError` naming the first sentence that is not in the description.
+
+- [ ] **Step 1: Write the failing tests.**
+
+  - `test_embed_block_is_the_pinned_markup`: `_embed_block(Embed("demo_2d", "Animation: the 2D search", "A caption."), "story/into-the-plane.qmd")` equals the block above with `Animation: the 2D search`, `demo-2d-text`, `../`, `450` and `A caption.` written out in the test as one literal; and for `"index.qmd"` the four paths start `media/`. Only this catches a generated block that drifts from the design's markup: an attribute dropped, reordered or renamed.
+  - `test_replay_embed_violations`, on a synthetic page `PAGE_TEXT`: a paragraph, the block for `demo_2d`, a blank line, `::: {#demo-2d-text}`, `Words.`, `:::`. IDs and expectations:
+    - `canonical`: `[]`;
+    - `autoplay_added` (` autoplay` inserted before `></video>` on the light line): the first message is `embed 1 (demo_2d): the pinned block is missing or altered`, and every other message starts `unpinned video markup: line `;
+    - `caption_changed`, `height_changed` (`height="500"` on both), `dark_video_removed`, `fence_removed` (the two fence lines deleted): the same first message;
+    - `block_twice`: `embed 1 (demo_2d): the pinned block occurs 2 times`;
+    - `a_second_video` (`<video src="x.mp4"></video>` on a later line): exactly `[f"unpinned video markup: line {n}"]`;
+    - `a_link_to_a_clip` (`[the clip](../media/demo_2d.light.mp4)` in the paragraph): the same message for that line;
+    - `an_iframe`, `a_source_element`, `upper_case_video` (`<VIDEO ...>`), `another_raw_block` (a `{=html}` block holding a `<p>`): one `unpinned video markup` message each;
+    - `description_missing` (the div removed), `description_not_adjacent` (a paragraph between block and div): `embed 1 (demo_2d): not followed by its description `::: {#demo-2d-text}``;
+    - `description_empty` (the div's body blank): `embed 1 (demo_2d): the description is empty`;
+    - `description_id_twice` (a second div with the id, later): `embed 1 (demo_2d): the description id occurs 2 times`;
+    - `two_embeds_swapped` (the table lists `demo_multi_mass` then `demo_multi_mass_2d`, the page has them the other way round, each with its div): `["the embeds are out of order"]`.
+    Only this catches, case by case, an embed edited by hand, a second video outside the table, and a description that the videos name but that is not there.
+  - `test_descriptions_are_found_by_id`: on `PAGE_TEXT` with a second div `::: {#other}` and a callout `::: {.callout-note}`: `{"demo-2d-text": "Words.", "other": ...}`, the callout absent.
+  - `test_page_figures_merges_cells_and_embeds_in_source_order`: a synthetic page with a plot cell holding `figsize=(7.5, 5.4)`, then the block, then a plot cell without it, checked against a one-entry table: `[("plot", 540, None), ("clip", 450, "demo_2d"), ("plot", 420, None)]`. Only this catches clips listed after all plots whatever their place on the page.
+  - `test_without_removes_pinned_sentences_and_reports_a_missing_one`: `_without("A 1. B 2. mass 1.", ["A 1."], ["mass 1"])` is `" B 2. ."`; a sentence that is absent raises `AssertionError` naming it.
+  - The real pages, vacuous until Task 10: `test_no_page_has_unpinned_video_markup` (every `.qmd` of `_MENTION_FILES`, ID the path): `_replay_embed_violations(text, page, REPLAY_EMBEDS.get(page, ())) == []`; `test_embed_labels_and_captions_are_plain_text`: no label or caption in `REPLAY_EMBEDS` contains any of `<`, `>`, `&`, `"`.
+  - `test_manifest_matches_the_source` is rewritten over `FIGURE_PAGES`: `tuple(EXPECTED_FIGURES[_manifest_page(page)])` as `(kind, height, clip)` triples equals `tuple(_page_figures(text, page))`. The assertion `fig.clip is None` goes: a plot's `clip` is `None` and a clip's is its name, by the comparison itself.
+  - `test_the_manifest_lists_exactly_the_plot_pages` becomes `test_the_manifest_lists_exactly_the_figure_pages`: the manifest's keys equal `FIGURE_PAGES` as `.html`; `len(PLOT_PAGES) == 9` stays.
+  - Owed from pull request 2, Codex round 6. The `spaced_marker` case of `test_builder_cell_options_are_exactly_the_three` puts its marker after a statement, where Quarto ignores it: build it as `_CANONICAL_OPTIONS + "# | classes: [d-none]\n" + _SMALL_PROGRAM`, directly under the five-line header, with the same expected message, `unexpected comment line: '# | classes: [d-none]'`. And the docstring of `test_builder_cell_is_exactly_its_pinned_program` says "comments and spacing do not matter", which the header and comment checks made untrue: it becomes "The program is compared by syntax tree, so spacing inside a statement does not matter and every statement, name, literal and argument does; the option block and every comment line are compared as text, by `_builder_cell_option_violations`."
+  - The module docstring gains: "Clip embeds are pinned whole: each is the text `_embed_block` builds from `REPLAY_EMBEDS`, and video markup anywhere else on a page is a violation. This catches an embed changed by mistake. It does not prove that a clip is visible or plays on the rendered page; the rendered-site check decodes the files and checks the markup that reached the page, and the browser checks cover playback."
+
+- [ ] **Step 2: Stage the helpers, then run.** Add `Embed`, the empty table, `FIGURE_PAGES`, `_description_id`, and the other helpers returning `""`, `[]`, `{}`, `[]` and the description unchanged. Run `uv run pytest tests/test_site_figure_style.py -q`: the helper tests fail on their assertions; the rewritten manifest test fails (`_page_figures` returns nothing); the moved `spaced_marker` case passes, as it did.
+
+- [ ] **Step 3: Implement** the helpers.
+
+- [ ] **Step 4: Tests pass; full gate; commit and push** as `Pin clip embeds whole in the page-source guard; settle two notes from the figures review`.
+
+---
+
+### Task 10: The switch: seven embeds, six descriptions, and the GIFs retired
+
+One change, so that every sentence is true at its commit: the pages show the clips, the manifest lists them, the GIFs and everything that names them go, and the provenance prose describes what is there.
+
+**Files:**
+- Modify: `site/index.qmd`, `site/story/the-search-in-one-dimension.qmd`, `site/story/into-the-plane.qmd`, `site/story/two-hidden-masses.qmd`, `site/story/how-many-masses.qmd`, `site/story/gravitational-echolocation.qmd`, `site/reproduce/reproducibility.qmd`, `README.md`, `docs/2026-08-16-development-calibration.md`, `scripts/check_site_figures.py`
+- Delete: the six `demo_*.gif` under `assets/` and the same six under `site/assets/`
+- Test: `tests/test_site_figure_style.py`, `tests/test_generated_assets.py`
+
+**Interfaces:**
+- Consumes: Task 9's helpers; `load_replay`; `trace_decimals` from `clocks._figures`.
+- Produces: `REPLAY_EMBEDS`, as below; `EXPECTED_FIGURES`, as below; in `tests/test_generated_assets.py`, `RETIRED_VISUALS` extended by the six GIFs and `EXPECTED_VISUAL_HASHES` deleted with its test.
+
+```python
+REPLAY_EMBEDS = {
+    "index.qmd": (Embed(
+        "demo_2d", "Animation: the 2D search",
+        "One simulated run: a particle filter finding a hidden mass on a plane from "
+        "clock rates alone. Left: the cloud of hypotheses, the eight clocks and the "
+        "true position. Right: the estimates of x, y and M after each observation."),),
+    "story/the-search-in-one-dimension.qmd": (Embed(
+        "demo_1d", "Animation: the search in one dimension",
+        "The 1D search, one simulated run. Left: the cloud of hypotheses in position "
+        "and mass, above the three clocks and, clock by clock, the true, predicted "
+        "and measured slowing. Right: the estimates of x and M after each observation."),),
+    "story/into-the-plane.qmd": (Embed(
+        "demo_2d", "Animation: the 2D search",
+        "The 2D search, one simulated run: 8 clocks, one hidden mass, three unknowns "
+        "(x, y, M). Left: the cloud and the clocks, filled darker the slower they "
+        "run. Right: the three estimates after each observation."),),
+    "story/two-hidden-masses.qmd": (
+        Embed("demo_multi_mass", "Animation: two masses on a line",
+              "Two masses in 1D: five clocks, four unknowns. One simulated run."),
+        Embed("demo_multi_mass_2d", "Animation: two masses on a plane",
+              "Two masses in 2D: ten randomly placed clocks, six unknowns. "
+              "One simulated run."),
+    ),
+    "story/how-many-masses.qmd": (Embed(
+        "demo_model_comparison",
+        "Animation: the probability of one, two and three masses",
+        "One simulated run: posterior probability over K=1, 2, 3 as 80 observations "
+        "accumulate. Truth is K=2."),),
+    "story/gravitational-echolocation.qmd": (Embed(
+        "demo_echolocation_3d", "Animation: the head locating an exterior mass",
+        "The echolocation demo, one simulated run. Left: the head, its clocks, the "
+        "cloud and the true mass (ring), with the whole search box at upper left. "
+        "Right: the four estimates after each observation, and the fitted readings "
+        "against the observed ones."),),
+}
+
+EXPECTED_FIGURES = {
+    "index.html": (Fig("clip", 450, "demo_2d"),),
+    "story/clocks-as-gravimeters.html": (Fig("plot", 420),),
+    "story/one-clock-is-not-enough.html": (Fig("plot", 420),),
+    "story/the-search-in-one-dimension.html": (Fig("clip", 450, "demo_1d"), Fig("plot", 540)),
+    "story/into-the-plane.html": (Fig("clip", 450, "demo_2d"), Fig("plot", 540)),
+    "story/two-hidden-masses.html": (
+        Fig("clip", 500, "demo_multi_mass"), Fig("clip", 550, "demo_multi_mass_2d"),
+        Fig("plot", 420),
+    ),
+    "story/how-many-masses.html": (Fig("clip", 420, "demo_model_comparison"), Fig("plot", 420)),
+    "story/beyond-point-masses.html": (Fig("plot", 540), Fig("plot", 420)),
+    "story/gravitational-echolocation.html": (
+        Fig("plot", 420), Fig("clip", 550, "demo_echolocation_3d"), Fig("plot", 540),
+    ),
+    "method/the-particle-filter.html": (Fig("plot", 540),),
+}
+```
+
+  The captions' layout words ("Left", "Right", "at upper left") follow the design's arrangement; if Task 1's layout differs, the caption follows the layout and Task 13 checks it by eye.
+
+**The six descriptions.** Each goes in a `::: {#<id>}` div directly under its block. A number is written with `trace_decimals` of its parameter's prior range (two decimals for positions, three for masses), a minus sign as the ASCII hyphen. The text is given here with today's numbers (Q8); the tests below build the numbered sentences from the archives.
+
+  - `demo-1d-text`: "Before any reading the dots cover the whole search: every position along the track and every mass the prior allows. The first reading pulls them into a narrow band around the true position, and each of the next few tightens it; under the cloud, the filter's predicted slowing at each clock closes on the measured one. After 50 readings the run ends at x = 2.48 ± 0.04 and M = 0.101 ± 0.001, against a true x = 2.50 and M = 0.100. Each ± is one standard deviation of the final cloud: how far the surviving hypotheses still disagree in this one run, not an error bar over many runs."
+  - `demo-2d-text`, the same words on the landing page and on "Into the Plane": "Before any reading the dots cover the whole square. The first readings pull them toward the mass, and by the eighth they are a small cloud around it; the three traces at the right narrow at the same time. After 50 readings the run ends at x = 1.43 ± 0.07, y = -1.15 ± 0.08 and M = 0.149 ± 0.001, against a true x = 1.50, y = -1.00 and M = 0.150. Each ± is one standard deviation of the final cloud. The y estimate sits about two of those from the truth: that is this run's noise, and another seed would miss in another direction."
+  - `demo-multi-mass-text`: "Before any reading both clouds are spread along the whole track. The first mass is narrowed at once; the second takes longer: after one reading its position is x₂ = 6.61 ± 1.04, and after eight it is 4.62 ± 0.18. After 80 readings the run ends at x₁ = -2.00 ± 0.04, x₂ = 4.55 ± 0.05, M₁ = 0.045 ± 0.001 and M₂ = 0.030 ± 0.001, against true values of -2.00, 4.50, 0.045 and 0.030. Each ± is one standard deviation of the final cloud for that parameter."
+  - `demo-multi-mass-2d-text`: "Before any reading both clouds cover the whole square. The first readings barely narrow them, and for a while each cloud is split between two arrangements of the masses, which the ellipses cannot show and the dots can. After 80 readings the run ends at x₁ = -2.38 ± 0.42, y₁ = 2.03 ± 0.22, x₂ = 4.13 ± 0.80, y₂ = -0.95 ± 0.63, M₁ = 0.052 ± 0.004 and M₂ = 0.028 ± 0.003, against true values of -3.00, 2.00, 4.00, -1.00, 0.050 and 0.030. The final clouds are still wide: this run locates both masses loosely, and each ± is one standard deviation of its final cloud." The clause about two arrangements is the design's reading of this run ("the cloud passes through a second mode"); it is believed, not measured, and Task 13 removes it if the sheets do not show it.
+  - `demo-model-comparison-text`: the paragraph already under the figure, unchanged, wrapped in the div: "One mass is all but ruled out by the first observation. Three masses lead at first, two take over around the tenth observation, and from about the twentieth three stay ahead: the run ends at about 40% for two masses and 60% for three, leaning toward the wrong answer. That is one run's estimate from finite data and a finite particle cloud, a weak preference rather than a verdict."
+  - `demo-echolocation-3d-text`: "Before any reading the dots fill the whole search box, 32 units on a side, and only 0.4% of the prior lies inside the close view around the head. The first reading collapses the cloud into that view, where 100.0% of its weight stays; the small panel of the whole box shows one cluster where the box was full. After 80 readings the run ends at x = 0.98 ± 0.02, y = 1.46 ± 0.02, z = 2.93 ± 0.03 and M = 0.078 ± 0.002, against true values of 0.99, 1.48, 2.97 and 0.080. Each ± is one standard deviation of the final cloud. The panel of fitted against observed readings shows agreement with the readings used in the fit, not a test on new data."
+
+- [ ] **Step 1: Write the failing tests.**
+
+  In `tests/test_site_figure_style.py`:
+
+  - Fill `REPLAY_EMBEDS`; `RETIRED_ASSETS` gains the six GIF names; `test_the_manifest_lists_exactly_the_figure_pages` also asserts `len(FIGURE_PAGES) == 10`. `test_manifest_matches_the_source`, `test_no_page_has_unpinned_video_markup` and `test_no_page_mentions_a_retired_asset` now fail until the pages and the manifest change.
+  - `test_each_clip_is_embedded_at_its_declared_height`: for every embed, the manifest's `Fig` for it has `height == CLIP_HEIGHTS[clip]`; and the seven embeds name each of the six clip demos at least once. Only this catches a manifest height typed by hand that the drawn clip does not have.
+  - `test_description_numbers_are_the_archives` (one case per embed, ID `<page>:<clip>`). With `d = _descriptions(text)[_description_id(clip)]`, `replay = load_replay(REPO / "assets/replays" / f"{clip}.npz")`, `m = mean[-1]`, `s` the last row's standard deviations, `t = true_params`, `T = n_observations`, and `f(j, v)` formatting `v` with `trace_decimals(prior_ranges[j])` decimals, the case builds its sentences and asserts `re.search(r"\d", _without(d, sentences, allowed)) is None`:
+    - `demo_1d`: `f"After {T} readings the run ends at x = {f(0, m[0])} ± {f(0, s[0])} and M = {f(1, m[1])} ± {f(1, s[1])}, against a true x = {f(0, t[0])} and M = {f(1, t[1])}."`; and, for the words "narrow band", `sd[1, 0] < 0.1 * sd[0, 0]` (0.27 against 4.92 today).
+    - `demo_2d` (both pages): `f"After {T} readings the run ends at x = {…} ± {…}, y = {…} ± {…} and M = {…} ± {…}, against a true x = {…}, y = {…} and M = {…}."` in the same pattern; for "by the eighth", `sd[8, :2].max() < 0.1 * sd[0, :2].min()`; for "about two of those", `1.5 < abs(m[1] - t[1]) / s[1] < 2.5`. The two pages' descriptions are equal.
+    - `demo_multi_mass`: `f"after one reading its position is x₂ = {f(1, mean[1, 1])} ± {f(1, sd[1, 1])}, and after eight it is {f(1, mean[8, 1])} ± {f(1, sd[8, 1])}."` and `f"After {T} readings the run ends at x₁ = {…} ± {…}, x₂ = {…} ± {…}, M₁ = {…} ± {…} and M₂ = {…} ± {…}, against true values of {…}, {…}, {…} and {…}."`; for "takes longer", `sd[1, 1] > 1.5 * sd[1, 0]` (1.04 against 0.49 today).
+    - `demo_multi_mass_2d`: the final sentence in the same pattern with six parameters; for "barely narrow", every position standard deviation at row 3 exceeds 0.4 times its row-0 value.
+    - `demo_model_comparison`: with `leader[k]` the candidate of largest `model_posterior[k]` for k ≥ 1 and `changes` the observations at which it changes, the test asserts `leader[1] == 3`, `changes == [10, 19]` with leaders 2 then 3, and that the description contains `f"Three masses lead at first, two take over around the {ORDINAL[round(changes[0], -1)]} observation, and from about the {ORDINAL[round(changes[1], -1)]} three stay ahead: the run ends at about {round(100 * p2)}% for two masses and {round(100 * p3)}% for three"`, with `ORDINAL = {10: "tenth", 20: "twentieth"}` and `p2`, `p3` the final probabilities looked up by K in `model_ks`; and `model_posterior[1, 0] < 1e-5` for "all but ruled out by the first observation".
+    - `demo_echolocation_3d`: `f"Before any reading the dots fill the whole search box, {hi - lo:g} units on a side, and only {100 * w[0]:.1f}% of the prior lies inside the close view around the head."` with `(lo, hi)` the prior range of x; `f"where {100 * w[1:].min():.1f}% of its weight stays"`; the final sentence with four parameters, true values `f(j, t[j])`.
+    `allowed` is `("mass 1", "mass 2")`. Only this catches a description whose numbers belong to another run, or a number added to a description without a check.
+  - `test_the_model_caption_counts_the_archives_observations`: the caption of the `demo_model_comparison` embed contains `f"as {T} observations accumulate"` and `f"Truth is K={true_k}"`, from the archive's `meta`.
+  - `test_the_1d_page_says_how_many_dots_are_shown`: the archive has `n_particles == 1000` and `cloud_size == 500`, and the page, whitespace-normalised, contains "one thousand of them in the run animated above, which shows a sample of five hundred". Only this catches the page claiming the clip shows the whole cloud.
+
+  In `tests/test_generated_assets.py`:
+
+  - Delete `EXPECTED_VISUAL_HASHES`, `test_corrected_visual_release_bytes_are_complete_and_mirrored` and the loop over its hashes in `test_current_prose_identifies_corrected_assets_and_honest_model_results`. `RETIRED_VISUALS` gains the six GIF names with the hashes the deleted table held; `test_retired_visuals_are_gone_but_recorded` then covers eight files.
+  - In that prose test, the two GIF sentences become: `f"The animation on [How Many Masses?](../story/how-many-masses.qmd) replays the packaged default run: {T} observations, {N:,} particles per candidate, and seed {seed}. "` and `f"With K={true_k} truth, its final estimate is K=2: {p2:.4f} and K=3: {p3:.4f}. "`, with the values from `assets/replays/demo_model_comparison.npz` (`p2`, `p3` looked up by K in `model_ks`); the 25-observation and horizon sentences stay as they are.
+  - `test_density_provenance_names_its_run` pins the two sentences that replace its one: `"**Replay data.** Each animation, and the density figure on [Beyond Point Masses](../story/beyond-point-masses.qmd), is drawn when the site is built, from `assets/replays/<name>.npz`, the recorder's archive of that demo's packaged run. "` and `f"For the density demo that is {n} observations, {N:,} particles and seed {seed}. "`.
+  - `test_the_cloud_size_in_the_prose_is_the_archives` also asserts that every archive with a `cloud` has `cloud_size == 500`, and that the page contains "except for the model-comparison run, a 500-particle sample for display".
+  - `test_deploy_sentence_says_how_each_figure_is_redrawn` pins: "so every figure and animation is redrawn at deploy time: most figures by running the model again from source, and the density figure, the range-study figure and the six animations from committed data files." and asserts that neither "demo GIFs" nor "committed images" is on the page.
+  - `test_video_files_are_called_build_products`: the page contains "The video files are build products: they are not committed, and their bytes are not pinned."
+  - `test_echolocation_animation_provenance`: the page contains "**Echolocation animation.** The animation places the mass at two circumradii along a fixed off-axis direction, and is one fixed-seed visualization at the closest, most favorable range, not a reliability measurement." and none of "will change when the assets are next regenerated", "not a re-render of the current code", "committed GIF".
+  - `test_readme_points_to_the_site_and_describes_replay_data`: the README, whitespace-normalised, contains "The repository commits no rendered media." and "It commits replay data, `assets/replays/<demo>.npz`: what each packaged run produced, in numbers, tied to the code by tests of its inputs and of bounded summaries.", and does not contain `assets/demo_2d.gif`.
+
+- [ ] **Step 2: Run** `uv run pytest tests/test_site_figure_style.py tests/test_generated_assets.py tests/test_check_site_figures.py -q`: the embed, manifest, retired-asset, description and prose tests fail; nothing errors on a missing name.
+
+- [ ] **Step 3: Implement.**
+
+  - Each page: replace the Markdown image line by `_embed_block(...)`'s text for that page (generate it with the helper and paste it; the test compares the whole string), a blank line, and the description div. On "How Many Masses?" the div wraps the existing paragraph. Three sentences that describe an animation's layout change with it: on "The Search in One Dimension", "one thousand of them in the animation above" becomes "one thousand of them in the run animated above, which shows a sample of five hundred"; on "Gravitational Echolocation", "The animation's rate panel subtracts the channel mean from each clock's rate, while" becomes "The animation's panel of fitted against observed readings uses readings with the channel mean subtracted from each clock's rate, while", and "while the camera orbits" becomes "while the camera turns part of the way around the head".
+  - `scripts/check_site_figures.py`: the manifest above; in the docstring, "Images outside the wrappers (committed GIFs) are ignored" becomes "Images outside the wrappers are ignored".
+  - `git rm` the twelve GIFs.
+  - `docs/2026-08-16-development-calibration.md`: after the two sentences pull request 2 added, one sentence per GIF, with today's date in digits: "`demo_1d.gif` was removed from both trees on YYYY-MM-DD; the animation is now drawn when the site is built, from `assets/replays/demo_1d.npz`, and the GIF's old bytes remain in git history under the hash above." The table is not edited.
+  - `site/reproduce/reproducibility.qmd`:
+    - the `site.yml` bullet ends "…so every figure and animation is redrawn at deploy time: most figures by running the model again from source, and the density figure, the range-study figure and the six animations from committed data files."
+    - the paragraphs "**Demo animations.**" and "**Replay data.**" become one: "**Replay data.** Each animation, and the density figure on [Beyond Point Masses](../story/beyond-point-masses.qmd), is drawn when the site is built, from `assets/replays/<name>.npz`, the recorder's archive of that demo's packaged run. For the density demo that is 60 observations, 2,000 particles and seed 42. An archive holds the configuration, seed and observations, a summary of the cloud before any observation and after each, and, except for the model-comparison run, a 500-particle sample for display. Tests run each demo again; they compare its inputs, the computed ones (clock positions, true rates and readings) at `rtol=1e-12, atol=1e-12` and the rest exactly, and its summaries within stated bounds; they do not require the same random path. The video files are build products: they are not committed, and their bytes are not pinned. `uv run demo-density` records the same configured scenario and draws its result. Each archive is one finite realization: a fixed scenario and seed. None establishes a population recovery rate. Where a story page also runs a smaller example in an executed cell, that is a separate finite run whose settings are shown in the cell."
+    - "**Echolocation animation.**" keeps only the sentence the test pins.
+    - "**Model-comparison runs.**" opens with the two sentences the test pins; the rest of the paragraph is unchanged.
+  - `README.md`: the image line and the paragraph that begins "The committed demo media" become: "The site shows each demo as an animation: [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The repository commits no rendered media. It commits replay data, `assets/replays/<demo>.npz`: what each packaged run produced, in numbers, tied to the code by tests of its inputs and of bounded summaries. The site draws its animations and the density figure from those files when it is built." The command list and the paragraph "Most GIF demos animate…" stay until Task 14: the commands still write GIFs.
+
+- [ ] **Step 4: Tests pass; full gate; render the site and run both checks.** `check_site_figures.py` prints `Figure contract OK: 10 pages, 18 figures checked.` Confirm that `site/_output/assets/` holds no GIF, and open the landing page and one story page in a browser: the poster shows, nothing plays until play is pressed, and the theme switch swaps the poster.
+
+- [ ] **Step 5: Commit and push** as `Show the six demos as clips drawn from replay data; retire the GIFs`. The body states that the 2D clip still shows the run at M = 0.15, which Task 11 changes.
+
+---
+
+### Task 11: The 2D demo's true mass, 0.15 to 0.10, and the box-margin guard
+
+**Files:**
+- Modify: `src/clocks/_demos/demo_2d.py`, `assets/replays/demo_2d.npz` (re-recorded), `site/index.qmd`, `site/story/into-the-plane.qmd`, `docs/audits/2026-11-17/README.md`
+- Test: `tests/test_replays.py`, `tests/test_site_figure_style.py`
+
+**Interfaces:**
+- Produces, in `tests/test_replays.py`: `BOX_MARGIN = 0.05`; `_box_margins(true_params: NDArray, prior_ranges: Sequence[Sequence[float]], dimensions: int) -> NDArray[np.float64]`, per parameter the smaller of its distances to the two edges of its prior range, divided by the range's width. With as many ranges as parameters they pair off in order; with two ranges (model comparison) the first serves every position and the second every mass, the truth being laid out positions first.
+
+- [ ] **Step 1: Write the failing tests.**
+
+  In `tests/test_replays.py`:
+
+  - `test_box_margins` on literals: `_box_margins([0.0, 0.15], [[-8, 8], [0.005, 0.15]], 1)` is `[0.5, 0.0]`; `_box_margins([-7.2, 0.01225], ...)` is `[0.05, 0.05]` (`rtol=1e-9`); `_box_margins([-2.0, 3.0, 0.045, 0.03], [[-8, 8], [0.005, 0.15]], 1)` is `[0.375, 0.3125, 0.2758620689655172, 0.1724137931034483]` (`rtol=1e-12`). Only this catches the margin measured from one edge only, or the model-comparison truth paired with the wrong range.
+  - `test_truth_sits_inside_its_prior_box` (IDs `scenario-<demo>` and `archive-<demo>` for the seven demos): from `_scenario(name)` or from the committed archive's `true_params` and `meta["prior_ranges"]`, every margin is at least `BOX_MARGIN`; the failure message names the parameter and its margin. Today `scenario-demo_2d` and `archive-demo_2d` fail with a margin of 0 for M. Only this catches a truth on or near its prior's edge, the audit's finding C6; a truth 6% inside passes, as the design says.
+
+  In `tests/test_site_figure_style.py`:
+
+  - `test_the_plane_cell_uses_the_demos_truth`: the plot cell of `story/into-the-plane.qmd` contains `f"masses=np.array([{demo_2d.TRUE_M:.2f}])"`, `f"positions=np.array([[{demo_2d.TRUE_X}, {demo_2d.TRUE_Y}]])"`, `mass_range=(0.005, 0.15)`, `n_observations=25, seed=42` and `n_particles=500`. It passes before the change (0.15 in both places) and after it only if both change. Only this catches the page's cell left at the old truth.
+  - `test_the_plane_cells_knot_is_offset_by_about_its_width`: running that configuration through `simulate` and `infer` in the test (the cell's literals, with `demo_2d.TRUE_M`), the distance of the posterior mean from the true position, divided by the mean of the two position standard deviations, lies between 0.5 and 1.5 (0.94 at 0.10, Q6); and the page, whitespace-normalised, contains "to a small knot beside the true position, offset from it by about its own width" and not "tight knot at the truth". At 0.15 the ratio is 1.08 and the old sentence is still on the page, so this fails on the sentence until Step 3.
+
+- [ ] **Step 2: Run** `uv run pytest tests/test_replays.py tests/test_site_figure_style.py -q -m ''`: the two `demo_2d` box cases and the sentence assertion fail.
+
+- [ ] **Step 3: Implement, in this order, running the named tests after each.**
+  1. `TRUE_M = 0.10` in `src/clocks/_demos/demo_2d.py`. Now `scenario-demo_2d` passes, and `test_archive_matches_its_scenario[demo_2d]`, `test_gate_inputs[demo_2d]` and `test_gate_summaries[demo_2d]` fail (measured for the reverse change, Q7), with `archive-demo_2d`.
+  2. `uv run python scripts/record_replays.py --out assets/replays --overwrite demo_2d`. On arm64 macOS the archive's last row is (1.41692, −1.22229, 0.10002) ± (0.11108, 0.11479, 0.00124) (Q6); on another machine it may differ in low-order bits, and the gate compares a fresh run on the same machine. `uv run pytest -q -m '' tests/test_replays.py tests/test_demo_records.py tests/test_shipped_ground_truths.py tests/test_record_replays_script.py` passes (237 tests in the planning run, Q6), `test_a_tilted_covariance_is_caught` among them: its precondition holds at row 3, |r| = 0.690. `test_description_numbers_are_the_archives` now fails for the two `demo_2d` cases.
+  3. In both descriptions of the 2D clip the numbered sentence becomes "After 50 readings the run ends at x = 1.42 ± 0.11, y = -1.22 ± 0.11 and M = 0.100 ± 0.001, against a true x = 1.50, y = -1.00 and M = 0.100." The rest stands: the y estimate is 1.94 of its standard deviations from the truth.
+  4. In `site/story/into-the-plane.qmd`, the cell's `masses=np.array([0.15])` becomes `masses=np.array([0.10])`, and "The cloud has collapsed from a uniform smear over a 16×16 box to a tight knot at the truth — three parameters recovered from nothing but tick rates." becomes "The cloud has collapsed from a uniform smear over a 16×16 box to a small knot beside the true position, offset from it by about its own width — three parameters recovered from nothing but tick rates."
+  5. In `docs/audits/2026-11-17/README.md`, the status table gains, above the "Open" row, `| C6 (2D truth on the prior's bound) | Fixed in the replay-clips pull request: the truth is 0.10, and a test keeps every shipped truth 5% inside its prior box |` and `| V1, V5 (animations; pinned media bytes) | Addressed in the replay track (#27, #28 and the replay-clips pull request): replay data is committed and the site draws its clips from it |`; C6, V1 and V5 leave the "Open" row. The heading's date and the audit's body are not edited; a line under the table says "Rows for C6, C9, V1 and V5 were added on YYYY-MM-DD."
+
+- [ ] **Step 4: Tests pass; full gate; render the site and run both checks.** The partial rule does not apply (the render is full); confirm the 2D clip's final header reads M 0.100 ± 0.001 on the landing page, and that the cell's figure on "Into the Plane" shows the knot beside the ring. `git diff --stat main -- assets/replays` lists `demo_2d.npz` only.
+
+- [ ] **Step 5: Commit and push** as `Lower the 2D demo's true mass to 0.10; keep every shipped truth inside its prior box`. The body gives the printed final estimate and says the archive was re-recorded on this machine.
+
+---
+
+### Task 12: "Run exactly once" becomes a statement of protocol
+
+**Files:**
+- Modify: `site/reproduce/reproducibility.qmd`, `site/reproduce/getting-started.qmd`, `site/method/the-particle-filter.qmd`, `README.md`, `docs/someday-maybe.md`, `docs/audits/2026-11-17/README.md`
+- Test: `tests/test_generated_assets.py`
+
+- [ ] **Step 1: Check the three citations, then write the failing tests.** Read, in the repository: `docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md` (it says the configuration passed "only 7/12 on holdout seeds 100–111" and that "Seeds 100–111 are burned"); `docs/superpowers/specs/2026-07-02-annealed-jitter-design.md` ("Certification (seeds 200-211, run exactly once for tau=15, floor=0.02)"); `docs/superpowers/specs/2026-07-19-3d-echolocation-design.md` ("Certification (seeds 300-311, run once, 2026-07-19)"). If any of the three does not say what is quoted here, stop and report: the disclosure sentence is then left out, as the design requires.
+
+  - `test_run_once_is_stated_as_protocol` (IDs the five files): the file, whitespace-normalised and lower-cased, does not contain "exactly once" and does contain "by protocol". Only this catches the attestation coming back in any of the five places.
+  - `test_the_protocol_sentences`: the Reproducibility page contains "By protocol each reserved block is for one run: block 400–411 was run under the frozen settings, using the scenario-default cell via `--seed-block 400`, and protected blocks reject control overrides. The repository records that run; it does not enforce that there was only one."; Getting Started contains "By protocol the 400–411 block is reserved for one run, made under those frozen settings;"; the README contains "which by protocol is for one run and was run under those frozen settings."; the particle-filter page contains "and the reserved 400–411 block, which by protocol is for one run, was run under those frozen settings."
+  - `test_the_earlier_seed_blocks_are_disclosed_with_their_records`: the Reproducibility page contains "Earlier implementations used three earlier blocks, as their design records state: seeds 100–111 as a holdout", and links, under `https://github.com/jbwhit/clocks/blob/main/`, the three files above; each file exists in the repository and contains its phrase: "holdout seeds 100–111", "seeds 200-211, run exactly once" and "seeds 300-311, run once". Only this catches a disclosure whose citation has gone.
+
+- [ ] **Step 2: Run** `uv run pytest tests/test_generated_assets.py -q`; the three tests fail.
+
+- [ ] **Step 3: Implement.**
+  - Reproducibility: "The reserved 400–411 block was then run exactly once for the corrected implementation, using the scenario-default cell via `--seed-block 400`; protected blocks reject control overrides." becomes "By protocol each reserved block is for one run: block 400–411 was run under the frozen settings, using the scenario-default cell via `--seed-block 400`, and protected blocks reject control overrides. The repository records that run; it does not enforce that there was only one. Earlier implementations used three earlier blocks, as their design records state: seeds 100–111 as a holdout ([clone-freeze diagnosis](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md)), and seeds 200–211 and 300–311 as certification blocks ([annealed-jitter design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-02-annealed-jitter-design.md), [3D echolocation design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-19-3d-echolocation-design.md))."
+  - Getting Started: "The 400–411 block was then run exactly once; its tracked results are" becomes "By protocol the 400–411 block is reserved for one run, made under those frozen settings; its tracked results are".
+  - README: "before the reserved certification block, which was then run exactly once." becomes "before the reserved certification block, which by protocol is for one run and was run under those frozen settings."
+  - The particle-filter page and `docs/someday-maybe.md`: "and the reserved 400–411 block has now been run exactly once." becomes "and the reserved 400–411 block, which by protocol is for one run, was run under those frozen settings."
+  - The audit's status table: `| C9 ("run exactly once") | Reworded as a statement of protocol in the replay-clips pull request, with the earlier seed blocks disclosed and cited; a test pins the wording |`, C9 leaves the "Open" row, and T2's row ends "…are literals). The protocol wording is pinned since the replay-clips pull request."
+
+- [ ] **Step 4: Tests pass; full gate; render the site and run both checks; commit and push** as `State the one-run rule as protocol and disclose the earlier seed blocks`.
+
+---
+
+### Task 13: Contact sheets and the checks by eye
+
+**Files:**
+- Modify: `docs/plans/2026-11-19-replay-and-animation/contact_sheets.py`; the six `clip-<demo>.jpg` (redrawn); any clip module, caption or description that Steps 2 to 4 have to fix
+- Delete: `docs/plans/2026-11-19-replay-and-animation/clip_probe.py`
+
+- [ ] **Step 1: Draw the sheets with the real builders.** `contact_sheets.py` gains the six clips: for each demo and theme, `build_clip` on the committed archive inside `style(theme)`, shown at rows 0, 1, 8 and the last (with the shot's azimuth), each written with `save_png` and composed as Task 1's sheets were: full width above, 780 pixels below. It still draws `density.jpg` and `range-study.jpg`, imports only through `clocks.viz`, `clocks._clips` and `clocks._style`, and holds no absolute path. `git rm` the probe script: the builders now carry its layouts.
+
+- [ ] **Step 2: Look at each sheet** and report each item of Task 1, Step 2 as seen or not seen, on the real clips. A failed item is fixed in the clip module, the clip tests are re-run, and the sheet is redrawn; say what moved.
+
+- [ ] **Step 3: Read each description and caption against its clip**: what the prior looks like, the early change, the ending, and each word of layout. In particular, the two-mass 2D description's clause that each cloud "is split between two arrangements of the masses": if the frames between rows 1 and 80 do not show it, delete the clause. A changed description must still pass `test_description_numbers_are_the_archives`.
+
+- [ ] **Step 4: Check the pages in browsers**, on the site as rendered at this commit, served from `site/_output`.
+  - Headless Chrome, against a server that logs requests, as the design's M12: on each of the six pages, both posters are requested and no `.mp4` is requested before play, with JavaScript on and off; each visible video's box is 750 by its declared height before any media loads; the theme toggle swaps which video is visible.
+  - Phone width, pull request #21's procedure: each of the six pages in a 390-pixel-wide `<iframe>`, once per theme: `document.documentElement.scrollWidth` is 390, and each visible video's width is above 0 and at most its container's; the hidden one reports 0.
+  - Chrome, Firefox and Safari by hand: the poster and controls with JavaScript off; play, pause and seek from the keyboard; the theme switch. An agent cannot do the Firefox and Safari checks; report them as not done, and the coordinator asks the owner before the pull request is marked ready. Safari needs byte-range responses, which GitHub Pages is believed to serve (design, "Risks"); it can only be confirmed on the deployed site.
+
+- [ ] **Step 5: Check the sheets' metadata** as in Task 1, Step 6; tests pass; full gate; render the site and run both checks.
+
+- [ ] **Step 6: Commit and push** the script, the sheets and any fix as `Redraw the clip contact sheets from the real builders; record the checks by eye`. The body lists what Steps 2 to 4 found and what is left for a person.
+
+**The split point.** After this task the site is correct and complete, every renderer added so far is called by the site's build, the GIFs are gone and the 2D truth is 0.10. The commands still write GIFs through `_animate.py`, and the README and Getting Started say so. If the pull request is split, it is split here (decision D3).
+
+---
+
 <!-- more tasks follow -->
