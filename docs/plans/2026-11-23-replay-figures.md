@@ -120,7 +120,7 @@ New tests:
 - `test_identical_light_and_dark_content`: `_build(tmp_path)`, then `demo_files/dark.png` rewritten with `b"light.png"`; one failure containing `figure 1: light and dark images have the same content`.
 - `test_an_encoded_nul_is_a_failure`: `_build(tmp_path, dark=[("demo_files/dark%00.png", 750)])`; one failure containing `image path contains a NUL`. (Today this raises `ValueError`: P6.)
 - `test_a_wrapper_on_an_unlisted_page`: `_build(tmp_path)`, plus `story/other.html` holding one light wrapper from `_pair(1, 420)`; `figure_failures` returns exactly `["story/other.html: not in the figure manifest, but has 1 theme wrapper(s)"]`.
-- `test_a_listed_page_with_no_figures_passes`: manifest `{PAGE: ()}` and a page with no wrappers gives `[]`. (The shape pull request 3 needs for a page whose only figure is a clip is not this; the test pins that an empty tuple means "none".)
+- `test_a_listed_page_with_no_figures_passes`: manifest `{PAGE: ()}` and a page with no wrappers gives `[]`; an empty tuple means the page must have no theme wrappers.
 
 - [ ] **Step 2: Run** `uv run pytest tests/test_check_site_figures.py -q`; the new tests fail (no `Fig`, no `EXPECTED_FIGURES`), and `test_an_encoded_nul_is_a_failure` errors with the `ValueError` of P6.
 
@@ -163,7 +163,7 @@ Plot cells:
 
 Retired assets, against `retired = ("demo_density.png",)`:
 
-- `test_retired_asset_links_are_found`, IDs and inputs, each giving a one-element list holding the target as written: `md_image` `"![a](../assets/demo_density.png)"`; `md_link` `"[a](assets/demo_density.png)"`; `reference` `"[a]: ../site/assets/demo_density.png"` (a line of its own); `html_img` `'<img src="../assets/demo_density.png" alt="">'`; `github_url` `"[a](https://github.com/jbwhit/clocks/blob/main/assets/demo_density.png)"`; `with_query` `"![a](../assets/demo_density.png?v=2)"`.
+- `test_retired_asset_links_are_found`, IDs and inputs, each giving a one-element list holding the target as written: `md_image` `"![a](../assets/demo_density.png)"`; `md_link` `"[a](assets/demo_density.png)"`; `reference` `"[a]: ../site/assets/demo_density.png"` (a line of its own); `html_img` `'<img src="../assets/demo_density.png" alt="">'`; `github_url` `"[a](https://github.com/example/clocks/blob/main/assets/demo_density.png)"`; `with_query` `"![a](../assets/demo_density.png?v=2)"`.
 - `test_names_that_are_not_links_are_allowed`, IDs `command_output` `"uv run demo-density             # → output/demo_density.png"`, `inline_code` `` "`assets/demo_density.png`" ``, `output_link` `"[a](output/demo_density.png)"`, `other_asset` `"![a](../assets/demo_2d.gif)"`: each gives `[]`.
 - `test_no_page_links_to_a_retired_asset` (each of `README.md` and every `.qmd` under `site/` outside `_output` and `.quarto`, ID the path): `_retired_asset_links(text, RETIRED_ASSETS) == []`.
 
@@ -498,7 +498,7 @@ for theme in THEMES:
 
 - [ ] **Step 3: Add the two paths** under `pull_request.paths`, after `"src/clocks/**"`, with a comment: the site draws its density and range-study figures from these files.
 
-- [ ] **Step 4: Contact sheets.** `contact_sheets.py` takes `--out DIR`; for each figure and theme it draws through `clocks.viz` inside `style(theme)`, saves to memory at `dpi=200` (1500 by 1080), and composes one sheet per figure: the light and dark renderings at full width in the top row, and the same two resampled with Pillow to 780 pixels wide (390 CSS pixels at twice density, what a phone shows) in the bottom row, each labelled with its theme and width. It writes `density.jpg` and `range-study.jpg` (JPEG, quality 85) and prints their paths relative to the repository. It holds no absolute path and must pass `ruff format --check` and `ruff check` (the directory is not excluded). Run `uv run python docs/plans/2026-11-23-replay-figures/contact_sheets.py --out docs/plans/2026-11-23-replay-figures`.
+- [ ] **Step 4: Contact sheets.** `contact_sheets.py` takes `--out DIR`; for each figure and theme it draws through `clocks.viz` inside `style(theme)`, saves to memory at `dpi=200` (1500 by 1080), and composes one sheet per figure: the light and dark renderings at full width in the top row, and the same two resampled with Pillow (already installed, as a Matplotlib dependency) to 780 pixels wide (390 CSS pixels at twice density, what a phone shows) in the bottom row, each labelled with its theme and width. It writes `density.jpg` and `range-study.jpg` (JPEG, quality 85) and prints their paths relative to the repository. It holds no absolute path and must pass `ruff format --check` and `ruff check` (the directory is not excluded). Run `uv run python docs/plans/2026-11-23-replay-figures/contact_sheets.py --out docs/plans/2026-11-23-replay-figures`.
 
 - [ ] **Step 5: Look at both sheets** and report, per sheet, each item as seen or not seen: no text overlaps other text or a data mark at either width; at 390 pixels the trace headers, the pass counts and the limit labels can be read; the density band is visible in both themes; the faint run dots are visible on the dark background; the dashed limits are told apart from the grid. A failed item is fixed in the figure code, with Tasks 3 or 5's tests re-run, before committing; say what moved.
 
@@ -598,6 +598,8 @@ No files change. This task proves the new tests can fail. Work in the task's own
 | `_style_violations` counts strings again (`len(strings) > (2 if has_data else 0)`) | `test_style_violations_reports_unstyled_calls[data_third_argument]` |
 | `_is_plot_cell` back to `"plt.subplots(" in cell or "plt.figure(" in cell` | `test_a_cell_is_a_plot_cell[renderings]`, `[show]`, `[figure_function]`; `test_manifest_matches_the_source[story/beyond-point-masses.qmd]`, `[story/gravitational-echolocation.qmd]` |
 | `_retired_asset_links` returns `[]` | `test_retired_asset_links_are_found`, all six IDs |
+| the old `![…](../assets/demo_density.png)` line put back on `beyond-point-masses.qmd`, beside the new cell | `test_no_page_links_to_a_retired_asset[site/story/beyond-point-masses.qmd]` |
+| the `#\| renderings: [light, dark]` line removed from the density cell (an unthemed plot cell that the old detection could not see, since it calls no `plt.subplots`) | `test_cell_declares_both_renderings[story/beyond-point-masses.qmd#1]` |
 | `density_figure`'s band from the 5th and 95th percentiles | `test_median_and_band_are_pointwise_percentiles_of_the_last_row[light]`, `[dark]`; `test_density_figure_on_the_committed_archive`; `test_profile_limits` |
 | `trace_limits` includes row 0 | `test_trace_limits[prior_row_left_out]`; `test_traces_follow_the_archive[light]`, `[dark]` |
 | the trace's truth line drawn at `mean[-1, j]` | `test_traces_follow_the_archive[light]`, `[dark]`; `test_changing_the_truth_moves_only_the_truth` |
