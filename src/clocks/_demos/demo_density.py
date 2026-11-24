@@ -14,6 +14,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from clocks._demos._common import add_common_arguments
+from clocks._replay import (
+    Replay,
+    Scenario,
+    filter_controls,
+    record_filter,
+    scenario_meta,
+    validate_replay,
+)
+from clocks._rng import study_generator
 from clocks._support import density_support_mask, sample_conditioned_prior
 from clocks.inference import ParticleFilter
 from clocks.noise import add_clock_noise
@@ -36,6 +45,69 @@ OUTPUT_PATH = Path("output/demo_density.png")
 MU_RANGE = (-8.0, 8.0)
 SIGMA_RANGE = (0.1, 5.0)
 AMPLITUDE_RANGE = (0.001, 0.030)
+
+
+def scenario() -> Scenario:
+    """The packaged inputs of this demo, read from the module constants."""
+    clock_array = ClockArray(
+        np.array([[position] for position in CLOCK_POSITIONS]),
+        track_offset=TRACK_OFFSET,
+    )
+    params = np.array([TRUE_MU, TRUE_SIGMA, TRUE_AMPLITUDE])
+    return Scenario(
+        demo="demo_density",
+        clock_array=clock_array,
+        true_params=params,
+        true_rates=clock_rates_density_gaussian(params, clock_array),
+        param_names=("μ", "σ", "A"),
+        prior_ranges=(MU_RANGE, SIGMA_RANGE, AMPLITUDE_RANGE),
+        seed=SEED,
+        noise_std=NOISE_STD,
+        n_observations=N_OBSERVATIONS,
+        n_particles=N_PARTICLES,
+    )
+
+
+def record(
+    *, n_observations: int = N_OBSERVATIONS, n_particles: int = N_PARTICLES
+) -> Replay:
+    """Run the density inference once and return it as a validated replay.
+
+    Unlike the command, every reading is drawn first, from its own
+    ``study_generator`` of the scenario's seed, and the filter gets a second
+    one, so the readings do not depend on how many random numbers the sampler
+    consumed. The result is therefore not the command's run.
+    """
+    packaged = scenario()
+    reading_rng = study_generator(packaged.seed)
+    readings = [
+        add_clock_noise(packaged.true_rates, packaged.noise_std, reading_rng)
+        for _ in range(n_observations)
+    ]
+    observations = [
+        Observation(rates, float(step)) for step, rates in enumerate(readings)
+    ]
+    particle_filter = build_density_filter(
+        packaged.clock_array, study_generator(packaged.seed), n_particles=n_particles
+    )
+    replay = record_filter(
+        particle_filter,
+        observations,
+        meta=scenario_meta(
+            packaged,
+            kind="filter",
+            n_observations=n_observations,
+            n_particles=n_particles,
+            controls=filter_controls(particle_filter),
+        ),
+        arrays={
+            "clock_positions": packaged.clock_array.positions,
+            "true_params": packaged.true_params,
+            "true_rates": packaged.true_rates,
+        },
+    )
+    validate_replay(replay)
+    return replay
 
 
 def build_parser() -> argparse.ArgumentParser:
