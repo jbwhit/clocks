@@ -381,8 +381,8 @@ def test_baselines_are_all_read_before_any_demo_is_recorded(
 
     lines = capsys.readouterr().out.splitlines()
     assert [line for line in lines if line.startswith("demo_")] == [
-        "demo_1d: differs at meta",
-        "demo_2d: differs at meta",
+        "demo_1d: differs at meta.seed",
+        "demo_2d: differs at meta.seed",
     ]
     assert status == 1
 
@@ -586,7 +586,7 @@ def test_a_difference_that_is_not_numeric_omits_the_size(tmp_path: Path) -> None
 
     assert _compare(a, b, report) == 1
 
-    assert "demo_1d: differs at meta" in report.read_text().splitlines()
+    assert "demo_1d: differs at meta.seed" in report.read_text().splitlines()
 
 
 def test_compare_ignores_created_with(tmp_path: Path) -> None:

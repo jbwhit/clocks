@@ -202,8 +202,9 @@ def first_difference(reference: Replay, other: Replay) -> Difference | None:
     inputs first, then the rest alphabetically. Does not validate: a shape or
     dtype mismatch is a difference to report.
     """
-    if _comparable_meta(reference.meta) != _comparable_meta(other.meta):
-        return Difference("meta", None, math.nan)
+    field = _first_meta_difference(reference.meta, other.meta)
+    if field is not None:
+        return Difference(f"meta.{field}", None, math.nan)
     if set(reference.arrays) != set(other.arrays):
         return Difference("keys", None, math.nan)
     for key in _comparison_order(reference.arrays):
@@ -213,8 +214,16 @@ def first_difference(reference: Replay, other: Replay) -> Difference | None:
     return None
 
 
-def _comparable_meta(meta: Mapping[str, object]) -> dict[str, object]:
-    return {key: value for key, value in meta.items() if key != "created_with"}
+def _first_meta_difference(
+    reference: Mapping[str, object], other: Mapping[str, object]
+) -> str | None:
+    """The first field, in sorted order, whose value differs or one side lacks."""
+    for field in sorted((set(reference) | set(other)) - {"created_with"}):
+        if field not in reference or field not in other:
+            return field
+        if reference[field] != other[field]:
+            return field
+    return None
 
 
 def _comparison_order(arrays: Mapping[str, NDArray]) -> list[str]:

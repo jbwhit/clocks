@@ -55,7 +55,7 @@ jobs:
       - name: Upload the report
         id: upload
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: replay-report-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.sample }}
           path: replay-report.md
@@ -68,7 +68,7 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           if [ -s replay-report.md ]; then
-            { echo '```text' && cat replay-report.md && { [ -z "$(tail -c1 replay-report.md)" ] || echo; } && echo '```'; } >> "$GITHUB_STEP_SUMMARY" || echo "::warning title=Replay report::the report for sample $SAMPLE could not be added to the summary"
+            last=$(tail -c1 replay-report.md) && { echo '```text' && cat replay-report.md && { [ -z "$last" ] || echo; } && echo '```'; } >> "$GITHUB_STEP_SUMMARY" || echo "::warning title=Replay report::the report for sample $SAMPLE could not be added to the summary"
           else
             echo "::warning title=Replay report::no report was written for sample $SAMPLE"
           fi

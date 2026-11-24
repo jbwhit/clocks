@@ -1113,7 +1113,33 @@ def test_meta_difference_is_reported_first() -> None:
     other.arrays["mean"][0, 0] += 1.0
     found = first_difference(reference, other)
     assert found is not None
-    assert (found.key, found.row) == ("meta", None)
+    assert (found.key, found.row) == ("meta.seed", None)
+
+
+def test_meta_difference_names_the_first_field_in_sorted_order() -> None:
+    reference, other = _pair()
+    order = list(reference.meta)
+    assert order.index("seed") < order.index("noise_std")
+    other.meta["seed"] = 8
+    other.meta["noise_std"] = 0.5
+    found = first_difference(reference, other)
+    assert found is not None
+    assert found.key == "meta.noise_std"
+
+
+@pytest.mark.parametrize(
+    "lacking",
+    [
+        pytest.param("other", id="other_lacks"),
+        pytest.param("reference", id="reference_lacks"),
+    ],
+)
+def test_a_meta_key_missing_on_one_side_is_named(lacking: str) -> None:
+    reference, other = _pair()
+    del (other if lacking == "other" else reference).meta["cloud_size"]
+    found = first_difference(reference, other)
+    assert found is not None
+    assert found.key == "meta.cloud_size"
 
 
 def test_key_set_difference() -> None:
