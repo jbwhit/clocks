@@ -9,7 +9,8 @@ retired image file. Library modules that draw figures get the same colour check
 as the cells. These are checks on source: the header and loop checks match
 text, and the colour and display check reads the cell's syntax tree. They stop
 a plot from bypassing the conventions, but they do not prove that a plot looks
-right.
+right, nor, for a cell that calls no ``clocks.viz`` builder, that its style
+block encloses the drawing (a builder cell does get that check).
 """
 
 import ast
@@ -215,8 +216,8 @@ def _is_canonical(
     statement: ast.AST = call
     while parents[statement] is not block:
         statement = parents[statement]
-    index = next(i for i, item in enumerate(block.body) if item is statement)
-    if not (
+    index = next((i for i, item in enumerate(block.body) if item is statement), None)
+    if index is None or not (
         isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
@@ -506,6 +507,17 @@ def test_facade_builders_are_resolved() -> None:
     ]
 
 
+def test_facade_builders_come_back_in_source_order() -> None:
+    cell = (
+        "from clocks.viz import density_figure, range_study_figure\n"
+        "for theme in THEMES:\n"
+        "    with style(theme) as colors:\n"
+        "        range_study_figure(s, colors)\n"
+        "density_figure(r, colors)\n"
+    )
+    assert _facade_builders(cell) == ["range_study_figure", "density_figure"]
+
+
 _HEAD = "from clocks.viz import THEMES, density_figure, show, style\n"
 _NOT_IN_BLOCK = "density_figure() is not inside a style(theme) block of a THEMES loop"
 _SHOW_NOT_IN_BLOCK = "show() is not inside a style(theme) block of a THEMES loop"
@@ -613,6 +625,40 @@ _CANONICAL = (
             [_NOT_CANONICAL],
             id="show_of_the_call",
         ),
+        pytest.param(
+            _CANONICAL.replace("THEMES:", '("light", "dark"):'),
+            [_NOT_IN_BLOCK, _SHOW_NOT_IN_BLOCK],
+            id="other_loop",
+        ),
+        pytest.param(
+            _CANONICAL.replace(
+                "density_figure(replay", "wrap(density_figure(replay"
+            ).replace("colors)\n", "colors))\n", 1),
+            [_NOT_CANONICAL],
+            id="wrapped_call",
+        ),
+        pytest.param(
+            _CANONICAL.replace("fig = ", "a = fig = "),
+            [_NOT_CANONICAL],
+            id="two_targets",
+        ),
+        pytest.param(
+            _CANONICAL.replace("fig = ", "fig = a = "),
+            [_NOT_CANONICAL],
+            id="two_targets_shown_first",
+        ),
+        pytest.param(
+            _CANONICAL.replace("THEMES:", "OTHER_THEMES:"),
+            [_NOT_IN_BLOCK, _SHOW_NOT_IN_BLOCK],
+            id="other_loop_name",
+        ),
+        pytest.param(
+            "for theme in THEMES:\n"
+            "    with style(theme) as colors, density_figure(replay, colors) as fig:\n"
+            "        show(fig)\n",
+            [_NOT_CANONICAL],
+            id="builder_in_with_item",
+        ),
     ],
 )
 def test_style_block_violations(body: str, expected: list[str]) -> None:
@@ -641,6 +687,7 @@ def _manifest_page(page: str) -> str:
 @pytest.mark.parametrize("page", PLOT_PAGES)
 def test_manifest_matches_the_source(page: str) -> None:
     figures = check_site_figures.EXPECTED_FIGURES[_manifest_page(page)]
+    assert all(fig.clip is None for fig in figures), page  # clips: pull request 3
     from_manifest = tuple((fig.kind, fig.height) for fig in figures)
     from_source = tuple(
         ("plot", _cell_height(cell)) for cell in _plot_cells(SITE / page)
@@ -718,6 +765,27 @@ _ONE_MENTION = ["line 1: demo_density.png"]
             _ONE_MENTION,
             id="output_under_assets",
         ),
+        pytest.param(
+            "![a](../assets/demo&#37;5Fdensity.png)", _ONE_MENTION, id="entity_percent"
+        ),
+        pytest.param(
+            "![a](../assets/demo_density%5C.png)", _ONE_MENTION, id="percent_backslash"
+        ),
+        pytest.param(
+            "output/demo_density.png ![a](../assets/demo_density.png)",
+            _ONE_MENTION,
+            id="output_then_link",
+        ),
+        pytest.param(
+            '<img src="../assets/demo_density.&#13;png">', _ONE_MENTION, id="cr_entity"
+        ),
+        pytest.param(
+            "myoutput/demo_density.png", _ONE_MENTION, id="word_before_output"
+        ),
+        pytest.param(".output/demo_density.png", _ONE_MENTION, id="dot_before_output"),
+        pytest.param(
+            "x-output/demo_density.png", _ONE_MENTION, id="dash_before_output"
+        ),
     ],
 )
 def test_retired_asset_mentions_are_found(text: str, expected: list[str]) -> None:
@@ -765,7 +833,11 @@ def test_library_drawing_code_has_no_unstyled_colour(module: str) -> None:
     assert _style_violations(text) == []
 
 
-@pytest.mark.xfail(strict=True, reason="Task 5 replaces the range-study drawing")
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="Task 5 replaces the range-study drawing",
+)
 def test_every_figure_builder_module_is_scanned() -> None:
     defining = {
         path.relative_to(REPO).as_posix()
