@@ -36,9 +36,9 @@ Three workflows run on GitHub Actions:
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
   is triggered by each push to `main` and re-renders and redeploys this site, so every
   figure drawn by an executed cell is redrawn at deploy time: most by running
-  the model again from source, and the density figure from a committed data
-  file. The demo GIFs and the echolocation range-study PNG are the exceptions:
-  they are committed images, described in the next section.
+  the model again from source, and the density and range-study figures from
+  committed data files. The demo GIFs are the exceptions: they are committed
+  images, described in the next section.
 - [`site-check.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site-check.yml)
   renders this site and runs the link and figure checks on non-draft pull
   requests targeting `main` that touch the site or the library, so a broken
@@ -115,8 +115,8 @@ run. The reserved 400–411 block was then run exactly once for the
 corrected implementation, using the scenario-default cell via
 `--seed-block 400`; protected blocks reject control overrides.
 
-The displayed study was regenerated directly from the certified block-400
-records. The frozen cell passed 46/72 cases overall; pass counts from close to
+The figure is drawn when the site is built, from the certified block-400
+records in `assets/echolocation_range_study.json`. The frozen cell passed 46/72 cases overall; pass counts from close to
 far were 12, 12, 11, 8, 3, 0. The close range passed 12/12. The far/close
 median position-standard-deviation ratio was 66.524, above the frozen factor
 20 gate, and the 12/12 far-range three-standard-deviation coverage is retained

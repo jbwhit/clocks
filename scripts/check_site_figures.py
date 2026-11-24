@@ -60,7 +60,7 @@ EXPECTED_FIGURES: dict[str, tuple[Fig, ...]] = {
     "story/two-hidden-masses.html": (Fig("plot", 420),),
     "story/how-many-masses.html": (Fig("plot", 420),),
     "story/beyond-point-masses.html": (Fig("plot", 540), Fig("plot", 420)),
-    "story/gravitational-echolocation.html": (Fig("plot", 420),),
+    "story/gravitational-echolocation.html": (Fig("plot", 420), Fig("plot", 540)),
     "method/the-particle-filter.html": (Fig("plot", 540),),
 }
 

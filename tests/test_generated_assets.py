@@ -29,14 +29,14 @@ EXPECTED_VISUAL_HASHES = {
     "demo_echolocation_3d.gif": (
         "5df30d7c052c3e366216866c9b0ecc991cc777467515dd1c7699de743413d34f"
     ),
-    "echolocation_range_study.png": (
-        "6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc"
-    ),
 }
 RETIRED_VISUALS = {
     "demo_density.png": (
         "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"
-    )
+    ),
+    "echolocation_range_study.png": (
+        "6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc"
+    ),
 }
 ECHO_CERT_SOURCE_HASH = (
     "a4c6b1b7c3c2fce273aaa19f01289e6ca34de2ed8d633f827e798e1af4f47941"
@@ -239,15 +239,28 @@ def test_density_provenance_names_its_run() -> None:
     assert "density PNG" not in page
 
 
+def test_range_study_provenance_names_its_source() -> None:
+    page = " ".join(_reproducibility_page().split())
+
+    assert (
+        "The figure is drawn when the site is built, from the certified "
+        "block-400 records in `assets/echolocation_range_study.json`. "
+        "The frozen cell passed "
+    ) in page
+    assert "range-study PNG" not in page
+
+
 def test_deploy_sentence_says_how_each_figure_is_redrawn() -> None:
     page = " ".join(_reproducibility_page().split())
 
     assert (
         "so every figure drawn by an executed cell is redrawn at deploy time: "
-        "most by running the model again from source, and the density figure "
-        "from a committed data file."
+        "most by running the model again from source, and the density and "
+        "range-study figures from committed data files. The demo GIFs are the "
+        "exceptions: they are committed images, described in the next section."
     ) in page
     assert "regenerated from source at deploy time" not in page
+    assert "range-study PNG" not in page
 
 
 def test_provenance_section_describes_figures_drawn_at_build_time() -> None:

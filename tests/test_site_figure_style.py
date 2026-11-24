@@ -89,7 +89,10 @@ FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {
 
 # Retired image files and library modules that draw figures; later tasks add to
 # these.
-RETIRED_ASSETS: tuple[str, ...] = ("demo_density.png",)
+RETIRED_ASSETS: tuple[str, ...] = (
+    "demo_density.png",
+    "echolocation_range_study.png",
+)
 LIBRARY_DRAWING_MODULES: tuple[str, ...] = (
     "src/clocks/_figures.py",
     "src/clocks/_demos/demo_density.py",
