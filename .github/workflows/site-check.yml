@@ -10,6 +10,9 @@ on:
     paths:
       - "site/**"
       - "src/clocks/**"
+      # The site draws its density and range-study figures from these files.
+      - "assets/replays/**"
+      - "assets/echolocation_range_study.json"
       - "scripts/check_site_*.py"
       - "pyproject.toml"
       - "uv.lock"

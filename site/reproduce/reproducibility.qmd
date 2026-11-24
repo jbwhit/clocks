@@ -41,8 +41,8 @@ Three workflows run on GitHub Actions:
   images, described in the next section.
 - [`site-check.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site-check.yml)
   renders this site and runs the link and figure checks on non-draft pull
-  requests targeting `main` that touch the site or the library, so a broken
-  page is caught before it merges.
+  requests targeting `main` that touch the site, the library, or the data the
+  site's figures are drawn from, so a broken page is caught before it merges.
 
 ## Where the figures come from {#sec-figures}
 
@@ -116,11 +116,12 @@ corrected implementation, using the scenario-default cell via
 `--seed-block 400`; protected blocks reject control overrides.
 
 The figure is drawn when the site is built, from the certified block-400
-records in `assets/echolocation_range_study.json`. The frozen cell passed 46/72 cases overall; pass counts from close to
-far were 12, 12, 11, 8, 3, 0. The close range passed 12/12. The far/close
-median position-standard-deviation ratio was 66.524, above the frozen factor
-20 gate, and the 12/12 far-range three-standard-deviation coverage is retained
-as a diagnostic rather than promoted after inspection into a new gate.
+records in `assets/echolocation_range_study.json`. The frozen cell passed 46/72
+cases overall; pass counts from close to far were 12, 12, 11, 8, 3, 0. The close
+range passed 12/12. The far/close median position-standard-deviation ratio was
+66.524, above the frozen factor 20 gate, and the 12/12 far-range
+three-standard-deviation coverage is retained as a diagnostic rather than
+promoted after inspection into a new gate.
 
 The completed protocol guards against tuning directly to the reported holdout,
 but its fixed seeds provide regression and calibration evidence only for those

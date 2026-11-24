@@ -274,3 +274,11 @@ def test_provenance_section_describes_figures_drawn_at_build_time() -> None:
         "docs/2026-08-16-development-calibration.md) "
         "is the record of the August 2026 release"
     ) in page
+
+
+def test_site_check_description_names_the_figure_data() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "touch the site, the library, or the data the site's figures are drawn from"
+        in page
+    )
