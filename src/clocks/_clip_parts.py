@@ -12,10 +12,13 @@ from collections.abc import Callable, Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib import patheffects
 from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.text import Annotation
+from matplotlib.transforms import Bbox
 from numpy.typing import NDArray
 
 from clocks._figures import trace_header, trace_limits
@@ -30,6 +33,19 @@ BAND_ALPHA = 0.2
 TRACE_TITLE_SIZE = 9.5
 SMALL = 8.0
 ELLIPSE_POINTS = 121
+# Points from the true point, in the order tried (decision D51).
+MASS_LABEL_OFFSETS = (
+    (9, 7),
+    (-9, 7),
+    (9, -7),
+    (-9, -7),
+    (9, 0),
+    (-9, 0),
+    (0, 7),
+    (0, -7),
+)
+MASS_LABEL_SIZE = SMALL + 0.5
+MASS_LABEL_PAD = 2  # pixels round a label's box
 
 
 class Clip:
@@ -266,3 +282,90 @@ def running_slowing(observations: NDArray) -> NDArray[np.float64]:
     counts = np.arange(1, len(slowing) + 1)[:, None]
     running = np.cumsum(slowing, axis=0) / counts
     return np.vstack([np.full((1, slowing.shape[1]), np.nan), running])
+
+
+def label_masses(
+    ax: Axes, points: Sequence[tuple[float, float]], colors: Palette
+) -> list[Annotation]:
+    """Label point n ``mass n`` at the offset that covers the fewest final marks.
+
+    Call once, after the final row is shown; the labels then stay put. Each
+    candidate of ``MASS_LABEL_OFFSETS`` is ranked by its exclusions (one for
+    leaving the panel, one per inset and per earlier label its padded box
+    touches), then by the marks of the axes' own lines inside that box, then
+    by its place in the list. Where every candidate has an exclusion, the
+    fewest still wins (decision D51).
+    """
+    renderer = ax.figure.canvas.get_renderer()
+    marks = _display_marks(ax)
+    frame = ax.get_window_extent(renderer)
+    blocked = [inset.get_window_extent(renderer) for inset in ax.child_axes]
+    labels: list[Annotation] = []
+    for n, point in enumerate(points, start=1):
+        candidates = []
+        for place, offset in enumerate(MASS_LABEL_OFFSETS):
+            label = _mass_label(ax, n, point, offset, colors)
+            box = label.get_window_extent(renderer).padded(MASS_LABEL_PAD)
+            leaves = not (
+                frame.contains(box.x0, box.y0) and frame.contains(box.x1, box.y1)
+            )
+            exclusions = int(leaves) + sum(box.overlaps(other) for other in blocked)
+            candidates.append(
+                ((exclusions, _marks_inside(box, marks), place), label, box)
+            )
+        _, chosen, box = min(candidates, key=lambda candidate: candidate[0])
+        for _, label, _ in candidates:
+            if label is not chosen:
+                label.remove()
+        blocked.append(box)
+        labels.append(chosen)
+    return labels
+
+
+def _mass_label(
+    ax: Axes,
+    n: int,
+    point: tuple[float, float],
+    offset: tuple[int, int],
+    colors: Palette,
+) -> Annotation:
+    """``mass n`` at ``offset`` points from ``point``, aligned away from it."""
+    dx, dy = offset
+    label = ax.annotate(
+        f"mass {n}",
+        point,
+        xytext=offset,
+        textcoords="offset points",
+        ha="left" if dx > 0 else "right" if dx < 0 else "center",
+        va="bottom" if dy > 0 else "top" if dy < 0 else "center",
+        fontsize=MASS_LABEL_SIZE,
+        color=colors.truth,
+        zorder=6,
+        path_effects=[
+            patheffects.withStroke(linewidth=3, foreground=colors.background)
+        ],
+    )
+    label.set_gid(f"mass-label-{n}")
+    return label
+
+
+def _display_marks(ax: Axes) -> NDArray[np.float64]:
+    """Every data point of the axes' own lines, in display coordinates."""
+    data = [
+        np.column_stack(line.get_data()).astype(np.float64)
+        for line in ax.get_lines()
+        if len(line.get_xdata())
+    ]
+    if not data:
+        return np.empty((0, 2))
+    return ax.transData.transform(np.vstack(data))
+
+
+def _marks_inside(box: Bbox, marks: NDArray[np.float64]) -> int:
+    inside = (
+        (marks[:, 0] >= box.x0)
+        & (marks[:, 0] <= box.x1)
+        & (marks[:, 1] >= box.y0)
+        & (marks[:, 1] <= box.y1)
+    )
+    return int(inside.sum())

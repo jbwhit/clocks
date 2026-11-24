@@ -15,6 +15,7 @@ from matplotlib.figure import Figure
 
 from clocks._clip_maps import build_2d
 from clocks._clip_parts import Clip
+from clocks._clip_tracks import build_1d, build_multi_1d
 from clocks._replay import Replay
 from clocks._style import Palette, frame_rgba, style
 from clocks._video import dwell_frames, encode, find_encoder
@@ -30,7 +31,11 @@ CLIP_HEIGHTS: dict[str, int] = {
     "demo_model_comparison": 420,
     "demo_echolocation_3d": 550,
 }
-BUILDERS: dict[str, Callable[[Replay, Palette], Clip]] = {"demo_2d": build_2d}
+BUILDERS: dict[str, Callable[[Replay, Palette], Clip]] = {
+    "demo_1d": build_1d,
+    "demo_2d": build_2d,
+    "demo_multi_mass": build_multi_1d,
+}
 
 
 class Shot(NamedTuple):
