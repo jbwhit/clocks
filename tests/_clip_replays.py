@@ -51,6 +51,31 @@ def edited(replay: Replay, **arrays: ArrayLike) -> Replay:
     return changed
 
 
+@functools.cache
+def two_candidates() -> Replay:
+    """``small("demo_model_comparison")`` with its first candidate, K = 1, removed.
+
+    The prior and every posterior row are divided by their sums; the result is
+    validated.
+    """
+    base = small("demo_model_comparison")
+    arrays = {
+        key: value
+        for key, value in base.arrays.items()
+        if key not in ("final_mean_k1", "final_std_k1")
+    }
+    for key in ("model_ks", "model_prior", "model_posterior"):
+        arrays[key] = np.array(base.arrays[key][..., 1:])
+    for key in ("model_log_evidence", "model_ess"):
+        arrays[key] = np.array(base.arrays[key][:, 1:])
+    arrays["model_prior"] = arrays["model_prior"] / arrays["model_prior"].sum()
+    posterior = arrays["model_posterior"]
+    arrays["model_posterior"] = posterior / posterior.sum(axis=1, keepdims=True)
+    replay = Replay(dict(base.meta), arrays)
+    validate_replay(replay, "two candidates")
+    return replay
+
+
 def _record(name: str, *, n_observations: int, n_particles: int) -> Replay:
     module = importlib.import_module(f"clocks._demos.{name}")
     return module.record(n_observations=n_observations, n_particles=n_particles)
@@ -64,6 +89,10 @@ DOTS = {
         ("cloud", "dots-1", (0, 2), "belief"),
         ("cloud", "dots-2", (1, 3), "belief_alt"),
     ],
+    "demo_multi_mass_2d": [
+        ("map", "dots-1", (0, 1), "belief"),
+        ("map", "dots-2", (2, 3), "belief_alt"),
+    ],
 }
 # demo -> (axes gid, artist gid, (i, j): the block of mean and cov, palette role)
 ELLIPSES = {
@@ -73,12 +102,17 @@ ELLIPSES = {
         ("cloud", "ellipse-1", (0, 2), "belief"),
         ("cloud", "ellipse-2", (1, 3), "belief_alt"),
     ],
+    "demo_multi_mass_2d": [
+        ("map", "ellipse-1", (0, 1), "belief"),
+        ("map", "ellipse-2", (2, 3), "belief_alt"),
+    ],
 }
 # demo -> (axes gid, artist gid, (i, j): the entries of true_params)
 TRUTHS = {
     "demo_1d": [("cloud", "truth", (0, 1))],
     "demo_2d": [("map", "truth", (0, 1))],
     "demo_multi_mass": [("cloud", "truth-1", (0, 2)), ("cloud", "truth-2", (1, 3))],
+    "demo_multi_mass_2d": [("map", "truth-1", (0, 1)), ("map", "truth-2", (2, 3))],
 }
 # demo -> (parent axes gid, inset gid, (i, j), y name, the parent artists it repeats);
 # each copy's gid is f"{inset_gid}-{artist_gid}", both taken from the row
@@ -152,6 +186,25 @@ ARTISTS: dict[str, list[tuple[str | None, str, str, str]]] = {
         *_cloud_entries("-2", "inset-2"),
         *_TRACK_ENTRIES,
         *_traces("x₁", "x₂", "M₁", "M₂"),
+        (None, "status", "text", "always"),
+    ],
+    "demo_multi_mass_2d": [
+        *[
+            ("map", f"{name}{suffix}", kind, "always")
+            for suffix in ("-1", "-2")
+            for name, kind in (
+                ("dots", "marks"),
+                ("truth", "marks"),
+                ("ellipse", "line"),
+            )
+        ],
+        ("map", "clocks", "marks", "always"),
+        *_traces("x₁", "y₁", "M₁", "x₂", "y₂", "M₂"),
+        (None, "status", "text", "always"),
+    ],
+    "demo_model_comparison": [
+        *[("posterior", f"model-{k}", "line", "after the prior") for k in (1, 2, 3)],
+        *[("posterior", f"label-{k}", "text", "always") for k in (1, 2, 3)],
         (None, "status", "text", "always"),
     ],
 }

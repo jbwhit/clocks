@@ -102,13 +102,19 @@ def standard_deviations(replay: Replay) -> NDArray[np.float64]:
 
 
 def draw_traces(
-    fig: Figure, replay: Replay, colors: Palette, rects: Mapping[str, Rect]
+    fig: Figure,
+    replay: Replay,
+    colors: Palette,
+    rects: Mapping[str, Rect],
+    *,
+    header_size: float = TRACE_TITLE_SIZE,
 ) -> Callable[[int], None]:
     """Add one trace axes per ``"trace-<name>"`` key; return the row setter.
 
     Each trace holds the running mean, a one-standard-deviation band and the
     truth as a solid line, with x from 0 to T and the y-limits of
-    ``trace_limits``. The lowest traces carry the x label.
+    ``trace_limits``, under a header of ``header_size`` points. The lowest
+    traces carry the x label.
     """
     names = [str(name) for name in replay.meta["param_names"]]
     bottom = min((rect[1] for rect in rects.values()), default=0.0)
@@ -119,7 +125,7 @@ def draw_traces(
             raise ValueError(f"{key!r} names no parameter of {names}")
         ax = fig.add_axes(rect)
         ax.set_gid(key)
-        updates.append(_draw_trace(ax, replay, colors, names.index(name)))
+        updates.append(_draw_trace(ax, replay, colors, names.index(name), header_size))
         ax.tick_params(labelsize=SMALL)
         if rect[1] == bottom:
             ax.set_xlabel("observations", fontsize=SMALL + 1)
@@ -134,7 +140,7 @@ def draw_traces(
 
 
 def _draw_trace(
-    ax: Axes, replay: Replay, colors: Palette, j: int
+    ax: Axes, replay: Replay, colors: Palette, j: int, header_size: float
 ) -> Callable[[int], None]:
     name = str(replay.meta["param_names"][j])
     prior = replay.meta["prior_ranges"][j]
@@ -171,7 +177,7 @@ def _draw_trace(
         drawn.set_visible(row > 0)
         band.append(drawn)
         header = trace_header(name, truth, mean[row], sd[row], prior)
-        ax.set_title(header, fontsize=TRACE_TITLE_SIZE)
+        ax.set_title(header, fontsize=header_size)
 
     return update
 
@@ -183,6 +189,8 @@ def draw_dots(ax: Axes, color: str, *, gid: str = "dots", marker: str = "o") -> 
         [],
         linestyle="none",
         marker=marker,
+        # A triangle reads smaller than a circle of equal size (it covers
+        # about two thirds of it); 0.8 points more makes them read alike.
         markersize=DOT_SIZE if marker == "o" else DOT_SIZE + 0.8,
         markeredgewidth=0,
         alpha=DOT_ALPHA,

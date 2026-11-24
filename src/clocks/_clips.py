@@ -13,7 +13,8 @@ from typing import NamedTuple
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
-from clocks._clip_maps import build_2d
+from clocks._clip_maps import build_2d, build_multi_2d
+from clocks._clip_models import build_models
 from clocks._clip_parts import Clip
 from clocks._clip_tracks import build_1d, build_multi_1d
 from clocks._replay import Replay
@@ -35,6 +36,8 @@ BUILDERS: dict[str, Callable[[Replay, Palette], Clip]] = {
     "demo_1d": build_1d,
     "demo_2d": build_2d,
     "demo_multi_mass": build_multi_1d,
+    "demo_multi_mass_2d": build_multi_2d,
+    "demo_model_comparison": build_models,
 }
 
 
@@ -85,6 +88,9 @@ def render_clip(
     encoder is looked up before anything is drawn. ``path`` is written by
     ``clocks._video.encode`` alone, whole or not at all. Returns the number of
     video frames written.
+
+    A model-comparison replay may hold at most three candidates, one per
+    colour of the palette's ``ordered``; more raise ``ValueError``.
     """
     if encoder is None:
         encoder = find_encoder()

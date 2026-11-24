@@ -1,5 +1,6 @@
 """The clips drawn from replays: their parts, every clip's frames, render_clip."""
 
+import functools
 import importlib
 import warnings
 from collections.abc import Iterator
@@ -20,6 +21,7 @@ from _clip_replays import (
     one_particle,
     shortest,
     small,
+    two_candidates,
 )
 from _figure_artists import (
     all_axes,
@@ -41,6 +43,7 @@ import clocks._clip_parts
 import clocks._clips
 import clocks.viz
 from clocks._clip_maps import clock_fill
+from clocks._clip_models import GUTTER, LABEL_GAP, build_models
 from clocks._clip_parts import (
     Clip,
     ellipse_points,
@@ -130,9 +133,12 @@ def series(fig: Figure, name: str) -> list[tuple[np.ndarray, np.ndarray]]:
 
 
 def archive_series(replay: Replay, name: str, row: int) -> list:
-    cloud = replay.arrays["cloud"][row]
+    """The archive's clouds at ``row`` for ``DOTS[name]``; none for a cloudless clip."""
     return [
-        (cloud[:, cx].astype(np.float64), cloud[:, cy].astype(np.float64))
+        (
+            replay.arrays["cloud"][row][:, cx].astype(np.float64),
+            replay.arrays["cloud"][row][:, cy].astype(np.float64),
+        )
         for _, _, (cx, cy), _ in DOTS.get(name, [])
     ]
 
@@ -881,8 +887,8 @@ def test_viz_exports_render_clip() -> None:
 # ---------------------------------------------------------------- the track clips
 
 TRACKS = ("demo_1d", "demo_multi_mass")
-# The clips whose two masses are labelled by label_masses; Task 5 adds its map.
-LABELLED = ["demo_multi_mass"]
+# The clips whose two masses are labelled by label_masses.
+LABELLED = ["demo_multi_mass", "demo_multi_mass_2d"]
 OFFSETS = [(9, 7), (-9, 7), (9, -7), (-9, -7), (9, 0), (-9, 0), (0, 7), (0, -7)]
 LABEL_SIZE = 8.5
 
@@ -1045,9 +1051,13 @@ def test_slowing_limits_hold_every_row(name: str) -> None:
 
 @pytest.mark.parametrize("theme", THEMES)
 def test_two_masses_are_told_apart_without_colour(theme: str) -> None:
-    replay = small("demo_multi_mass")
-    with built(replay, theme) as (clip, colors):
-        ax = axes_named(clip.fig, "cloud")
+    _assert_masses_told_apart("demo_multi_mass", "cloud", theme)
+
+
+def _assert_masses_told_apart(name: str, axes: str, theme: str) -> None:
+    """Two markers and two colours; each truth's label is nearer it than the other."""
+    with built(small(name), theme) as (clip, colors):
+        ax = axes_named(clip.fig, axes)
         first, second = one(ax, "dots-1"), one(ax, "dots-2")
         assert first.get_marker() != second.get_marker()
         assert to_hex(first.get_color()) == colors.belief
@@ -1292,3 +1302,265 @@ def test_label_masses_keeps_its_exclusions(case: str) -> None:
             assert sum(ranks[OFFSETS.index(expected)][0]) == 0
     finally:
         plt.close(fig)
+
+
+# ---------------------------------------------------------------- the two-mass map
+
+MULTI_2D = "demo_multi_mass_2d"
+
+
+@pytest.mark.parametrize("name", TRACE_CLIPS)
+def test_trace_headers_are_their_clips_size(name: str) -> None:
+    # At 9.5 points the two-mass map's right column of headers leaves the canvas.
+    size = 8.5 if name == MULTI_2D else 9.5
+    with built(small(name)) as (clip, _):
+        for row in (0, 9):
+            clip.show(row)
+            for param in _trace_names(name):
+                title = axes_named(clip.fig, f"trace-{param}").title
+                assert title.get_fontsize() == size, (row, param)
+
+
+def test_two_mass_map_has_one_trace_column_per_mass() -> None:
+    with built(small(MULTI_2D)) as (clip, _):
+        boxes = {
+            name: axes_named(clip.fig, f"trace-{name}").get_position(original=True)
+            for name in ("x₁", "y₁", "M₁", "x₂", "y₂", "M₂")
+        }
+    left, right = boxes["x₁"].x0, boxes["x₂"].x0
+    assert right > left
+    for name in ("y₁", "M₁"):
+        assert boxes[name].x0 == pytest.approx(left, rel=1e-12)
+    for name in ("y₂", "M₂"):
+        assert boxes[name].x0 == pytest.approx(right, rel=1e-12)
+    for first, second in (("x₁", "x₂"), ("y₁", "y₂"), ("M₁", "M₂")):
+        assert boxes[first].y0 == pytest.approx(boxes[second].y0, rel=1e-12)
+    assert boxes["x₁"].y0 > boxes["y₁"].y0 > boxes["M₁"].y0
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_two_mass_map_has_no_inset_and_plain_clocks(theme: str) -> None:
+    replay = small(MULTI_2D)
+    positions = replay.arrays["clock_positions"]
+    with built(replay, theme) as (clip, colors):
+        ax = axes_named(clip.fig, "map")
+        assert ax.child_axes == []
+        for row in (0, 9):
+            clip.show(row)
+            mark = one(ax, "clocks")
+            np.testing.assert_array_equal(mark.get_xdata(), positions[:, 0])
+            np.testing.assert_array_equal(mark.get_ydata(), positions[:, 1])
+            assert mark.get_marker() == "s"
+            assert mark.get_linestyle() == "None"
+            assert to_hex(mark.get_color()) == colors.ink
+            assert to_hex(mark.get_markerfacecolor()) == colors.ink
+            assert to_hex(mark.get_markeredgecolor()) == colors.ink
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_two_mass_map_labels_each_truth(theme: str) -> None:
+    _assert_masses_told_apart(MULTI_2D, "map", theme)
+
+
+# ---------------------------------------------------------------- the model clip
+
+MODELS = "demo_model_comparison"
+
+
+def _expected_label_shifts(ax, row: int, heads) -> list[float]:
+    """Decision D50's vertical shifts in points, by the test's own arithmetic.
+
+    Heights from the top, ties in ``model_ks`` order; each label at its head or
+    ``LABEL_GAP`` under the one above; then, from the bottom up, the lowest at
+    least ``LABEL_GAP / 2`` above the panel's bottom edge and each other at
+    least ``LABEL_GAP`` above the one under it.
+    """
+    scale = 72 / ax.figure.dpi
+    ys = [ax.transData.transform((row, head))[1] * scale for head in heads]
+    floor = ax.get_window_extent().y0 * scale + LABEL_GAP / 2
+    order = sorted(range(len(ys)), key=lambda i: (-ys[i], i))
+    placed: dict[int, float] = {}
+    previous = None
+    for i in order:
+        placed[i] = ys[i] if previous is None else min(ys[i], previous - LABEL_GAP)
+        previous = placed[i]
+    below = None
+    for i in reversed(order):
+        placed[i] = max(placed[i], floor if below is None else below + LABEL_GAP)
+        below = placed[i]
+    return [placed[i] - ys[i] for i in range(len(ys))]
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_model_lines_grow_from_the_prior(theme: str) -> None:
+    replay = small(MODELS)
+    posterior = replay.arrays["model_posterior"]
+    with built(replay, theme) as (clip, colors):
+        ax = axes_named(clip.fig, "posterior")
+        for row in (0, 1, 4, 9):
+            clip.show(row)
+            for i, k in enumerate(replay.arrays["model_ks"]):
+                line = one(ax, f"model-{k}")
+                np.testing.assert_array_equal(line.get_xdata(), np.arange(row + 1))
+                np.testing.assert_array_equal(line.get_ydata(), posterior[: row + 1, i])
+                if row == 0:
+                    assert line.get_ydata()[0] == replay.arrays["model_prior"][i]
+                assert to_hex(line.get_color()) == to_hex(colors.ordered[i])
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_model_labels_name_the_truth(theme: str) -> None:
+    replay = small(MODELS)
+    third = Replay(dict(replay.meta, true_k=3), dict(replay.arrays))
+    cases = [
+        (replay, ["K = 1", "K = 2 (true model)", "K = 3"]),
+        (third, ["K = 1", "K = 2", "K = 3 (true model)"]),
+    ]
+    for case, texts in cases:
+        with style(theme) as colors:
+            clip = build_models(case, colors)
+            try:
+                ax = axes_named(clip.fig, "posterior")
+                labels = [one(ax, f"label-{k}") for k in (1, 2, 3)]
+                assert [label.get_text() for label in labels] == texts
+                for k, label in zip((1, 2, 3), labels, strict=True):
+                    line = one(ax, f"model-{k}")
+                    assert to_hex(label.get_color()) == to_hex(line.get_color())
+            finally:
+                plt.close(clip.fig)
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_model_labels_follow_the_heads(theme: str) -> None:
+    replay = small(MODELS)
+    posterior = replay.arrays["model_posterior"]
+    # Row 0: three heads tie at one third and stack 12 points apart; rows 4 and
+    # 9: the heads are far enough apart that no label moves (Q20).
+    literal = {0: [0.0, -12.0, -24.0], 4: [0.0, 0.0, 0.0], 9: [0.0, 0.0, 0.0]}
+    with built(replay, theme) as (clip, _):
+        ax = axes_named(clip.fig, "posterior")
+        for row, shifts in literal.items():
+            clip.show(row)
+            expected = _expected_label_shifts(ax, row, posterior[row])
+            assert expected == pytest.approx(shifts, abs=1e-6)
+            for i, k in enumerate(replay.arrays["model_ks"]):
+                label = one(ax, f"label-{k}")
+                assert tuple(label.xy) == (row, posterior[row, i])
+                assert label.anncoords == "offset points"
+                assert label.xyann[0] == 6
+                assert label.xyann[1] == pytest.approx(expected[i], abs=1e-6)
+                assert label.get_horizontalalignment() == "left"
+                assert label.get_verticalalignment() == "center"
+                assert label.get_fontsize() == 10
+        connectors = [
+            a for a in ax.findobj() if str(a.get_gid() or "").startswith("connector-")
+        ]
+        assert connectors == []
+
+
+@pytest.mark.parametrize(
+    "last_row",
+    [(0.30, 0.31, 0.39), (0.0, 0.5, 0.5), (0.0, 0.0, 1.0)],
+    ids=["close", "tie", "floor"],
+)
+def test_model_labels_keep_apart_in_head_order(last_row: tuple) -> None:
+    base = small(MODELS)
+    posterior = base.arrays["model_posterior"].copy()
+    posterior[-1] = last_row
+    replay = edited(base, model_posterior=posterior)
+    row = len(posterior) - 1
+    with built(replay) as (clip, _):
+        clip.show(row)
+        ax = axes_named(clip.fig, "posterior")
+        scale = 72 / clip.fig.dpi
+        shifts = [one(ax, f"label-{k}").xyann[1] for k in (1, 2, 3)]
+        heads = [ax.transData.transform((row, p))[1] * scale for p in last_row]
+        frame = ax.get_window_extent()
+        bottom, top = frame.y0 * scale, frame.y1 * scale
+    centres = [head + shift for head, shift in zip(heads, shifts, strict=True)]
+    order = sorted(range(3), key=lambda i: (-last_row[i], i))
+    placed = [centres[i] for i in order]
+    for upper, lower in zip(placed, placed[1:]):
+        assert upper - lower >= LABEL_GAP - 1e-6
+    assert placed[-1] >= bottom + LABEL_GAP / 2 - 1e-6
+    assert placed[0] <= top - LABEL_GAP / 2 + 1e-6
+    if last_row == (0.0, 0.0, 1.0):
+        assert shifts[2] == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_model_colours_go_by_position_in_model_ks(theme: str) -> None:
+    replay = two_candidates()
+    with built(replay, theme) as (clip, colors):
+        ax = axes_named(clip.fig, "posterior")
+        assert to_hex(one(ax, "model-2").get_color()) == to_hex(colors.ordered[0])
+        assert to_hex(one(ax, "model-3").get_color()) == to_hex(colors.ordered[1])
+        for row in range(len(replay.arrays["model_posterior"])):
+            clip.show(row)
+            clip.fig.canvas.draw()
+
+
+def test_model_clip_refuses_a_fourth_candidate() -> None:
+    base = small(MODELS)
+    arrays = dict(base.arrays)
+    arrays["model_ks"] = np.array([1, 2, 3, 4], dtype=np.int64)
+    for key in ("model_prior", "model_posterior", "model_log_evidence", "model_ess"):
+        column = base.arrays[key]
+        arrays[key] = np.concatenate([column, column[..., -1:]], axis=-1)
+    four = Replay(dict(base.meta), arrays)
+    before = plt.get_fignums()
+    with style("light") as colors:
+        with pytest.raises(ValueError, match="at most three candidates"):
+            build_models(four, colors)
+    assert plt.get_fignums() == before
+    assert "at most three candidates" in " ".join(render_clip.__doc__.split())
+
+
+def test_changing_a_posterior_row_moves_only_that_point() -> None:
+    original = committed(MODELS)
+    posterior = original.arrays["model_posterior"].copy()
+    posterior[40, [1, 2]] = posterior[40, [2, 1]]
+    changed = edited(original, model_posterior=posterior)
+    last = len(posterior) - 1
+    drawn = []
+    for replay in (original, changed):
+        with built(replay) as (clip, _):
+            clip.show(last)
+            ax = axes_named(clip.fig, "posterior")
+            drawn.append(
+                {k: np.array(one(ax, f"model-{k}").get_ydata()) for k in (2, 3)}
+            )
+    before, after = drawn
+    for k in (2, 3):
+        np.testing.assert_array_equal(np.flatnonzero(after[k] != before[k]), [40])
+
+
+def test_model_axes() -> None:
+    with built(small(MODELS)) as (clip, _):
+        ax = axes_named(clip.fig, "posterior")
+        assert ax.get_xlim() == pytest.approx((0, 9 + GUTTER), rel=1e-12)
+        assert ax.get_ylim() == (-0.03, 1.03)
+        assert ax.get_xlabel() == "observations"
+        assert ax.get_ylabel() == "posterior probability"
+
+
+@functools.cache
+def _long_model_run() -> Replay:
+    """250 observations of sixteen particles per candidate."""
+    module = importlib.import_module(f"clocks._demos.{MODELS}")
+    return module.record(n_observations=250, n_particles=16)
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_model_labels_fit_a_long_run(theme: str) -> None:
+    replay = _long_model_run()
+    with built(replay, theme) as (clip, _):
+        clip.show(250)
+        clip.fig.canvas.draw()
+        renderer = clip.fig.canvas.get_renderer()
+        ax = axes_named(clip.fig, "posterior")
+        frame = ax.get_window_extent(renderer)
+        for k in replay.arrays["model_ks"]:
+            box = one(ax, f"label-{k}").get_window_extent(renderer)
+            assert frame.x0 <= box.x0 and box.x1 <= frame.x1, f"K = {k}"
+        assert ax.get_xlim()[1] > 250 + GUTTER
