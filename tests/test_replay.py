@@ -1,5 +1,6 @@
 import errno
 import json
+import math
 import os
 import re
 import struct
@@ -11,6 +12,7 @@ from typing import IO
 import numpy as np
 import pytest
 
+from clocks import _replay
 from clocks._demos import demo_1d
 from clocks._replay import (
     CLOUD_SIZE,
@@ -796,7 +798,7 @@ def test_save_replaces_an_existing_archive_whole(tmp_path: Path) -> None:
 # --- thin and record_filter --------------------------------------------------
 
 
-PHI = (5**0.5 - 1) / 2
+PHI = (math.sqrt(5.0) - 1.0) / 2.0
 
 
 @pytest.mark.parametrize(
@@ -815,6 +817,10 @@ def test_thin_picks(weights, size, expected) -> None:
     assert picked.dtype == np.float32
     assert picked.shape == (len(expected), 1)
     assert picked[:, 0].tolist() == expected
+
+
+def test_the_thinning_offset_is_the_golden_ratio_conjugate() -> None:
+    assert _replay.THINNING_OFFSET == (math.sqrt(5.0) - 1.0) / 2.0
 
 
 def test_thin_ignores_the_scale_of_the_weights() -> None:
@@ -1112,7 +1118,33 @@ def test_meta_difference_is_reported_first() -> None:
     other.arrays["mean"][0, 0] += 1.0
     found = first_difference(reference, other)
     assert found is not None
-    assert (found.key, found.row) == ("meta", None)
+    assert (found.key, found.row) == ("meta.seed", None)
+
+
+def test_meta_difference_names_the_first_field_in_sorted_order() -> None:
+    reference, other = _pair()
+    order = list(reference.meta)
+    assert order.index("seed") < order.index("noise_std")
+    other.meta["seed"] = 8
+    other.meta["noise_std"] = 0.5
+    found = first_difference(reference, other)
+    assert found is not None
+    assert found.key == "meta.noise_std"
+
+
+@pytest.mark.parametrize(
+    "lacking",
+    [
+        pytest.param("other", id="other_lacks"),
+        pytest.param("reference", id="reference_lacks"),
+    ],
+)
+def test_a_meta_key_missing_on_one_side_is_named(lacking: str) -> None:
+    reference, other = _pair()
+    del (other if lacking == "other" else reference).meta["cloud_size"]
+    found = first_difference(reference, other)
+    assert found is not None
+    assert found.key == "meta.cloud_size"
 
 
 def test_key_set_difference() -> None:

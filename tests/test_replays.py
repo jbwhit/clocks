@@ -93,6 +93,13 @@ PREDICTION_SPREAD = (0.6, 1.5)
 # account for the rounding in the evaluation here. demo_1d and demo_multi_mass
 # keep row 0: their panels draw the prior's predicted bars.
 FIRST_CHECKED_ROW = {"demo_echolocation_3d": 1}
+# The demos whose panels draw the prior's predicted bars, so row 0 is checked.
+PRIOR_CHECKED_DEMOS = ("demo_1d", "demo_multi_mass")
+# Where predicted_std is 0, as in a one-particle run, the dots' mean reading must
+# be within this of predicted_mean and their s.d. at most this. Rounding a dot to
+# float32 moves its reading by 6.4e-11 (demo_1d) and 1.4e-9 (demo_multi_mass) in
+# one-particle recordings.
+ZERO_SPREAD_ATOL = 1e-7
 
 
 def _params(names: Sequence[str]) -> list[object]:
@@ -246,20 +253,37 @@ def _assert_predictions_match_dots(
     and their s.d. is ``PREDICTION_SPREAD`` times ``predicted_std``.
     """
     m = dot_readings.shape[1]
+    low, high = PREDICTION_SPREAD
     for row, readings in enumerate(dot_readings, start=first_row):
-        sd = predicted_std[row]
-        deviation = np.abs(readings.mean(axis=0) - predicted_mean[row]) / sd
+        mean_gap = np.abs(readings.mean(axis=0) - predicted_mean[row])
+        dots_sd = readings.std(axis=0)
+        zero = predicted_std[row] == 0
+        # Clocks with no predicted spread: compared in absolute terms.
+        for clock in np.flatnonzero(zero & ~(mean_gap <= ZERO_SPREAD_ATOL)):
+            raise AssertionError(
+                f"row {row}, clock {clock}: the dots' mean reading differs from "
+                f"predicted_mean by {mean_gap[clock]:.3g} where predicted_std is 0"
+            )
+        for clock in np.flatnonzero(zero & ~(dots_sd <= ZERO_SPREAD_ATOL)):
+            raise AssertionError(
+                f"row {row}, clock {clock}: the dots' s.d. is {dots_sd[clock]:.3g} "
+                "where predicted_std is 0"
+            )
+        positive = np.flatnonzero(~zero)
+        if positive.size == 0:
+            continue
+        sd = predicted_std[row][positive]
+        deviation = mean_gap[positive] / sd
         worst = int(np.argmax(deviation))
         assert np.all(deviation <= PREDICTION_MEAN_BOUND / np.sqrt(m)), (
-            f"row {row}, clock {worst}: the dots' mean reading is "
+            f"row {row}, clock {positive[worst]}: the dots' mean reading is "
             f"{deviation[worst] * np.sqrt(m):.3g} s.d./sqrt(m) from predicted_mean"
         )
-        ratio = readings.std(axis=0) / sd
-        low, high = PREDICTION_SPREAD
+        ratio = dots_sd[positive] / sd
         outside = int(np.argmax((ratio < low) | (ratio > high)))
         assert np.all((low <= ratio) & (ratio <= high)), (
-            f"row {row}, clock {outside}: the dots' s.d. is {ratio[outside]:.3g} "
-            f"of predicted_std, expected {low} to {high}"
+            f"row {row}, clock {positive[outside]}: the dots' s.d. is "
+            f"{ratio[outside]:.3g} of predicted_std, expected {low} to {high}"
         )
 
 
@@ -438,14 +462,26 @@ def test_a_weight_in_view_the_dots_contradict_is_caught() -> None:
 
 
 def test_a_weight_in_view_off_by_its_sampling_error_is_caught() -> None:
-    # The prior row's 0.45% set to 4%: inside the old fixed 0.05, outside six
-    # sampling errors of the dots' 0.4%.
+    # The row with the fewest dots in view (row 0 today, 0.4%), its weight set
+    # 0.036 above the dots' fraction: inside the old fixed 0.05, outside six
+    # sampling errors.
+    OFFSET = 0.036
+    OLD_TOLERANCE = 0.05  # the weight check's fixed tolerance, before the bound
     arrays = _archive("demo_echolocation_3d").arrays
+    cloud, low_high = arrays["cloud"], arrays["view_bounds"]
+    low, high = low_high
+    positions = cloud[:, :, :3]
+    inside = np.all((positions >= low) & (positions <= high), axis=2)
+    p = inside.mean(axis=1)
+    row = int(np.argmin(p))
+    bound = max(0.01, 6 * np.sqrt(p[row] * (1 - p[row]) / cloud.shape[1]))
+    assert bound < OFFSET
+    assert OFFSET < OLD_TOLERANCE  # why 0.036: inside the old fixed tolerance
     corrupted = arrays["weight_in_view"].copy()
-    corrupted[0] = 0.04
+    corrupted[row] = p[row] + OFFSET
 
-    with pytest.raises(AssertionError, match="row 0:"):
-        _assert_weight_matches_dots(corrupted, arrays["cloud"], arrays["view_bounds"])
+    with pytest.raises(AssertionError, match=f"row {row}:"):
+        _assert_weight_matches_dots(corrupted, cloud, low_high)
 
 
 def _first_row(name: str) -> int:
@@ -477,6 +513,121 @@ def test_archive_predictions_match_the_dots(name: str) -> None:
     )
 
 
+@pytest.mark.parametrize("name", ["demo_1d", "demo_multi_mass"])
+def test_a_one_particle_recording_passes_the_prediction_check(name: str) -> None:
+    module = importlib.import_module(f"clocks._demos.{name}")
+    replay = module.record(n_observations=2, n_particles=1)
+    arrays = replay.arrays
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _assert_predictions_match_dots(
+            arrays["predicted_mean"],
+            arrays["predicted_std"],
+            _readings_of_dots(
+                arrays["cloud"],
+                arrays["clock_positions"],
+                replay.meta["track_offset"],
+                centred=False,
+                first_row=0,
+            ),
+            0,
+        )
+
+
+def test_a_one_particle_prediction_off_the_dot_is_caught() -> None:
+    module = importlib.import_module("clocks._demos.demo_1d")
+    replay = module.record(n_observations=2, n_particles=1)
+    arrays = replay.arrays
+    readings = _readings_of_dots(
+        arrays["cloud"],
+        arrays["clock_positions"],
+        replay.meta["track_offset"],
+        centred=False,
+        first_row=0,
+    )
+    corrupted = arrays["predicted_mean"].copy()
+    corrupted[0, 0] += 3e-7  # 3 x the tolerance, written out so loosening it fails
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(
+            AssertionError,
+            match="row 0, clock 0: the dots' mean reading differs from "
+            "predicted_mean by .* where predicted_std is 0",
+        ):
+            _assert_predictions_match_dots(
+                corrupted, arrays["predicted_std"], readings, 0
+            )
+
+
+def test_a_spread_where_none_is_predicted_is_caught() -> None:
+    with pytest.raises(
+        AssertionError,
+        match="row 0, clock 0: the dots' s.d. is .* where predicted_std is 0",
+    ):
+        _assert_predictions_match_dots(
+            np.array([[1.0]]),
+            np.array([[0.0]]),
+            np.array([[[1.0 - 3e-7], [1.0 + 3e-7]]]),  # s.d. 3e-7, 3 x the tolerance
+            0,
+        )
+
+
+def test_a_nan_prediction_where_no_spread_is_predicted_is_caught() -> None:
+    with pytest.raises(AssertionError, match="row 0, clock 0:"):
+        _assert_predictions_match_dots(
+            np.array([[np.nan]]),
+            np.array([[0.0]]),
+            np.array([[[1.0], [1.0]]]),
+            0,
+        )
+
+
+def test_a_nan_dot_where_no_spread_is_predicted_is_caught() -> None:
+    with pytest.raises(AssertionError, match="row 0, clock 0:"):
+        _assert_predictions_match_dots(
+            np.array([[1.0]]),
+            np.array([[0.0]]),
+            np.array([[[np.nan], [1.0]]]),
+            0,
+        )
+
+
+def test_a_mixed_row_names_the_original_clock() -> None:
+    # Clock 0 has no spread and agrees; clock 1 is 10 predicted s.d. off, 14.1
+    # in units of s.d./sqrt(m) against 6. A helper that renumbered the
+    # positive-spread clocks would say clock 0.
+    with pytest.raises(
+        AssertionError, match="row 0, clock 1: the dots' mean reading is"
+    ):
+        _assert_predictions_match_dots(
+            np.array([[1.0, 1.0]]),
+            np.array([[0.0, 0.01]]),
+            np.array([[[1.0, 1.09], [1.0, 1.11]]]),
+            0,
+        )
+
+
+def test_a_mixed_row_names_the_original_clock_for_a_spread() -> None:
+    # Clock 0 has a spread and agrees (mean 1.0, s.d. 0.01 = predicted_std);
+    # clock 1 has none, its mean matches, but its dots spread by 3e-7.
+    with pytest.raises(
+        AssertionError, match="row 0, clock 1: the dots' s.d. is 3e-07 where"
+    ):
+        _assert_predictions_match_dots(
+            np.array([[1.0, 2.0]]),
+            np.array([[0.01, 0.0]]),
+            np.array([[[0.99, 2.0 - 3e-7], [1.01, 2.0 + 3e-7]]]),
+            0,
+        )
+
+
+def test_prior_cases_and_the_skip_map_partition_the_predicting_demos() -> None:
+    assert set(PRIOR_CHECKED_DEMOS).isdisjoint(FIRST_CHECKED_ROW)
+    assert set(PRIOR_CHECKED_DEMOS) | set(FIRST_CHECKED_ROW) == set(PREDICTING_DEMOS)
+
+
 def test_echolocation_prior_dots_are_not_evaluated() -> None:
     # A prior dot placed on a clock makes the forward model raise (a singular
     # distance: echolocation's track offset is 0), as a dot rounded across the
@@ -506,8 +657,7 @@ _SHIFTS = [
         ("first_update", 1, 0.02),
         ("final", -1, 0.002),
     ]
-    for name in PREDICTING_DEMOS
-    if not (label == "prior" and name in FIRST_CHECKED_ROW)
+    for name in (PRIOR_CHECKED_DEMOS if label == "prior" else PREDICTING_DEMOS)
 ]
 
 
@@ -604,15 +754,19 @@ def test_archive_covariance_orientation_matches_the_dots(name: str) -> None:
 
 
 def test_a_tilted_covariance_is_caught() -> None:
-    # Row 1, where the x-y correlation is -0.29. At the last row it is -0.14,
-    # and flipping it moves the correlation by 0.27, inside the 0.4 bound: the
-    # invariant catches a reversed tilt only where the tilt is pronounced.
+    # The row after the prior with the largest |x-y correlation| (row 5 today,
+    # -0.326). A reversed tilt is caught only where |r| exceeds about 0.2: the
+    # bound is 0.4 and flipping r moves the dots' correlation by 2|r|.
     arrays = _archive("demo_2d").arrays
-    corrupted = arrays["cov"].copy()
-    corrupted[1, 0, 1] *= -1  # the x-y entry: the drawn ellipse's tilt
-    corrupted[1, 1, 0] *= -1
+    cov = arrays["cov"]
+    r = cov[:, 0, 1] / np.sqrt(cov[:, 0, 0] * cov[:, 1, 1])
+    row = 1 + int(np.argmax(np.abs(r[1:])))
+    assert abs(r[row]) > 0.2
+    corrupted = cov.copy()
+    corrupted[row, 0, 1] *= -1  # the x-y entry: the drawn ellipse's tilt
+    corrupted[row, 1, 0] *= -1
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(AssertionError, match=f"row {row}:"):
         _assert_dots_share_orientation(arrays["cloud"], corrupted)
 
 
@@ -701,7 +855,7 @@ def assert_computed_input_matches(
     """Computed inputs match a committed archive to ``1e-12``, not bit for bit.
 
     The two-mass 2D demo's clocks are drawn from a seeded generator, so their
-    last bit can differ between processor architectures: an exact comparison
+    low-order bits can differ between processor architectures: an exact comparison
     failed on the x86-64 CI runner against an archive recorded on arm64, while
     the full comparison reproduced.
     """

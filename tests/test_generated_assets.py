@@ -1,11 +1,14 @@
 """Contracts for the corrected generated evidence shipped by Task 11."""
 
 import json
+import re
 from hashlib import sha256
 from pathlib import Path
 from statistics import median
 
 import pytest
+
+from clocks._replay import load_replay
 
 ROOT = Path(__file__).parents[1]
 ASSETS = ROOT / "assets"
@@ -23,11 +26,13 @@ EXPECTED_VISUAL_HASHES = {
     "demo_model_comparison.gif": (
         "27af99630edf6578e635d60cfd2f085442f8429ca008ce25afc935b823c6c9f2"
     ),
-    "demo_density.png": (
-        "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"
-    ),
     "demo_echolocation_3d.gif": (
         "5df30d7c052c3e366216866c9b0ecc991cc777467515dd1c7699de743413d34f"
+    ),
+}
+RETIRED_VISUALS = {
+    "demo_density.png": (
+        "a7a6e6e9628640ac08e89152b8471d37db981c264380ba567634032a0f59dc7a"
     ),
     "echolocation_range_study.png": (
         "6d62a1c88c78837299bb434e66574d6930eef24c6cf9805e42ec66e141dd86bc"
@@ -175,6 +180,8 @@ PROVENANCE_VOCABULARY = (
     "seed-block 400",
     "400–411",
     "population reliability",
+    "committed replay",
+    "replay file",
 )
 
 
@@ -198,3 +205,157 @@ def test_landing_page_links_to_the_figure_provenance_section() -> None:
 
     assert "reproduce/reproducibility.qmd#sec-figures" in landing
     assert "{#sec-figures}" in provenance
+
+
+@pytest.mark.parametrize(("name", "expected_hash"), RETIRED_VISUALS.items())
+def test_retired_visuals_are_gone_but_recorded(name: str, expected_hash: str) -> None:
+    report = (ROOT / "docs/2026-08-16-development-calibration.md").read_text()
+
+    assert not (ASSETS / name).exists()
+    assert not (SITE_ASSETS / name).exists()
+    assert f"| `{name}` | `{expected_hash}` |" in report.splitlines()
+    assert re.search(
+        rf"`{re.escape(name)}` was removed from both trees on \d{{4}}-\d{{2}}-\d{{2}};",
+        report,
+    )
+
+
+def _reproducibility_page() -> str:
+    return (ROOT / "site/reproduce/reproducibility.qmd").read_text()
+
+
+def test_density_provenance_names_its_run() -> None:
+    meta = load_replay(ROOT / "assets/replays/demo_density.npz").meta
+    page = " ".join(_reproducibility_page().split())
+
+    assert (
+        "**Replay data.** The density figure on "
+        "[Beyond Point Masses](../story/beyond-point-masses.qmd) is drawn when the "
+        "site is built, from `assets/replays/demo_density.npz`, the recorder's "
+        "archive of the demo's packaged run: "
+        f"{meta['n_observations']} observations, {meta['n_particles']:,} particles "
+        f"and seed {meta['seed']}. "
+    ) in page
+    assert "density PNG" not in page
+
+
+def test_the_cloud_size_in_the_prose_is_the_archives() -> None:
+    meta = load_replay(ROOT / "assets/replays/demo_density.npz").meta
+    size = meta["cloud_size"]
+    reproducibility = " ".join(_reproducibility_page().split())
+    story = " ".join((ROOT / "site/story/beyond-point-masses.qmd").read_text().split())
+    caption = f"from {size} particles sampled from the final posterior"
+
+    assert f"a {size}-particle sample for display" in reproducibility
+    assert story.count(caption) == 2
+
+
+def test_range_study_provenance_names_its_source() -> None:
+    page = " ".join(_reproducibility_page().split())
+
+    assert (
+        "The figure is drawn when the site is built, from the certified "
+        "block-400 records in `assets/echolocation_range_study.json`. "
+        "The frozen cell passed "
+    ) in page
+    assert "range-study PNG" not in page
+
+
+def test_deploy_sentence_says_how_each_figure_is_redrawn() -> None:
+    page = " ".join(_reproducibility_page().split())
+
+    assert (
+        "so every figure drawn by an executed cell is redrawn at deploy time: "
+        "most by running the model again from source, and the density and "
+        "range-study figures from committed data files. The demo GIFs are the "
+        "exceptions: they are committed images, described in the next section."
+    ) in page
+    assert "regenerated from source at deploy time" not in page
+    assert "range-study PNG" not in page
+
+
+def test_provenance_section_describes_figures_drawn_at_build_time() -> None:
+    raw = _reproducibility_page()
+    page = " ".join(raw.split())
+
+    assert "## Where the figures come from {#sec-figures}" in raw
+    assert (
+        "[development calibration report]"
+        "(https://github.com/jbwhit/clocks/blob/main/"
+        "docs/2026-08-16-development-calibration.md) "
+        "is the record of the August 2026 release"
+    ) in page
+
+
+def test_site_check_description_names_the_figure_data() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "touch the site, the library, or the data the site's figures are drawn from"
+        in page
+    )
+
+
+def test_the_seed_sentence_covers_only_cells_that_draw_random_numbers() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "Every demo, and every executed cell on this site that draws random "
+        "numbers, fixes its RNG seed."
+    ) in page
+
+
+def test_the_ci_bullets_link_exactly_the_workflow_files() -> None:
+    raw = _reproducibility_page()
+    page = " ".join(raw.split())
+    section = raw.split("Four workflows run on GitHub Actions:")[1]
+    section = section.split("\n## ")[0]
+    links = re.findall(
+        r"^- \[`([\w-]+\.yml)`\]\((\S+)\)",
+        section,
+        re.MULTILINE,
+    )
+    files = {path.name for path in (ROOT / ".github/workflows").glob("*.yml")}
+
+    assert "Four workflows run on GitHub Actions:" in page
+    assert len(links) == 4
+    assert len({text for text, _ in links}) == 4
+    base = "https://github.com/jbwhit/clocks/blob/main/.github/workflows/"
+    assert all(target == f"{base}{text}" for text, target in links)
+    assert {text for text, _ in links} == files
+
+
+def test_the_replay_report_bullet_claims_only_what_the_workflow_guarantees() -> None:
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "It is a diagnostic: every step is allowed to fail without failing the run."
+    ) in page
+    assert "never fails a pull request" not in page
+
+
+_NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+_NUMBER_WORDS |= {7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven"}
+_NUMBER_WORDS |= {12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen"}
+
+
+def test_the_range_caption_counts_the_studys_runs_and_ranges() -> None:
+    study = json.loads((ASSETS / "echolocation_range_study.json").read_text())
+    ranges = study["ranges"]
+    per_range = {
+        sum(run["range_r"] == range_r for run in study["results"]) for range_r in ranges
+    }
+    assert len(per_range) == 1
+    phrase = (
+        f"{_NUMBER_WORDS[per_range.pop()]} runs at each of "
+        f"{_NUMBER_WORDS[len(ranges)]} ranges"
+    )
+    lines = (ROOT / "site/story/gravitational-echolocation.qmd").read_text()
+    captions = [
+        line for line in lines.splitlines() if line.startswith('#|   - "Resolution')
+    ]
+
+    assert len(captions) == 2
+    for caption in captions:
+        assert phrase in caption
+        assert (
+            "the median posterior standard deviation (for position, the three "
+            "coordinates' standard deviations combined in quadrature);"
+        ) in caption

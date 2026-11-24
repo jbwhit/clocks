@@ -4,7 +4,8 @@ title: "Reproducibility"
 
 ## Seeds everywhere
 
-Every demo and every executed cell on this site fixes its RNG seed.
+Every demo, and every executed cell on this site that draws random numbers,
+fixes its RNG seed.
 `SimulationConfig.seed` and `InferenceConfig.seed` thread a single
 generator through observation noise and the particle filter respectively,
 so a given configuration is repeatable in the same numerical environment.
@@ -28,38 +29,56 @@ because hardcoded counts go stale.
 
 ## CI
 
-Three workflows run on GitHub Actions:
+Four workflows run on GitHub Actions:
 
 - [`ci.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/ci.yml)
   runs tests and lint on pushes to `main` and on non-draft pull requests
   targeting `main`, including when a draft is marked ready for review.
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
   is triggered by each push to `main` and re-renders and redeploys this site, so every
-  executed-cell figure you see is regenerated from source at deploy time. The
-  demo GIFs, the density PNG, and the echolocation range-study PNG are the
-  exceptions: they are committed files, described in the next section.
+  figure drawn by an executed cell is redrawn at deploy time: most by running
+  the model again from source, and the density and range-study figures from
+  committed data files. The demo GIFs are the exceptions: they are committed
+  images, described in the next section.
 - [`site-check.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site-check.yml)
   renders this site and runs the link and figure checks on non-draft pull
-  requests targeting `main` that touch the site or the library, so a broken
-  page is caught before it merges.
+  requests targeting `main` that touch the site, the library, or the data the
+  site's figures are drawn from, so a broken page is caught before it merges.
+- [`replay-report.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/replay-report.yml)
+  records each demo again on the runner and reports where the result differs
+  from the committed replay data. It is a diagnostic: every step is allowed to
+  fail without failing the run.
 
-## Where the committed figures come from {#sec-figures}
+## Where the figures come from {#sec-figures}
 
 The story pages keep commentary on these figures' origin to a short caveat.
 This section summarizes where each came from and what it does and does not
-establish; the
+establish. The
 [development calibration report](https://github.com/jbwhit/clocks/blob/main/docs/2026-08-16-development-calibration.md)
-records the generating commit and the asset hashes.
+is the record of the August 2026 release: the generating commit and the hashes
+of the files that release shipped, not of every figure now on this site.
 
-**Demo animations and the density figure.** Each committed GIF, and the
-density PNG, is the packaged default output of its `uv run demo-*` command,
-generated explicitly from the corrected physics and SMC implementation after
-one-shot certification. The commands regenerate their scenarios, but image
-encoders are not claimed to be byte-deterministic across tool versions. Each
-figure depicts one named finite realization: a fixed scenario and seed. None
-establishes a population recovery rate. Where a story page also runs a
-smaller example in an executed cell, that is a separate finite run whose
-settings are shown in the cell.
+**Demo animations.** Each committed GIF is the packaged default output of its
+`uv run demo-*` command, generated explicitly from the corrected physics and
+SMC implementation after one-shot certification. The commands regenerate their
+scenarios, but image encoders are not claimed to be byte-deterministic across
+tool versions. Each animation depicts one named finite realization: a fixed
+scenario and seed. None establishes a population recovery rate. Where a story
+page also runs a smaller example in an executed cell, that is a separate finite
+run whose settings are shown in the cell.
+
+**Replay data.** The density figure on
+[Beyond Point Masses](../story/beyond-point-masses.qmd) is drawn when the site
+is built, from `assets/replays/demo_density.npz`, the recorder's archive of the
+demo's packaged run: 60 observations, 2,000 particles and seed 42. The archive
+holds the configuration, seed and observations, a summary of the cloud before
+any observation and after each, and a 500-particle sample for display. Tests
+run the demo again; they compare its inputs, the computed ones (clock
+positions, true rates and readings) at `rtol=1e-12, atol=1e-12` and the rest
+exactly, and its summaries within stated bounds; they do not require the same
+random path. `uv run demo-density` records the same configured scenario and
+draws its result. The archive is one finite realization: it establishes no
+population recovery rate.
 
 The density demo samples a uniform box in $(\mu,\sigma,A)$ conditioned on
 that box and weak-field validity, and uses the same support for its prior
@@ -101,12 +120,13 @@ run. The reserved 400–411 block was then run exactly once for the
 corrected implementation, using the scenario-default cell via
 `--seed-block 400`; protected blocks reject control overrides.
 
-The displayed study was regenerated directly from the certified block-400
-records. The frozen cell passed 46/72 cases overall; pass counts from close to
-far were 12, 12, 11, 8, 3, 0. The close range passed 12/12. The far/close
-median position-standard-deviation ratio was 66.524, above the frozen factor
-20 gate, and the 12/12 far-range three-standard-deviation coverage is retained
-as a diagnostic rather than promoted after inspection into a new gate.
+The figure is drawn when the site is built, from the certified block-400
+records in `assets/echolocation_range_study.json`. The frozen cell passed 46/72
+cases overall; pass counts from close to far were 12, 12, 11, 8, 3, 0. The close
+range passed 12/12. The far/close median position-standard-deviation ratio was
+66.524, above the frozen factor 20 gate, and the 12/12 far-range
+three-standard-deviation coverage is retained as a diagnostic rather than
+promoted after inspection into a new gate.
 
 The completed protocol guards against tuning directly to the reported holdout,
 but its fixed seeds provide regression and calibration evidence only for those

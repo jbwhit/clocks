@@ -157,6 +157,24 @@ def show(fig: Figure) -> None:
     display(Image(data=buffer.getvalue(), retina=True))
 
 
+def save_png(fig: Figure, path: Path) -> None:
+    """Write ``fig`` to ``path`` as PNG bytes, the pixels ``show`` displays.
+
+    The file is rendered at 200 dpi, twice the style's 100, as ``show`` does, never
+    cropped, opaque, and PNG whatever the path's suffix and whatever
+    ``savefig.*`` settings the caller has in force. It does not close ``fig``.
+    """
+    with matplotlib.rc_context({"savefig.bbox": None}):
+        fig.savefig(
+            path,
+            format="png",
+            dpi=200,
+            bbox_inches=None,
+            transparent=False,
+            facecolor=fig.get_facecolor(),
+        )
+
+
 def _register_fonts() -> None:
     """Add the bundled fonts to matplotlib once, all or none.
 

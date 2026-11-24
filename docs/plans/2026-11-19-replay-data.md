@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+, NumPy, SciPy, pytest, uv, ruff, GitHub Actions.
 
-**Status:** Approved for implementation. Codex xhigh round 2, on `dd818c2`: "SOUND ENOUGH TO IMPLEMENT", with small notes that this revision folds in (the empty-file case, the scripted double's literals, the scale test's form, three echolocation artists, and the hand-over list). Round 1, on `0312f71`, returned "NOT SOUND ENOUGH TO IMPLEMENT" with seven findings, all folded in.
+**Status:** Approved for implementation. Codex xhigh round 2, on `dd818c2`: "SOUND ENOUGH TO IMPLEMENT", with small notes that this revision folds in (the empty-file case, the scripted double's literals, the scale test's form, three echolocation artists, and the hand-over list). Round 1, on `0312f71`, returned "NOT SOUND ENOUGH TO IMPLEMENT" with seven findings, all folded in. Corrected after merge: clock positions are compared at `rtol=1e-12, atol=1e-12`, not exactly (`a108783`).
 
 **Spec:** `docs/plans/2026-11-19-replay-and-animation-design.md`, sections 1 to 3 and item 1 of section 11. Read them before any task. Where this plan and the spec disagree, the spec wins and the disagreement is a plan bug to report. This plan covers pull request 1 only; nothing here draws a figure that is merged.
 
@@ -23,7 +23,7 @@
 - Format name `"clocks-replay"`, version `1`. Arrays are float64 except `cloud` (float32) and the integer arrays (int64). At most 500 particles are displayed: `cloud_size = min(500, n_particles)`.
 - The display-sample offset is φ = (√5 − 1) / 2, with `searchsorted(..., side="left")` on a cumulative sum divided by its last entry.
 - Row 0 of every per-observation array is the prior. Row-0 sentinels are written as exact values: `log_evidence[0] = 0.0`, `ess[0] = float(n_particles)`, and for model comparison `model_log_evidence[0] = 0.0`, `model_ess[0] = float(n_particles)`, `model_posterior[0] = model_prior`.
-- Two tolerance regimes. The **gate** compares computed inputs (`true_rates`, `observations`, `filter_observations`) with `rtol=1e-12, atol=1e-12` and other inputs and `meta` exactly. The **report's** full comparison uses `rtol=1e-9, atol=1e-12` for every float64 array, `rtol=1e-5, atol=1e-6` for `cloud`, and exact equality for integers and `meta`.
+- Two tolerance regimes. The **gate** compares computed inputs (`clock_positions`, `true_rates`, `observations`, `filter_observations`) with `rtol=1e-12, atol=1e-12` and other inputs and `meta` exactly. The **report's** full comparison uses `rtol=1e-9, atol=1e-12` for every float64 array, `rtol=1e-5, atol=1e-6` for `cloud`, and exact equality for integers and `meta`.
 - `created_with` is provenance. No test or comparison reads its values.
 - The CI test job (`.github/workflows/ci.yml`) is not edited.
 
@@ -503,7 +503,7 @@ Helpers in the test module, each usable on in-memory arrays so it can be tried o
 Invariants on the committed archives (no inference; all seven in the default suite):
 
 - `test_archives_are_exactly_the_seven`: the `.npz` stems in `ARCHIVES` equal `set(DEMOS)`.
-- `test_archive_matches_its_scenario` (each demo): `meta` fields `demo`, `seed`, `noise_std`, `n_observations`, `n_particles`, `track_offset`, `param_names`, `prior_ranges` equal the scenario's (tuples converted to lists at both levels); `clock_positions` and `true_params` are `np.array_equal` to the scenario's; `true_rates` matches with `rtol=1e-12, atol=1e-12`.
+- `test_archive_matches_its_scenario` (each demo): `meta` fields `demo`, `seed`, `noise_std`, `n_observations`, `n_particles`, `track_offset`, `param_names`, `prior_ranges` equal the scenario's (tuples converted to lists at both levels); `true_params` is `np.array_equal` to the scenario's; `clock_positions` and `true_rates` match with `rtol=1e-12, atol=1e-12`.
 - `test_archive_truth_is_physical` (each demo): `np.max(np.abs(true_rates**2 - 1.0)) <= 0.08`; and x₁ < x₂, which is `true_params[0] < true_params[1]` for `demo_multi_mass` and `demo_model_comparison` and `true_params[0] < true_params[2]` for `demo_multi_mass_2d`.
 - `test_archive_sentinels_and_ranges` (the six filter demos): `log_evidence[0] == 0.0`; `ess[0] == n_particles` exactly; `0 < ess` and `ess <= n_particles * (1 + 1e-12)` in every row; for every row, `cov` equals its transpose with `rtol=0, atol=1e-12 * abs(cov).max()` and `np.linalg.eigvalsh(cov).min() >= -1e-12 * np.trace(cov)`; `mh_acceptances <= mh_proposals`; `tempering_stages >= 1`.
 - `test_archive_dots_agree_with_summaries` (the six filter demos): `_inside_prior(cloud, prior_ranges)`; in every row and column, `abs(cloud.mean(axis=1) - mean) <= 6 * sd / sqrt(m)` and `0.6 <= cloud.std(axis=1) / sd <= 1.5`, with `sd = sqrt(diag(cov))` and `cloud` cast to float64 for the moments. (The spec's candidates reach 3.0 and 0.78 to 1.29; if a fresh archive fails this, report it, do not widen it.)
@@ -516,7 +516,7 @@ Invariants on the committed archives (no inference; all seven in the default sui
 
 The gate (each demo; the three slow ones marked), against `fresh = record()`:
 
-- `test_gate_inputs`: the key sets are equal; every array has the same shape and dtype; `meta` is equal after dropping `created_with` from both; `clock_positions`, `true_params` and, for model comparison, `model_ks` and `model_prior` are `np.array_equal`; `true_rates`, `observations` and, for echolocation, `filter_observations` match with `rtol=1e-12, atol=1e-12`.
+- `test_gate_inputs`: the key sets are equal; every array has the same shape and dtype; `meta` is equal after dropping `created_with` from both; `true_params` and, for model comparison, `model_ks` and `model_prior` are `np.array_equal`; `clock_positions`, `true_rates`, `observations` and, for echolocation, `filter_observations` match with `rtol=1e-12, atol=1e-12`.
 - `test_gate_summaries`: at each row in `_checkpoints(n_observations)`, for each parameter column, `abs(fresh_mean - archive_mean) <= bound` and `abs(fresh_sd - archive_sd) <= bound`, with `sd = sqrt(diag(cov))`. Position columns are those whose name starts with `x`, `y` or `z`; mass columns those starting with `M`. For `demo_model_comparison`: `model_posterior[row, 0] <= 1e-5` at row 1 and `<= 1e-20` at row 8 and the last row, in both the archive and the fresh run; and `abs(fresh − archive) <= 0.45` for `model_posterior[1, 1]`.
 
 ```python

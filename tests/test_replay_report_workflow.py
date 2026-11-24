@@ -141,11 +141,19 @@ def _last_script() -> str:
 
 
 def _run_last_step(
-    tmp_path: Path, report: str | None, upload_outcome: str, summary_name: str
+    tmp_path: Path,
+    report: str | None,
+    upload_outcome: str,
+    summary_name: str,
+    path_prefix: Path | None = None,
+    seed_summary: str | None = None,
 ) -> tuple[str, str]:
     if report is not None:
         (tmp_path / "replay-report.md").write_text(report, encoding="utf-8")
     summary = tmp_path / summary_name
+    if seed_summary is not None:
+        summary.write_text(seed_summary, encoding="utf-8")
+    path = "/usr/bin:/bin" if path_prefix is None else f"{path_prefix}:/usr/bin:/bin"
     bash = shutil.which("bash")
     assert bash is not None
     result = subprocess.run(
@@ -153,7 +161,7 @@ def _run_last_step(
         [bash, "-e", "-c", _last_script()],
         cwd=tmp_path,
         env={
-            "PATH": "/usr/bin:/bin",
+            "PATH": path,
             "GITHUB_STEP_SUMMARY": str(summary),
             "SAMPLE": "2",
             "UPLOAD_OUTCOME": upload_outcome,
@@ -251,3 +259,47 @@ def test_the_last_step_shows_or_warns(
         assert summary == f"```text\n{report}```\n"
     else:
         assert summary == ""
+
+
+def test_a_failed_read_leaves_the_summary_untouched(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_cat = fake_bin / "cat"
+    fake_cat.write_text("#!/bin/sh\nprintf 'partial'\nexit 1\n", encoding="utf-8")
+    fake_cat.chmod(0o755)
+
+    stdout, summary = _run_last_step(
+        tmp_path,
+        "# report\n",
+        "success",
+        _SUMMARY,
+        path_prefix=fake_bin,
+        seed_summary="previous summary\n",
+    )
+
+    assert "the report for sample 2 could not be added to the summary" in stdout
+    assert summary == "previous summary\n"
+
+
+def test_a_report_with_format_characters_is_added_unchanged(tmp_path: Path) -> None:
+    report = "100% done \\n and %s\n"
+
+    stdout, summary = _run_last_step(tmp_path, report, "success", _SUMMARY)
+
+    assert summary == f"```text\n{report}```\n"
+    assert "::warning" not in stdout
+
+
+def test_the_upload_runs_on_node_24() -> None:
+    steps = [
+        step
+        for step in _steps()
+        if "id: upload" in [line.strip() for line in step.splitlines()]
+    ]
+    assert len(steps) == 1
+    uses = [
+        line.strip()
+        for line in steps[0].splitlines()
+        if line.strip().startswith("uses:")
+    ]
+    assert uses == ["uses: actions/upload-artifact@v7"]

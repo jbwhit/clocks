@@ -1,8 +1,8 @@
 import importlib.util
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-import test_site_figure_style as site_style
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
 _SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
@@ -10,8 +10,7 @@ assert _SPEC is not None and _SPEC.loader is not None
 check_site_figures = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check_site_figures)
 
-# Captured before the autouse fixture below replaces the constant.
-REAL_EXPECTED_PAGES = dict(check_site_figures.EXPECTED_PAGES)
+Fig = check_site_figures.Fig
 
 PAGE = "story/demo.html"
 CAPTION = "Rate of <code>x</code> versus distance."
@@ -84,7 +83,30 @@ def _build(
 
 @pytest.fixture(autouse=True)
 def one_expected_page(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(check_site_figures, "EXPECTED_PAGES", {PAGE: 420})
+    monkeypatch.setattr(
+        check_site_figures, "EXPECTED_FIGURES", {PAGE: (Fig("plot", 420),)}
+    )
+
+
+def _pair(n: int, height: int) -> tuple[str, str]:
+    """The light and dark wrappers of figure ``n``."""
+    return (
+        _wrapper("light", [(f"demo_files/light{n}.png", 750)], [CAPTION], height),
+        _wrapper("dark", [(f"demo_files/dark{n}.png", 750)], [CAPTION], height),
+    )
+
+
+def _page(tmp_path: Path, wrappers: Sequence[str], page: str = PAGE) -> Path:
+    """Write the image files and a page holding ``wrappers`` in the order given."""
+    files = tmp_path / Path(page).parent / "demo_files"
+    files.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 4):
+        for theme in ("light", "dark"):
+            (files / f"{theme}{n}.png").write_bytes(f"{theme}{n}.png".encode())
+    (tmp_path / page).write_text(
+        f"<html><body>{''.join(wrappers)}</body></html>", encoding="utf-8"
+    )
+    return tmp_path
 
 
 def _single_failure(tmp_path: Path, reason: str) -> None:
@@ -179,7 +201,7 @@ def test_a_dark_caption_in_a_second_dark_wrapper(tmp_path: Path) -> None:
     second = _wrapper("dark", [], [CAPTION], 420)
     _single_failure(
         _build(tmp_path, dark_captions=[], extra=second),
-        "dark-content: expected 1 wrapper, found 2",
+        "expected 1 figure(s), 2 theme wrappers; found 3",
     )
 
 
@@ -223,13 +245,17 @@ def test_a_well_formed_tall_page_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     site = _build(tmp_path, light_height=540, dark_height=540)
-    monkeypatch.setattr(check_site_figures, "EXPECTED_PAGES", {PAGE: 540})
+    monkeypatch.setattr(
+        check_site_figures, "EXPECTED_FIGURES", {PAGE: (Fig("plot", 540),)}
+    )
     assert check_site_figures.figure_failures(site) == []
-    monkeypatch.setattr(check_site_figures, "EXPECTED_PAGES", {PAGE: 420})
+    monkeypatch.setattr(
+        check_site_figures, "EXPECTED_FIGURES", {PAGE: (Fig("plot", 420),)}
+    )
     failures = check_site_figures.figure_failures(site)
     assert len(failures) == 2, failures
     for theme, failure in zip(("light", "dark"), failures, strict=True):
-        assert f"{PAGE}: {theme}-content: height 540, expected 420" == failure
+        assert f"{PAGE}: figure 1 {theme}-content: height 540, expected 420" == failure
 
 
 def test_section_wrappers_with_a_div_before_the_image_pass(tmp_path: Path) -> None:
@@ -276,11 +302,90 @@ def test_a_missing_page_is_a_failure(tmp_path: Path) -> None:
     _single_failure(tmp_path, "page is missing")
 
 
-def test_expected_pages_match_the_plot_pages_and_their_heights() -> None:
-    plot_pages = {page.replace(".qmd", ".html") for page in site_style.PLOT_PAGES}
-    assert len(plot_pages) == 9 and len(REAL_EXPECTED_PAGES) == 9
-    assert set(REAL_EXPECTED_PAGES) == plot_pages
-    for page, height in REAL_EXPECTED_PAGES.items():
-        cell = site_style._only_plot_cell(page.replace(".html", ".qmd"))
-        cell_height = 540 if "figsize=(7.5, 5.4)" in cell else 420
-        assert height == cell_height, page
+TWO_PLOTS = (Fig("plot", 540), Fig("plot", 420))
+
+
+def _set_manifest(monkeypatch: pytest.MonkeyPatch, figures: tuple[object, ...]) -> None:
+    monkeypatch.setattr(check_site_figures, "EXPECTED_FIGURES", {PAGE: figures})
+
+
+def test_a_page_with_two_plots_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_manifest(monkeypatch, TWO_PLOTS)
+    site = _page(tmp_path, [*_pair(1, 540), *_pair(2, 420)])
+    assert check_site_figures.figure_failures(site) == []
+
+
+def test_two_plots_with_their_heights_swapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_manifest(monkeypatch, TWO_PLOTS)
+    site = _page(tmp_path, [*_pair(1, 420), *_pair(2, 540)])
+    assert check_site_figures.figure_failures(site) == [
+        f"{PAGE}: figure 1 light-content: height 420, expected 540",
+        f"{PAGE}: figure 1 dark-content: height 420, expected 540",
+        f"{PAGE}: figure 2 light-content: height 540, expected 420",
+        f"{PAGE}: figure 2 dark-content: height 540, expected 420",
+    ]
+
+
+def test_wrappers_out_of_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_manifest(monkeypatch, TWO_PLOTS)
+    (light1, dark1), (light2, dark2) = _pair(1, 540), _pair(2, 420)
+    site = _page(tmp_path, [light1, light2, dark1, dark2])
+    assert check_site_figures.figure_failures(site) == [
+        f"{PAGE}: figure 1: expected light-content then dark-content, "
+        "found light-content then light-content",
+        f"{PAGE}: figure 2: expected light-content then dark-content, "
+        "found dark-content then dark-content",
+    ]
+
+
+def test_a_missing_second_figure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_manifest(monkeypatch, TWO_PLOTS)
+    site = _page(tmp_path, _pair(1, 540))
+    assert check_site_figures.figure_failures(site) == [
+        f"{PAGE}: expected 2 figure(s), 4 theme wrappers; found 2"
+    ]
+
+
+def test_identical_light_and_dark_content(tmp_path: Path) -> None:
+    site = _build(tmp_path)
+    (site / "story/demo_files/dark.png").write_bytes(b"light.png")
+    _single_failure(site, "figure 1: light and dark images have the same content")
+
+
+def test_an_encoded_nul_is_a_failure(tmp_path: Path) -> None:
+    _single_failure(
+        _build(tmp_path, dark=[("demo_files/dark%00.png", 750)]),
+        "image path contains a NUL",
+    )
+
+
+def test_a_wrapper_on_an_unlisted_page(tmp_path: Path) -> None:
+    site = _build(tmp_path)
+    _page(site, [_pair(1, 420)[0]], page="story/other.html")
+    assert check_site_figures.figure_failures(site) == [
+        "story/other.html: not in the figure manifest, but has 1 theme wrapper(s)"
+    ]
+
+
+def test_a_listed_page_with_no_figures_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_manifest(monkeypatch, ())
+    site = _page(tmp_path, [])
+    assert check_site_figures.figure_failures(site) == []
+
+
+def test_a_listed_page_with_no_figures_must_have_no_wrappers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_manifest(monkeypatch, ())
+    site = _page(tmp_path, _pair(1, 420))
+    assert check_site_figures.figure_failures(site) == [
+        f"{PAGE}: expected 0 figure(s), 0 theme wrappers; found 2"
+    ]
