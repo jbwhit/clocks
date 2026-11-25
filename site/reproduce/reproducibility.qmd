@@ -114,11 +114,12 @@ under the frozen settings, using the scenario-default cell via
 `--seed-block 400`, and protected blocks reject control overrides. The
 repository records that run; it does not enforce that there was only one.
 Earlier implementations used three earlier blocks, as their design records
-state: seeds 100–111 as a holdout
-([clone-freeze diagnosis](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md)),
-and seeds 200–211 and 300–311 as certification blocks
-([annealed-jitter design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-02-annealed-jitter-design.md),
-[3D echolocation design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-19-3d-echolocation-design.md)).
+state: seeds 100–111 and 200–211 were the multi-mass 2D filter's holdout and
+certification blocks
+([clone-freeze diagnosis](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md),
+[annealed-jitter design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-02-annealed-jitter-design.md)),
+and seeds 300–311 were this range study's own earlier certification block
+([3D echolocation design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-19-3d-echolocation-design.md)).
 
 The figure is drawn when the site is built, from the certified block-400
 records in `assets/echolocation_range_study.json`. The frozen cell passed 46/72

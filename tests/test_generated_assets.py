@@ -579,9 +579,17 @@ def test_the_protocol_sentences() -> None:
 def test_the_earlier_seed_blocks_are_disclosed_with_their_records() -> None:
     """Only this catches a disclosure whose citation has gone."""
     page = " ".join(_reproducibility_page().split())
+    clone_freeze, annealed_jitter, echolocation = (
+        f"{_SPEC_URL}{relative}" for relative in _EARLIER_BLOCK_RECORDS
+    )
     assert (
         "Earlier implementations used three earlier blocks, as their design "
-        "records state: seeds 100–111 as a holdout"
+        "records state: seeds 100–111 and 200–211 were the multi-mass 2D "
+        "filter's holdout and certification blocks "
+        f"([clone-freeze diagnosis]({clone_freeze}), "
+        f"[annealed-jitter design]({annealed_jitter})), and seeds 300–311 were "
+        "this range study's own earlier certification block "
+        f"([3D echolocation design]({echolocation}))."
     ) in page
     for relative, phrase in _EARLIER_BLOCK_RECORDS.items():
         assert f"]({_SPEC_URL}{relative})" in page, relative
