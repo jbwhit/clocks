@@ -4,6 +4,7 @@
 imported, so the snapshot it takes is of the source the run then compiles.
 """
 
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -12,8 +13,9 @@ def read_sources(root: Path) -> list[tuple[str, bytes]]:
     """Each regular file under ``root``, outside ``__pycache__`` directories, as
     its path relative to ``root`` and its bytes, sorted by that path.
 
-    A directory that cannot be listed, ``root`` itself included, raises its
-    ``OSError``: an unread part of the tree would leave it out of the digest.
+    A directory that cannot be listed, ``root`` itself included, or an entry
+    whose status cannot be read, raises its ``OSError``: an unread part of the
+    tree would leave it out of the digest.
     """
     items = [
         (path.relative_to(root).as_posix(), path.read_bytes()) for path in _files(root)
@@ -26,7 +28,7 @@ def _files(root: Path) -> Iterator[Path]:
         subdirectories[:] = [d for d in subdirectories if d != "__pycache__"]
         for name in files:
             path = directory / name
-            if path.is_file():
+            if stat.S_ISREG(path.stat().st_mode):  # a failed stat raises
                 yield path
 
 

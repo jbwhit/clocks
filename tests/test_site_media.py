@@ -2,7 +2,9 @@
 
 import ast
 import functools
+import importlib.util
 import inspect
+import json
 import os
 import re
 import shutil
@@ -35,20 +37,24 @@ OLD = ("old clip", "old poster")
 
 PINNED = '''"""Quarto pre-render step: draw the site's clips and posters into media/.
 
-The package's source tree is read before any clocks module is imported, and
-clocks is then compiled from source into a fresh bytecode cache: cached
-bytecode is trusted by its source's size and time, which an edit can keep, so
-without this the digest each pair's record holds could name code that did not
-draw it.
+The package's source tree is read once, before any clocks module is imported,
+and written to a private temporary directory; the renderer is imported from
+that copy. So the code that draws is exactly the snapshot each pair's record
+names, whatever happens to the live tree, or to bytecode cached beside it,
+meanwhile. The live tree is read again before each record is written, so an
+edit that persists is caught too.
 """
 
 import importlib.util
 import os
 import sys
 import tempfile
+import types
+from collections.abc import Callable
 from pathlib import Path
 
 import matplotlib
+from matplotlib import font_manager
 
 matplotlib.use("Agg")
 
@@ -58,31 +64,80 @@ SITE = Path(__file__).resolve().parent
 def main(
     archives: Path, media: Path, *, full: bool, demos: tuple[str, ...] | None = None
 ) -> None:
+    """Render the media from a private copy of the package; restore what it set.
+
+    Refuses to run when any ``clocks`` module is already imported: that code,
+    not the snapshot, would draw.
+    """
+    loaded = sorted(n for n in sys.modules if n == "clocks" or n.startswith("clocks."))
+    if loaded:
+        raise RuntimeError(
+            f"clocks is already imported ({', '.join(loaded)}): run the "
+            "pre-render step in a fresh process, so the snapshot is what draws"
+        )
     spec = importlib.util.find_spec("clocks")  # locates the package, imports nothing
     package = Path(spec.submodule_search_locations[0]).resolve()
-    with tempfile.TemporaryDirectory(prefix="clocks-bytecode-") as cache:
-        sys.pycache_prefix = cache
-        sources = _load("clocks_sources", package / "_sources.py")
-        snapshot = sources.read_sources(package)
-        from clocks._site_media import render_site_media
+    saved_path = list(sys.path)
+    saved_fonts = list(font_manager.fontManager.ttflist)
+    with tempfile.TemporaryDirectory(prefix="clocks-snapshot-") as root:
+        try:
+            snapshot = _snapshot(package)
+            _write_copy(Path(root) / "clocks", snapshot)
+            render_site_media = _import_renderer(Path(root))
+            options = {} if demos is None else {"demos": demos}
+            render_site_media(
+                archives,
+                media,
+                full=full,
+                sources=package,
+                sources_snapshot=snapshot,
+                **options,
+            )
+        finally:
+            for name in [n for n in sys.modules if n.split(".")[0] == "clocks"]:
+                del sys.modules[name]
+            sys.path[:] = saved_path
+            _restore_fonts(saved_fonts)
 
-        options = {} if demos is None else {"demos": demos}
-        render_site_media(
-            archives,
-            media,
-            full=full,
-            sources=package,
-            sources_snapshot=snapshot,
-            **options,
-        )
+
+def _restore_fonts(saved: list[font_manager.FontEntry]) -> None:
+    """Forget the fonts the copy registered: their files are about to go."""
+    font_manager.fontManager.ttflist[:] = saved
+    cached = getattr(font_manager.fontManager, "_findfont_cached", None)
+    if cached is not None:  # lookups made while the copy's fonts were listed
+        cached.cache_clear()
 
 
-def _load(name: str, path: Path):
-    """Run the module at ``path`` alone, without importing its package."""
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _snapshot(package: Path) -> list[tuple[str, bytes]]:
+    """Read the package with its own ``_sources.py``, compiled here from its
+    bytes: no bytecode cache is consulted, and no clocks module is imported."""
+    path = package / "_sources.py"
+    module = types.ModuleType("clocks_sources")
+    exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
+    return module.read_sources(package)
+
+
+def _write_copy(copy: Path, snapshot: list[tuple[str, bytes]]) -> None:
+    for name, data in snapshot:
+        target = copy / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+
+def _import_renderer(root: Path) -> Callable[..., object]:
+    """Import ``render_site_media`` from the copy under ``root``; check every
+    clocks module it loaded came from there."""
+    sys.path.insert(0, str(root))
+    from clocks._site_media import render_site_media
+
+    copy = root / "clocks"
+    for name, module in list(sys.modules.items()):
+        if name.split(".")[0] != "clocks":
+            continue
+        origin = Path(getattr(module, "__file__", None) or "")
+        if not origin.is_relative_to(copy):
+            raise RuntimeError(f"{name} was imported from {origin}, not the snapshot")
+    return render_site_media
 
 
 if __name__ == "__main__":
@@ -872,9 +927,10 @@ def test_a_source_changed_during_a_render_certifies_nothing(
 
 
 def test_a_snapshot_given_is_what_the_records_name(site: Site) -> None:
-    """A caller's snapshot, taken before anything ran, must match the tree."""
+    """A caller's snapshot, taken before anything ran, is what the digest is
+    of: every pair is fresh for the tree, so only the snapshot can make one
+    stale, and the tree then differs from it before the record is written."""
     site.render(full=True)
-    site.pair("light")[1].unlink()
     with pytest.raises(clocks._site_media.SourcesChanged):
         render_site_media(
             site.archives,
@@ -907,6 +963,41 @@ def test_an_unreadable_source_tree_fails_the_render(site: Site, broken: str) -> 
         if broken != "missing":
             (site.sources / "sub").chmod(0o755)
     assert [p for p in site.outputs() if p.exists()] == []
+
+
+def test_a_source_that_cannot_be_inspected_fails_the_render(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A listed file whose status cannot be read is an error, not left out."""
+    real_stat = Path.stat
+
+    def failing_stat(self, *args, **kwargs):
+        if self == site.source:
+            raise PermissionError(f"stat {self}")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", failing_stat)
+    with pytest.raises(PermissionError, match="stat"):
+        site.render(full=True)
+
+
+def test_a_media_path_that_links_to_itself_is_refused(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A link loop is a link: the documented ``ValueError``. On Python 3.12,
+    which the site's workflows use, ``resolve`` raises ``RuntimeError`` on a
+    loop (3.13 stopped); the stand-in does the same here."""
+    site.media.symlink_to(site.media)
+    real_resolve = Path.resolve
+
+    def resolve_312(self, *args, **kwargs):
+        if self == site.media:
+            raise RuntimeError(f"Symlink loop from {self}")
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve_312)
+    with pytest.raises(ValueError, match="symbolic link"):
+        site.render(full=True)
 
 
 def test_a_staged_poster_is_created_exclusively(
@@ -997,77 +1088,180 @@ def test_a_media_path_ending_in_dotdot_through_a_link_is_refused(
     assert sorted(p.name for p in (tmp_path / "elsewhere").iterdir()) == ["inner"]
 
 
-def test_prerender_draws_with_the_source_it_records(tmp_path: Path) -> None:
-    """An imported renderer file is changed with its size and time kept, so a
-    plain import reuses the old bytecode (checked first: the trap is armed).
-    The pre-render step must draw with the new source, which its record names.
-    """
+@dataclass
+class _Package:
+    """A copy of the package on ``PYTHONPATH``, and an archive and media beside it."""
+
+    root: Path
+    env: dict[str, str]
+    archives: Path
+    media: Path
+
+    @property
+    def style(self) -> Path:
+        return self.root / "clocks" / "_style.py"
+
+    def run(self, *args: str) -> str:
+        result = subprocess.run(
+            [sys.executable, *args],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            cwd=self.root.parent,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def prerender(self, mode: str, old: str, new: str) -> dict[str, object]:
+        out = self.run(
+            "-c",
+            _PRERENDER_DRIVER,
+            str(ROOT / "site" / "prerender.py"),
+            str(self.archives),
+            str(self.media),
+            DEMO,
+            mode,
+            str(self.style),
+            old,
+            new,
+        )
+        return json.loads(out.splitlines()[-1])
+
+    def light_background(self) -> str:
+        return to_hex(_poster_pixels(self.media / f"{DEMO}.light.png")[0, 0, :3] / 255)
+
+    def recorded_digest(self) -> str:
+        return (self.media / f"{DEMO}.light.sha256").read_text()
+
+    def tree_digest(self) -> str:
+        archive = (self.archives / f"{DEMO}.npz").read_bytes()
+        digest = clocks._site_media.inputs_digest(
+            archive, read_sources(self.style.parent)
+        )
+        return f"{digest}\n"
+
+
+@pytest.fixture
+def package(tmp_path: Path) -> _Package:
     root = tmp_path / "pkg"
     shutil.copytree(
         ROOT / "src" / "clocks",
         root / "clocks",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+    unset = {"PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"}
+    env = {k: v for k, v in os.environ.items() if k not in unset}
     env["PYTHONPATH"] = str(root)
-
-    def run(*args: str) -> str:
-        result = subprocess.run(
-            [sys.executable, *args],
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=tmp_path,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr
-        return result.stdout
-
-    run("-c", "import clocks._site_media")
-    assert list((root / "clocks" / "__pycache__").glob("_style.*.pyc"))
-    style = root / "clocks" / "_style.py"
-    old, new = palette("light").background, "#123456"
-    text = style.read_text(encoding="utf-8")
-    assert len(old) == len(new) and text.count(f'background="{old}"') == 1
-    with _time_held(style):
-        style.write_text(text.replace(f'background="{old}"', f'background="{new}"'))
-    shown = "from clocks._style import palette; print(palette('light').background)"
-    assert run("-c", shown).strip() == old
-
     archives = tmp_path / "archives"
     archives.mkdir()
     save_replay(archives / f"{DEMO}.npz", _recorded())
-    media = tmp_path / "media"
-    out = run(
-        "-c",
-        _PRERENDER_DRIVER,
-        str(ROOT / "site" / "prerender.py"),
-        str(archives),
-        str(media),
-        DEMO,
-    )
+    return _Package(root, env, archives, tmp_path / "media")
 
-    assert Path(out.splitlines()[-1]).is_relative_to(root)
-    pixel = _poster_pixels(media / f"{DEMO}.light.png")[0, 0, :3]
-    assert to_hex(pixel / 255) == new
-    expected = clocks._site_media.inputs_digest(
-        (archives / f"{DEMO}.npz").read_bytes(), read_sources(root / "clocks")
+
+_OLD_BACKGROUND, _NEW_BACKGROUND = palette("light").background, "#123456"
+
+
+def _recoloured(text: str) -> str:
+    old, new = f'background="{_OLD_BACKGROUND}"', f'background="{_NEW_BACKGROUND}"'
+    assert len(old) == len(new) and text.count(old) == 1
+    return text.replace(old, new)
+
+
+def _assert_nothing_left(state: dict[str, object]) -> None:
+    """``main`` returned with no clocks module, path entry or font of the copy."""
+    assert state == {"modules": [], "path_restored": True, "copy_fonts": 0}, state
+
+
+def test_prerender_draws_with_the_source_it_records(package: _Package) -> None:
+    """An imported renderer file is changed with its size and time kept, so a
+    plain import reuses the old bytecode (checked first: the trap is armed).
+    The pre-render step must draw with the new source, which its record names.
+    """
+    package.run("-c", "import clocks._site_media")
+    assert list((package.root / "clocks" / "__pycache__").glob("_style.*.pyc"))
+    text = package.style.read_text(encoding="utf-8")
+    with _time_held(package.style):
+        package.style.write_text(_recoloured(text), encoding="utf-8")
+    shown = "from clocks._style import palette; print(palette('light').background)"
+    assert package.run("-c", shown).strip() == _OLD_BACKGROUND
+
+    state = package.prerender("plain", "", "")
+
+    assert package.light_background() == _NEW_BACKGROUND
+    assert package.recorded_digest() == package.tree_digest()
+    _assert_nothing_left(state)
+
+
+def test_prerender_draws_with_the_snapshot_whatever_the_tree_does(
+    package: _Package,
+) -> None:
+    """The live file is edited after the snapshot, imported from in that state
+    by any import of the live tree, and restored before the records are
+    checked: the copy of the snapshot must be what draws."""
+    text = package.style.read_text(encoding="utf-8")
+
+    state = package.prerender("edit_import_restore", text, _recoloured(text))
+
+    assert package.style.read_text(encoding="utf-8") == text
+    assert package.light_background() == _OLD_BACKGROUND
+    assert package.recorded_digest() == package.tree_digest()
+    _assert_nothing_left(state)
+
+
+def test_prerender_refuses_an_imported_clocks(tmp_path: Path) -> None:
+    """In this process clocks is imported: its code, not a snapshot, would draw."""
+    spec = importlib.util.spec_from_file_location(
+        "prerender_under_test", ROOT / "site" / "prerender.py"
     )
-    assert (media / f"{DEMO}.light.sha256").read_text() == f"{expected}\n"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    path = list(sys.path)
+    with pytest.raises(RuntimeError, match="already imported"):
+        module.main(tmp_path / "archives", tmp_path / "media", full=True)
+    assert sys.path == path
+    assert list(tmp_path.iterdir()) == []
 
 
 _PRERENDER_DRIVER = """\
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
-spec = importlib.util.spec_from_file_location("prerender", sys.argv[1])
+from matplotlib import font_manager
+
+prerender, archives, media, demo, mode, style, old, new = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("prerender", prerender)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-module.main(Path(sys.argv[2]), Path(sys.argv[3]), full=True, demos=(sys.argv[4],))
-import clocks
+if mode == "edit_import_restore":
+    snapshot, import_renderer = module._snapshot, module._import_renderer
 
-print(clocks.__file__)
+    def edited_snapshot(package):
+        taken = snapshot(package)
+        Path(style).write_text(new, encoding="utf-8")
+        return taken
+
+    def restored_import(root):
+        renderer = import_renderer(root)
+        Path(style).write_text(old, encoding="utf-8")
+        return renderer
+
+    module._snapshot, module._import_renderer = edited_snapshot, restored_import
+path = list(sys.path)
+module.main(Path(archives), Path(media), full=True, demos=(demo,))
+copy_fonts = [
+    entry.fname
+    for entry in font_manager.fontManager.ttflist
+    if "clocks-snapshot-" in entry.fname
+]
+state = {
+    "modules": sorted(n for n in sys.modules if n.split(".")[0] == "clocks"),
+    "path_restored": sys.path == path,
+    "copy_fonts": len(copy_fonts),
+}
+print(json.dumps(state))
 """
 
 
@@ -1173,4 +1367,4 @@ def test_the_sources_module_imports_nothing_of_clocks() -> None:
     names |= {
         node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
     }
-    assert names <= {"collections.abc", "pathlib"}, names
+    assert names <= {"collections.abc", "pathlib", "stat"}, names

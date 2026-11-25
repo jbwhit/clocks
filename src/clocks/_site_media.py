@@ -24,12 +24,13 @@ archive bytes that were hashed. Quarto publishes only the ``.mp4`` and
 ``.png`` files of the directory, so the records stay out of the site.
 
 The sources' snapshot must be of the code that runs. ``site/prerender.py``
-takes it before importing ``clocks`` and has the package compiled from source
-into a fresh bytecode cache (cached bytecode is trusted by its source's size
-and time, which an edit can keep), and passes it as ``sources_snapshot``; a
-caller that passes none gets a snapshot taken when the call starts, after its
-own imports. Before each record is written the source tree is read again, and
-a difference raises ``SourcesChanged`` with the pair left unrecorded, so stale.
+takes it before importing ``clocks``, writes it to a private temporary
+directory, imports the renderer from that copy and passes the snapshot as
+``sources_snapshot``: the code that draws is the snapshot, whatever the live
+tree or bytecode cached beside it does meanwhile. A caller that passes none
+gets a snapshot taken when the call starts, after its own imports. Before
+each record is written the live tree is read again, and a difference raises
+``SourcesChanged`` with the pair left unrecorded, so stale.
 
 The limit: an archive replaced while the step runs is caught, for each pair
 this run rebuilds, by the check that runs again after that pair's final
@@ -238,12 +239,16 @@ def _refuse_a_linked_media(media: Path) -> None:
     """Refuse a ``media`` whose last component is a symbolic link, dangling or
     not, or which resolves elsewhere than its parent's entry of its name (a
     path ending in ``..`` past a link names the parent of the link's target)."""
-    if media.is_symlink() or media.resolve() != media.parent.resolve() / media.name:
-        raise ValueError(
-            f"the media directory {media} is a symbolic link or resolves elsewhere "
-            f"({media.resolve()}); the pre-render step removes files there, so it "
-            "must be a real directory named directly"
-        )
+    if media.is_symlink():
+        where = f"a symbolic link to {os.readlink(media)}"
+    elif media.resolve() != media.parent.resolve() / media.name:
+        where = f"a path that resolves elsewhere ({media.resolve()})"
+    else:
+        return
+    raise ValueError(
+        f"the media directory {media} is {where}; the pre-render step removes "
+        "files there, so it must be a real directory named directly"
+    )
 
 
 def _load_demo(archive: Path, data: bytes, demo: str) -> Replay:
