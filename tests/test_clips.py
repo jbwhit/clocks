@@ -1,12 +1,15 @@
 """The clips drawn from replays: their parts, every clip's frames, render_clip."""
 
 import functools
+import gc
 import importlib
 import warnings
+import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
@@ -35,6 +38,7 @@ from _figure_artists import (
     opaque_fills_above,
 )
 from matplotlib import patheffects
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.collections import LineCollection
 from matplotlib.colors import to_hex, to_rgba
 from matplotlib.figure import Figure
@@ -755,18 +759,76 @@ def test_render_clip_draws_in_the_theme_asked_for(
     assert tuple(kept[0][:4]) == (*(round(255 * c) for c in background[:3]), 255)
 
 
-def test_render_clip_closes_its_figure_when_the_encoder_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _consume(frames, path, *, width, height, encoder=None) -> int:
+    """An encoder stand-in that draws every frame and writes nothing."""
+    return sum(count for _, count in frames)
+
+
+def _spy_figures(monkeypatch: pytest.MonkeyPatch) -> list[weakref.ref]:
+    """Record a weak reference to the figure of each clip ``render_clip`` builds."""
+    refs: list[weakref.ref] = []
+
+    def spy(replay: Replay, colors: Palette) -> Clip:
+        clip = build_clip(replay, colors)
+        refs.append(weakref.ref(clip.fig))
+        return clip
+
+    monkeypatch.setattr(clocks._clips, "build_clip", spy)
+    return refs
+
+
+@pytest.mark.parametrize("fails", [False, True], ids=["encoded", "encoder_fails"])
+def test_render_clip_releases_its_figure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fails: bool
 ) -> None:
+    """Nothing keeps a clip's figure alive after ``render_clip`` returns or raises:
+    pyplot does not hold it, and a collection frees it."""
+
     def stand_in(frames, path, *, width, height, encoder=None):
         next(iter(frames))
-        raise EncoderError("no")
+        if fails:
+            raise EncoderError("no")
+        return 1
 
     monkeypatch.setattr(clocks._clips, "encode", stand_in)
+    refs = _spy_figures(monkeypatch)
     before = plt.get_fignums()
-    with pytest.raises(EncoderError, match="no"):
+    if fails:
+        with pytest.raises(EncoderError, match="no"):
+            render_clip(small("demo_2d"), tmp_path / "x.mp4", encoder="unused")
+    else:
         render_clip(small("demo_2d"), tmp_path / "x.mp4", encoder="unused")
     assert plt.get_fignums() == before
+    gc.collect()
+    assert len(refs) == 1
+    assert refs[0]() is None
+
+
+@pytest.mark.parametrize("backend", ["svg", "pdf"])
+def test_clips_draw_on_their_own_canvas_whatever_the_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    """Under a backend whose canvas has no renderer, every clip still draws, on
+    an Agg canvas of its own, and the caller's backend is left as it was."""
+    monkeypatch.setattr(clocks._clips, "encode", _consume)
+    # Recorded first: importing a demo module selects Agg (the commands do).
+    replays = {name: small(name) for name in CLIPS}
+    previous = matplotlib.get_backend()
+    plt.switch_backend(backend)
+    try:
+        before = plt.get_fignums()
+        for name, replay in replays.items():
+            expected = sum(shot.repeat for shot in shots(replay))
+            assert render_clip(replay, tmp_path / "x.mp4", encoder="unused") == (
+                expected
+            )
+            with style("light") as colors:
+                fig = final_frame(replay, colors)
+            assert isinstance(fig.canvas, FigureCanvasAgg), name
+            assert plt.get_fignums() == before, name
+        assert matplotlib.get_backend() == backend
+    finally:
+        plt.switch_backend(previous)
 
 
 def test_render_clip_looks_for_the_encoder_before_drawing(

@@ -30,8 +30,6 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-
 from clocks._clips import final_frame, render_clip
 from clocks._replay import DEMOS, Replay, load_replay
 from clocks._style import THEMES, save_png, style
@@ -127,11 +125,7 @@ def _rebuild_pair(
     try:
         frames = render_clip(replay, staged_clip, theme=theme, encoder=encoder)
         with style(theme) as colors:
-            fig = final_frame(replay, colors)
-            try:
-                save_png(fig, staged_poster)
-            finally:
-                plt.close(fig)
+            save_png(final_frame(replay, colors), staged_poster)
         unchanged()
     except BaseException:
         staged_clip.unlink(missing_ok=True)

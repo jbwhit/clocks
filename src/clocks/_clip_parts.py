@@ -10,10 +10,10 @@ forward model.
 
 from collections.abc import Callable, Mapping, Sequence
 
-import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import patheffects
 from matplotlib.axes import Axes
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.collections import PolyCollection
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
@@ -65,11 +65,17 @@ class Clip:
 def new_figure(height: int) -> Figure:
     """A 7.5 inch wide figure, ``height`` CSS pixels tall, with no layout engine.
 
+    The figure has an Agg canvas of its own, whatever the caller's backend: the
+    builders measure text with ``canvas.get_renderer()``, which the SVG and PDF
+    canvases lack. Pyplot neither selects nor holds it, so the caller's backend
+    is unchanged and the figure is freed once nothing refers to it.
+
     The placeholder engine is set after creation: a figure made with
     ``layout="none"`` under the style regains constrained layout after its
     first save (measured, Q3).
     """
-    fig = plt.figure(figsize=(7.5, height / 100))
+    fig = Figure(figsize=(7.5, height / 100))
+    FigureCanvasAgg(fig)
     fig.set_layout_engine("none")
     return fig
 

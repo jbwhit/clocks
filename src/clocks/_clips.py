@@ -10,7 +10,6 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import NamedTuple
 
-import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
 from clocks._clip_echo import azimuth, build_echo
@@ -77,17 +76,14 @@ def build_clip(replay: Replay, colors: Palette) -> Clip:
 
 
 def final_frame(replay: Replay, colors: Palette) -> Figure:
-    """The clip's figure at its last shot, the poster; the caller closes it.
+    """The clip's figure at its last shot, the poster.
 
-    Call inside ``style(theme)``.
+    Call inside ``style(theme)``. The figure has its own Agg canvas and is not
+    held by pyplot (``clocks._clip_parts.new_figure``): it needs no closing.
     """
     clip = build_clip(replay, colors)
     last = shots(replay)[-1]
-    try:
-        clip.show(last.row, last.azimuth)
-    except BaseException:
-        plt.close(clip.fig)
-        raise
+    clip.show(last.row, last.azimuth)
     return clip.fig
 
 
@@ -109,16 +105,13 @@ def render_clip(
         encoder = find_encoder()
     with style(theme) as colors:
         clip = build_clip(replay, colors)
-        try:
-            return encode(
-                _frames(clip, shots(replay)),
-                path,
-                width=FRAME_WIDTH,
-                height=2 * CLIP_HEIGHTS[replay.meta["demo"]],
-                encoder=encoder,
-            )
-        finally:
-            plt.close(clip.fig)
+        return encode(
+            _frames(clip, shots(replay)),
+            path,
+            width=FRAME_WIDTH,
+            height=2 * CLIP_HEIGHTS[replay.meta["demo"]],
+            encoder=encoder,
+        )
 
 
 def _frames(clip: Clip, plan: list[Shot]) -> Iterator[tuple[bytes, int]]:
