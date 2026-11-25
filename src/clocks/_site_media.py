@@ -13,30 +13,37 @@ beside an old poster. A render that is not full keeps every other clip and
 poster in the directory, current or not: only a full render followed by the
 rendered-site check establishes the published set.
 
-Each published pair has a record beside it, ``<demo>.<theme>.sha256``: the
-SHA-256 of the archive bytes it was drawn from, written after the pair is in
-place. Quarto publishes only the ``.mp4`` and ``.png`` files of the directory,
-so the records stay out of the site. A pair whose record is missing or names
-other bytes than the archive's is stale, whatever the times say.
+Freshness is judged by content, never by time. Each run reads every demo's
+archive once and every source file under ``sources`` once, and hashes them
+into the demo's inputs digest. Each published pair has a record beside it,
+``<demo>.<theme>.sha256``, holding the inputs digest it was drawn from,
+written after the pair is in place and removed before an old pair is retired.
+A pair is fresh only when its clip, poster and record all exist and the record
+holds exactly the run's digest; anything else rebuilds it, from the same
+archive bytes that were hashed. Quarto publishes only the ``.mp4`` and
+``.png`` files of the directory, so the records stay out of the site.
+
+The limit: an input replaced while the step runs is not seen at once for every
+pair. An archive replaced during the run is caught, for each pair this run
+rebuilds, by the check that runs again after that pair's final rename; for a
+pair this run kept, and for any source file changed during the run, it is
+caught by the next run, whose digest no longer matches the record.
 
 Three inputs are refused rather than trusted. A media path that is itself a
 symbolic link is refused before anything is created or removed, since the
 cleanup would follow it into another directory. An archive whose replay is of
-another demo is refused before anything is drawn. And each archive is read
-once per run, before any of its pairs is judged: its time and digest decide
-freshness, and any rebuilt pair is drawn from those same bytes. The file is
-hashed again before each rebuilt pair is published and again after. If it
-differs or cannot be read, every clip, poster and record of that demo is
-removed and ``ArchiveChanged`` is raised; and when anything else fails while a
-pair is rebuilt, the archive is checked the same way before the error
-propagates. So no pair drawn from other content than the archive's survives to
-look fresh: one replaced after a run's last check is caught by the records on
-the next run.
+another demo is refused before anything is drawn. And an archive that differs
+from its snapshot, or cannot be read, when a rebuilt pair is checked (before
+and after its publication, or when anything fails while it is rebuilt) removes
+every clip, poster and record of that demo; outside a failure it raises
+``ArchiveChanged``.
 """
 
 import functools
 import hashlib
 import os
+import re
+import shutil
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
@@ -50,7 +57,11 @@ CLIP_DEMOS: tuple[str, ...] = tuple(name for name in DEMOS if name != "demo_dens
 PACKAGE = Path(__file__).resolve().parent
 STAGED = ".staged-"
 
-_MEDIA_SUFFIXES = frozenset({".mp4", ".png", ".sha256"})
+_MEDIA_SUFFIXES = frozenset({".mp4", ".png"})
+# A record's reserved name: <demo>.<theme>.sha256, the theme one of THEMES.
+_RECORD_NAME = re.compile(
+    r"[^.]+\.(?:" + "|".join(map(re.escape, THEMES)) + r")\.sha256", re.ASCII
+)
 
 
 class ArchiveChanged(RuntimeError):
@@ -63,7 +74,7 @@ def media_paths(media: Path, demo: str, theme: str) -> tuple[Path, Path]:
 
 
 def record_path(media: Path, demo: str, theme: str) -> Path:
-    """The record of the archive digest ``demo``'s ``theme`` pair was drawn from."""
+    """The record of the inputs digest ``demo``'s ``theme`` pair was drawn from."""
     return media / f"{demo}.{theme}.sha256"
 
 
@@ -80,14 +91,16 @@ def render_site_media(
 
     A ``media`` that is a symbolic link raises ``ValueError`` first. The encoder
     is found next: when there is none, ``EncoderNotFound`` propagates before
-    anything is created or removed. Every run removes the staging leftovers of
-    an interrupted one. A pair is rebuilt when ``full`` is true, when either
-    file or its record is missing, when the record names other bytes than the
-    archive's, or when the older of the two files is not strictly newer than
-    ``archives / f"{demo}.npz"`` and the newest file under ``sources``
-    (``__pycache__`` directories skipped). A full render then removes every
-    other ``.mp4``, ``.png`` and ``.sha256`` directly inside ``media``. Returns
-    the paths written, clip then poster, in the order written.
+    anything is created or removed. Every run removes every entry whose name
+    starts with ``STAGED``, a dangling link included. A pair is rebuilt when
+    ``full`` is true or when it is not fresh: its clip, poster or record
+    missing, or the record not holding exactly the demo's inputs digest (the
+    SHA-256 of ``archives / f"{demo}.npz"`` and of every file under ``sources``
+    outside ``__pycache__`` directories, with their relative paths). A full
+    render then removes every other ``.mp4`` and ``.png`` directly inside
+    ``media``, and every record of the reserved ``<demo>.<theme>.sha256`` form
+    it did not just write. Returns the paths written, clip then poster, in the
+    order written.
 
     An archive holding another demo's replay raises ``ValueError`` before that
     demo is drawn. An archive that changes or cannot be read while one of its
@@ -100,22 +113,21 @@ def render_site_media(
     report(f"encoder: {encoder} ({encoder_version(encoder)})")
     media.mkdir(parents=True, exist_ok=True)
     _remove_leftovers(media)
-    newest_source = max(
-        (p.stat().st_mtime_ns for p in _source_files(sources)), default=0
-    )
+    source_items = _read_sources(sources)
     written: list[Path] = []
     for demo in demos:
         archive = archives / f"{demo}.npz"
-        archive_time = archive.stat().st_mtime_ns
         data = archive.read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        inputs_time = max(archive_time, newest_source)
+        archive_digest = hashlib.sha256(data).hexdigest()
+        inputs = inputs_digest(data, source_items)
         replay: Replay | None = None
-        unchanged = functools.partial(_require_unchanged, archive, digest, media, demo)
+        unchanged = functools.partial(
+            _require_unchanged, archive, archive_digest, media, demo
+        )
         for theme in THEMES:
             clip, poster = media_paths(media, demo, theme)
             record = record_path(media, demo, theme)
-            if not (full or _is_stale(clip, poster, record, inputs_time, digest)):
+            if not (full or _is_stale(clip, poster, record, inputs)):
                 report(f"kept {clip.name}")
                 continue
             if replay is None:
@@ -123,10 +135,10 @@ def render_site_media(
             started = time.perf_counter()
             try:
                 frames = _rebuild_pair(replay, theme, clip, poster, encoder, unchanged)
-                _write_record(record, digest)
+                _write_record(record, inputs)
                 unchanged()
             except BaseException:
-                if _has_changed(archive, digest):
+                if _has_changed(archive, archive_digest):
                     _remove_demo_media(media, demo)
                 raise
             seconds = time.perf_counter() - started
@@ -136,6 +148,29 @@ def render_site_media(
         records = {path.with_suffix(".sha256") for path in written}
         _remove_other_media(media, set(written) | records, report)
     return written
+
+
+def inputs_digest(archive: bytes, sources: Sequence[tuple[str, bytes]]) -> str:
+    """The SHA-256 of an archive's bytes and each source's relative path and bytes.
+
+    Every part is framed by its length, so no two different inputs feed the
+    hash the same stream.
+    """
+    digest = hashlib.sha256()
+    for name, data in (("archive", archive), *sources):
+        label = name.encode()
+        digest.update(f"{len(label)}:".encode() + label)
+        digest.update(f"{len(data)}:".encode() + data)
+    return digest.hexdigest()
+
+
+def _read_sources(sources: Path) -> list[tuple[str, bytes]]:
+    """Each source file's path relative to ``sources`` and its bytes, sorted."""
+    items = [
+        (path.relative_to(sources).as_posix(), path.read_bytes())
+        for path in _source_files(sources)
+    ]
+    return sorted(items)
 
 
 def _rebuild_pair(
@@ -192,9 +227,14 @@ def _load_demo(archive: Path, data: bytes, demo: str) -> Replay:
 
 
 def _write_record(record: Path, digest: str) -> None:
-    """Write ``digest`` to ``record`` whole: staged, then moved into place."""
+    """Write ``digest`` to ``record`` whole: staged, then moved into place.
+
+    The staged file is created exclusively, so it is never written through a
+    link (or any other entry) already at its name.
+    """
     staged = record.with_name(STAGED + record.name)
-    staged.write_text(f"{digest}\n")
+    with staged.open("x", encoding="utf-8") as file:
+        file.write(f"{digest}\n")
     os.replace(staged, record)
 
 
@@ -227,17 +267,11 @@ def _require_unchanged(archive: Path, digest: str, media: Path, demo: str) -> No
     )
 
 
-def _is_stale(
-    clip: Path, poster: Path, record: Path, inputs_time: int, digest: str
-) -> bool:
-    """Either file or the record missing, the record naming other bytes than
-    ``digest``, or the older file not strictly newer than the inputs."""
+def _is_stale(clip: Path, poster: Path, record: Path, inputs: str) -> bool:
+    """Either file or the record missing, or the record not exactly ``inputs``."""
     if not (clip.is_file() and poster.is_file() and record.is_file()):
         return True
-    if record.read_text(errors="replace").strip() != digest:
-        return True
-    older = min(clip.stat().st_mtime_ns, poster.stat().st_mtime_ns)
-    return older <= inputs_time
+    return record.read_text(encoding="utf-8", errors="replace") != f"{inputs}\n"
 
 
 def _source_files(sources: Path) -> Iterator[Path]:
@@ -251,18 +285,28 @@ def _source_files(sources: Path) -> Iterator[Path]:
 
 
 def _remove_leftovers(media: Path) -> None:
-    """Remove the regular files directly in ``media`` named with ``STAGED``."""
+    """Remove every entry directly in ``media`` named with ``STAGED``.
+
+    A link is removed itself, dangling or not, and never followed; a directory
+    is removed with what it holds.
+    """
     for path in media.iterdir():
-        if path.name.startswith(STAGED) and path.is_file():
+        if not path.name.startswith(STAGED):
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
             path.unlink()
 
 
 def _remove_other_media(
     media: Path, keep: set[Path], report: Callable[[str], None]
 ) -> None:
-    """Remove each ``.mp4``, ``.png`` and ``.sha256`` directly in ``media`` not
-    in ``keep``."""
+    """Remove each ``.mp4`` and ``.png``, and each record of the reserved form,
+    directly in ``media`` and not in ``keep``."""
     for path in sorted(media.iterdir()):
-        if path.suffix in _MEDIA_SUFFIXES and path.is_file() and path not in keep:
+        if path in keep or not path.is_file():
+            continue
+        if path.suffix in _MEDIA_SUFFIXES or _RECORD_NAME.fullmatch(path.name):
             path.unlink()
             report(f"removed {path.name}")

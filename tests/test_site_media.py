@@ -2,11 +2,11 @@
 
 import ast
 import functools
-import hashlib
 import inspect
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,13 +98,11 @@ class Site:
             report=self.lines.append,
         )
 
-    def set_times(self, inputs: float = 1_000, outputs: float = 2_000) -> None:
-        """The archive and the source at ``inputs``; the four outputs at ``outputs``."""
-        for path in (self.archive, self.source):
-            os.utime(path, (inputs, inputs))
-        for path in self.outputs():
-            if path.exists():
-                os.utime(path, (outputs, outputs))
+    def digest(self) -> str:
+        """The inputs digest of the fixture's archive and source tree, as read now."""
+        return clocks._site_media.inputs_digest(
+            self.archive.read_bytes(), [("a.py", self.source.read_bytes())]
+        )
 
     def put_old_pair(self) -> None:
         self.media.mkdir(parents=True, exist_ok=True)
@@ -165,9 +163,8 @@ def test_a_full_render_writes_each_clip_and_poster(site: Site) -> None:
     written = site.render(full=True)
     assert written == site.outputs()
     assert sorted(site.media.iterdir()) == sorted(site.outputs() + site.records())
-    digest = hashlib.sha256(site.archive.read_bytes()).hexdigest()
     for record in site.records():
-        assert record.read_text() == f"{digest}\n"
+        assert record.read_text() == f"{site.digest()}\n"
     for theme in THEMES:
         clip, poster = site.pair(theme)
         background = _background_bytes(theme)
@@ -182,7 +179,6 @@ def test_a_full_render_rewrites_fresh_media(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     site.render(full=True)
-    site.set_times()
     calls = _spy(monkeypatch, "render_clip")
     assert site.render(full=True) == site.outputs()
     assert len(calls) == 2
@@ -190,7 +186,15 @@ def test_a_full_render_rewrites_fresh_media(
 
 def test_a_full_render_removes_other_media_and_nothing_else(site: Site) -> None:
     site.media.mkdir()
-    for name in ("old.mp4", "old.png", "old.sha256", "notes.txt", "other.tmp"):
+    for name in (
+        "old.mp4",
+        "old.png",
+        "demo_retired.dark.sha256",
+        "checksums.sha256",
+        "demo_2d.sepia.sha256",
+        "notes.txt",
+        "other.tmp",
+    ):
         site.path(name).write_text(name)
     site.path("sub").mkdir()
     site.path("sub/keep.mp4").write_text("keep")
@@ -198,6 +202,8 @@ def test_a_full_render_removes_other_media_and_nothing_else(site: Site) -> None:
     left = {p.relative_to(site.media).as_posix() for p in site.media.rglob("*")}
     assert left == {
         *(p.name for p in site.outputs() + site.records()),
+        "checksums.sha256",
+        "demo_2d.sepia.sha256",
         "notes.txt",
         "other.tmp",
         "sub",
@@ -205,13 +211,12 @@ def test_a_full_render_removes_other_media_and_nothing_else(site: Site) -> None:
     }
     assert "removed old.mp4" in site.lines
     assert "removed old.png" in site.lines
-    assert "removed old.sha256" in site.lines
+    assert "removed demo_retired.dark.sha256" in site.lines
 
 
 @pytest.mark.parametrize("full", [True, False], ids=["full", "partial"])
 def test_staging_leftovers_are_removed_on_any_render(site: Site, full: bool) -> None:
     site.render(full=True)
-    site.set_times()
     leftovers = [
         site.path(".staged-demo_2d.light.mp4"),
         site.path(".staged-demo_2d.light.mp4.ab12.part"),
@@ -227,7 +232,6 @@ def test_a_partial_render_keeps_fresh_media(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     site.render(full=True)
-    site.set_times()
     calls = _spy(monkeypatch, "render_clip")
     site.lines.clear()
     assert site.render(full=False) == []
@@ -236,24 +240,42 @@ def test_a_partial_render_keeps_fresh_media(
     assert calls == []
 
 
-def _archive_newer(site: Site) -> None:
-    os.utime(site.archive, (3_000, 3_000))
+@contextmanager
+def _time_held(path: Path) -> Iterator[None]:
+    """Change ``path`` inside the block; its modification time is put back after."""
+    before = path.stat()
+    yield
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
 
 
-def _source_newer(site: Site) -> None:
-    os.utime(site.source, (3_000, 3_000))
+def _archive_touched(site: Site) -> None:
+    os.utime(site.archive, (4_000_000_000, 4_000_000_000))
 
 
-def _tie(site: Site) -> None:
-    os.utime(site.archive, (2_000, 2_000))
+def _source_touched(site: Site) -> None:
+    os.utime(site.source, (4_000_000_000, 4_000_000_000))
+
+
+def _archive_replaced(site: Site) -> None:
+    _replace_archive(site)
+
+
+def _source_rewritten(site: Site) -> None:
+    with _time_held(site.source):
+        site.source.write_text("x = 2\n")
+
+
+def _source_renamed(site: Site) -> None:
+    site.source.rename(site.sources / "b.py")
 
 
 def _poster_missing(site: Site) -> None:
     site.pair("light")[1].unlink()
 
 
-def _clip_older(site: Site) -> None:
-    os.utime(site.pair("light")[0], (500, 500))
+def _media_older(site: Site) -> None:
+    for path in site.outputs():
+        os.utime(path, (500, 500))
 
 
 def _stray_file(site: Site) -> None:
@@ -263,27 +285,31 @@ def _stray_file(site: Site) -> None:
 @pytest.mark.parametrize(
     ("change", "rebuilt"),
     [
-        (_archive_newer, ("light", "dark")),
-        (_source_newer, ("light", "dark")),
-        (_tie, ("light", "dark")),
+        (_archive_touched, ()),
+        (_source_touched, ()),
+        (_media_older, ()),
+        (_archive_replaced, ("light", "dark")),
+        (_source_rewritten, ("light", "dark")),
+        (_source_renamed, ("light", "dark")),
         (_poster_missing, ("light",)),
-        (_clip_older, ("light",)),
         (_stray_file, ()),
     ],
     ids=[
-        "archive_newer",
-        "source_newer",
-        "tie",
+        "archive_touched_kept",
+        "source_touched_kept",
+        "media_older_kept",
+        "archive_replaced_same_time",
+        "source_rewritten_same_time",
+        "source_renamed",
         "poster_missing",
-        "clip_older",
         "stray_file_kept",
     ],
 )
 def test_a_partial_render_rebuilds_what_is_stale(
     site: Site, change: Callable[[Site], None], rebuilt: tuple[str, ...]
 ) -> None:
+    """Freshness is the record's digest of the inputs' bytes: times never count."""
     site.render(full=True)
-    site.set_times()
     change(site)
     written = site.render(full=False)
     assert written == [path for theme in rebuilt for path in site.pair(theme)]
@@ -293,11 +319,9 @@ def test_a_partial_render_rebuilds_what_is_stale(
 
 def test_a_cached_bytecode_file_does_not_make_media_stale(site: Site) -> None:
     site.render(full=True)
-    site.set_times()
     cached = site.sources / "__pycache__" / "a.pyc"
     cached.parent.mkdir()
     cached.write_bytes(b"cached")
-    os.utime(cached, (3_000, 3_000))
     assert site.render(full=False) == []
 
 
@@ -324,7 +348,6 @@ def test_a_failed_encode_leaves_a_fresh_old_pair_alone(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     site.put_old_pair()
-    site.set_times()
 
     def failing(replay, path, *, theme="light", encoder=None):
         Path(path).write_bytes(b"partial")
@@ -341,7 +364,6 @@ def test_a_failed_poster_leaves_the_old_pair_alone(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     site.put_old_pair()
-    site.set_times()
 
     def failing(fig, path):
         Path(path).write_bytes(b"partial")
@@ -358,7 +380,6 @@ def test_an_interrupted_publication_leaves_a_file_missing(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     site.put_old_pair()
-    site.set_times()
     light_clip, light_poster = site.pair("light")
     real_replace = os.replace
     destinations: list[Path] = []
@@ -452,12 +473,10 @@ def test_an_archive_replaced_while_a_pair_renders_leaves_the_demo_stale(
 ) -> None:
     """No pair of the demo survives to look fresh after its archive changes.
 
-    The replacement keeps the old archive's modification time, so only the
-    content shows the change: the timestamps alone would call every output
-    fresh on the next run.
+    The replacement keeps the old archive's modification time: only the
+    content shows the change.
     """
     site.render(full=True)
-    site.set_times()
     base = load_replay(site.archive)
     changed = edited(base, cloud=np.array(base.arrays["cloud"]) + 0.5)
     calls = 0
@@ -465,8 +484,8 @@ def test_an_archive_replaced_while_a_pair_renders_leaves_the_demo_stale(
     def replacing(replay, path, *, theme="light", encoder=None):
         nonlocal calls
         if calls == during:
-            save_replay(site.archive, changed)
-            os.utime(site.archive, (1_000, 1_000))
+            with _time_held(site.archive):
+                save_replay(site.archive, changed)
         calls += 1
         return render_clip(replay, path, theme=theme, encoder=encoder)
 
@@ -485,8 +504,10 @@ def test_an_archive_replaced_while_a_pair_renders_leaves_the_demo_stale(
 def _replace_archive(site: Site) -> None:
     """Save a different replay at the archive, keeping its modification time."""
     base = load_replay(site.archive)
-    save_replay(site.archive, edited(base, cloud=np.array(base.arrays["cloud"]) + 0.5))
-    os.utime(site.archive, (1_000, 1_000))
+    with _time_held(site.archive):
+        save_replay(
+            site.archive, edited(base, cloud=np.array(base.arrays["cloud"]) + 0.5)
+        )
 
 
 def _nothing_kept(site: Site) -> None:
@@ -508,7 +529,6 @@ def test_an_archive_replaced_at_a_final_rename_leaves_the_demo_stale(
     only the check after the final rename can.
     """
     site.render(full=True)
-    site.set_times()
     _, poster = site.pair(theme)
     poster.unlink()
     real_replace = os.replace
@@ -534,7 +554,6 @@ def test_an_archive_gone_at_the_recheck_leaves_the_demo_stale(
     """The archive disappears once the pair is staged, just before the check
     that precedes publication; it comes back unchanged, at its old time."""
     site.render(full=True)
-    site.set_times()
     kept = site.archive.read_bytes()
 
     def vanishing(fig, path):
@@ -549,7 +568,6 @@ def test_an_archive_gone_at_the_recheck_leaves_the_demo_stale(
 
     assert str(site.archive) in str(raised.value)
     site.archive.write_bytes(kept)
-    os.utime(site.archive, (1_000, 1_000))
     _nothing_kept(site)
 
 
@@ -559,7 +577,6 @@ def test_an_encoder_failure_after_a_replacement_leaves_the_demo_stale(
 ) -> None:
     """The encoder's error propagates, and no output of the old content stays."""
     site.render(full=True)
-    site.set_times()
     calls = 0
 
     def failing(replay, path, *, theme="light", encoder=None):
@@ -590,12 +607,13 @@ def test_the_replay_drawn_is_the_bytes_checked(
     drawn: list[np.ndarray] = []
 
     def swapping(*args, **kwargs):
-        save_replay(site.archive, other)
+        with _time_held(site.archive):
+            save_replay(site.archive, other)
         try:
             return real_load(*args, **kwargs)
         finally:
-            site.archive.write_bytes(original)
-            os.utime(site.archive, (1_000, 1_000))
+            with _time_held(site.archive):
+                site.archive.write_bytes(original)
 
     def reading(fig, path):
         (cloud,) = [ax for ax in fig.axes if ax.get_gid() == "map"]
@@ -618,7 +636,6 @@ def test_an_archive_replaced_after_a_pair_is_kept_leaves_the_demo_stale(
     """The light pair is kept; the archive is then replaced at its old time,
     before the stale dark pair is drawn. No mixture of the two may survive."""
     site.render(full=True)
-    site.set_times()
     site.pair("dark")[1].unlink()
 
     def report(line: str) -> None:
@@ -647,7 +664,6 @@ def test_a_pair_drawn_from_another_archive_version_is_not_kept(
     stale: the light pair, drawn from the old bytes, is rebuilt too, from the
     new ones."""
     site.render(full=True)
-    site.set_times()
     _replace_archive(site)
     site.pair("dark")[1].unlink()
     dots: list[np.ndarray] = []
@@ -663,8 +679,7 @@ def test_a_pair_drawn_from_another_archive_version_is_not_kept(
     expected = load_replay(site.archive).arrays["cloud"][-1][:, :2]
     for found in dots:
         np.testing.assert_allclose(found, expected, rtol=1e-12, atol=1e-12)
-    digest = hashlib.sha256(site.archive.read_bytes()).hexdigest()
-    assert [r.read_text() for r in site.records()] == [f"{digest}\n"] * 2
+    assert [r.read_text() for r in site.records()] == [f"{site.digest()}\n"] * 2
     assert site.render(full=False) == []
 
 
@@ -677,9 +692,95 @@ def test_a_pair_without_its_archive_record_is_stale(
     site: Site, spoil: Callable[[Path], None]
 ) -> None:
     site.render(full=True)
-    site.set_times()
     spoil(site.record("light"))
     assert site.render(full=False) == site.pair("light")
+
+
+@pytest.mark.parametrize("full", [True, False], ids=["full", "partial"])
+def test_a_dangling_staging_link_is_removed_and_never_followed(
+    site: Site, tmp_path: Path, full: bool
+) -> None:
+    """A link at a staged name, pointing outside ``media``, writes nothing there."""
+    site.render(full=True)
+    site.pair("light")[1].unlink()
+    outside = tmp_path / "outside" / "record"
+    outside.parent.mkdir()
+    for name in (f".staged-{DEMO}.light.sha256", ".staged-anything"):
+        site.path(name).symlink_to(outside)
+
+    site.render(full=full)
+
+    assert sorted(outside.parent.iterdir()) == []
+    assert site.staged_names() == []
+    assert site.record("light").read_text() == f"{site.digest()}\n"
+
+
+def test_a_staged_record_is_created_exclusively(
+    site: Site, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Something already at the staged record's name stops the write."""
+    site.render(full=True)
+    site.pair("light")[1].unlink()
+    outside = tmp_path / "outside"
+    real_rebuild = clocks._site_media._rebuild_pair
+
+    def planting(replay, theme, clip, poster, encoder, unchanged):
+        frames = real_rebuild(replay, theme, clip, poster, encoder, unchanged)
+        clip.with_name(f".staged-{clip.stem}.sha256").symlink_to(outside)
+        return frames
+
+    monkeypatch.setattr(clocks._site_media, "_rebuild_pair", planting)
+    with pytest.raises(FileExistsError):
+        site.render(full=False)
+    assert not outside.exists()
+
+
+def test_a_failed_record_rename_leaves_the_pair_stale(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site.render(full=True)
+    site.pair("light")[1].unlink()
+    clip, poster = site.pair("light")
+    real_replace = os.replace
+
+    def failing(source, destination, *args, **kwargs):
+        if Path(destination) == site.record("light"):
+            raise OSError("record rename")
+        return real_replace(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(clocks._site_media.os, "replace", failing)
+    with pytest.raises(OSError, match="record rename"):
+        site.render(full=False)
+    monkeypatch.setattr(clocks._site_media.os, "replace", real_replace)
+
+    assert probe(clip).frames == 92
+    assert png_size(poster) == (1500, 900)
+    assert not site.record("light").exists()
+    assert site.render(full=False) == site.pair("light")
+
+
+def test_an_archive_replaced_after_both_pairs_are_kept_is_rebuilt_next_run(
+    site: Site,
+) -> None:
+    """The stated limit: a run that keeps every pair does not recheck the
+    archive, and the next run's digest no longer matches the records."""
+    site.render(full=True)
+
+    def report(line: str) -> None:
+        site.lines.append(line)
+        if line == f"kept {DEMO}.light.mp4":
+            _replace_archive(site)
+
+    kept = render_site_media(
+        site.archives,
+        site.media,
+        full=False,
+        demos=(DEMO,),
+        sources=site.sources,
+        report=report,
+    )
+    assert kept == []
+    assert site.render(full=False) == site.outputs()
 
 
 def _archive_with(site: Site, name: str, row: int) -> Path:
