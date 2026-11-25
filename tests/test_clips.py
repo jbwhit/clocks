@@ -404,6 +404,12 @@ def test_status_line(name: str, theme: str) -> None:
                 line.get_transform().transform(line.get_position())
             )
             assert x < 0.1 and y > 0.9
+            # The rendered text, not only its anchor, lies on the canvas.
+            box = line.get_window_extent(clip.fig.canvas.get_renderer())
+            canvas = clip.fig.bbox
+            assert box.width > 0 and box.height > 0
+            assert canvas.x0 <= box.x0 and box.x1 <= canvas.x1, (box, canvas)
+            assert canvas.y0 <= box.y0 and box.y1 <= canvas.y1, (box, canvas)
 
 
 @pytest.mark.parametrize("theme", THEMES)
@@ -1588,8 +1594,10 @@ def test_model_line_heads_are_marked(theme: str) -> None:
 
     At row 0 every line is one point at the prior, so without a head mark the
     labels would sit beside nothing drawn. Each line is shown alone, and the
-    pixel just right of its head must be the line's colour, where only the mark
-    can paint it; ``markevery`` keeps the mark to the head.
+    pixels just right of its head, and at row 0 just left of it too, outside
+    the axes, must be the line's colour, where only the mark can paint them: a
+    head clipped to the axes loses its left half. ``markevery`` keeps the mark
+    to the head.
     """
     replay = small(MODELS)
     posterior = replay.arrays["model_posterior"]
@@ -1613,8 +1621,10 @@ def test_model_line_heads_are_marked(theme: str) -> None:
                 x, y = ax.transData.transform((row, posterior[row, i])) * scale
                 # Four pixels right of the head: clear of the y-axis spine at
                 # row 0 and of the line itself at later rows, inside the mark.
-                head = pixels[int(round(height - y)), int(round(x)) + 4, :3]
-                assert to_hex(head / 255) == to_hex(colors.ordered[i])
+                sides = (4, -4) if row == 0 else (4,)
+                for side in sides:
+                    head = pixels[int(round(height - y)), int(round(x)) + side, :3]
+                    assert to_hex(head / 255) == to_hex(colors.ordered[i]), side
             assert all(line.get_markevery() == [-1] for line in lines)
         # All shown at row 0, the tied heads share one dot: the first
         # candidate's, beside the top label.

@@ -446,13 +446,17 @@ def _block(lines: list[str], header: str) -> list[str]:
     return lines[start:end]
 
 
-def test_quarto_runs_the_script_and_ships_the_media() -> None:
-    """Only this catches media drawn but never copied to the site, or the
-    stylesheet dropped from the list Quarto links for HTML.
+def test_quarto_config_text_names_the_script_the_media_and_the_css() -> None:
+    """Pins the text of ``_quarto.yml``: the pre-render line, the two media
+    globs under ``project.resources`` and ``replay.css`` after ``styles.css``
+    in the HTML ``css`` list.
 
     The file is read as text (the tests have no YAML reader: decision D45), and
     each pin is anchored to its block, so the same lines under another key do
-    not pass.
+    not pass. It does not show that Quarto runs the script or copies the files:
+    the rendered-site check, which requires the output's ``media/`` to hold
+    exactly the expected clips and posters and each clip page to link
+    ``replay.css``, is what shows they arrived.
     """
     lines = (ROOT / "site" / "_quarto.yml").read_text().split("\n")
 
