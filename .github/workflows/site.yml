@@ -19,7 +19,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The build draws twelve clips (about 3.5 min on a runner, 2026-11-25).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: quarto-dev/quarto-actions/setup@v2

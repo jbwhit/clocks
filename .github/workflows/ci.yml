@@ -24,7 +24,8 @@ jobs:
     # run is: merged into main. A skipped run is not a passing one.
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 10.7 min on the first run with clips (2026-11-25); about three times that.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
