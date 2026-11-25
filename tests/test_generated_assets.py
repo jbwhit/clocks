@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import re
+import subprocess
 from hashlib import sha256
 from pathlib import Path
 from statistics import median
@@ -482,3 +483,107 @@ def test_someday_maybe_no_longer_says_static_gifs() -> None:
     note = " ".join((ROOT / "docs" / "someday-maybe.md").read_text().split())
     assert "static GIFs" not in note
     assert "pre-rendered video drawn from committed replay data" in note
+
+
+# The five current-facing places that once said the reserved block was "run
+# exactly once" (decision D33). The repository records the run; it cannot
+# enforce that there was only one, so each place states the rule as protocol.
+_PROTOCOL_FILES = (
+    "site/reproduce/reproducibility.qmd",
+    "site/reproduce/getting-started.qmd",
+    "site/method/the-particle-filter.qmd",
+    "README.md",
+    "docs/someday-maybe.md",
+)
+# Records of what was decided or attested at the time, which keep the phrase.
+_HISTORICAL_PREFIXES = ("docs/audits/", "docs/superpowers/", "docs/plans/")
+_HISTORICAL_FILES = {"docs/2026-08-16-development-calibration.md"}
+_SPEC_URL = "https://github.com/jbwhit/clocks/blob/main/"
+# Each earlier seed block's design record, with the phrase that supports the
+# disclosure sentence citing it.
+_EARLIER_BLOCK_RECORDS = {
+    "docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md": (
+        "holdout seeds 100–111"
+    ),
+    "docs/superpowers/specs/2026-07-02-annealed-jitter-design.md": (
+        "seeds 200-211, run exactly once"
+    ),
+    "docs/superpowers/specs/2026-07-19-3d-echolocation-design.md": (
+        "seeds 300-311, run once"
+    ),
+}
+
+
+def _normalised(relative: str) -> str:
+    return " ".join((ROOT / relative).read_text(encoding="utf-8").split())
+
+
+@pytest.mark.parametrize("relative", _PROTOCOL_FILES, ids=_PROTOCOL_FILES)
+def test_run_once_is_stated_as_protocol(relative: str) -> None:
+    """Only this catches the attestation coming back in any of the five places."""
+    text = _normalised(relative).casefold()
+    assert "exactly once" not in text
+    assert "by protocol" in text
+
+
+def test_only_historical_records_still_say_exactly_once() -> None:
+    """Only this catches the phrase returning in a current-facing document that
+    is not one of the five (decision D33)."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.md", "*.qmd"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\n")
+    saying_it = [
+        relative
+        for relative in tracked
+        if relative and "exactly once" in _normalised(relative).casefold()
+    ]
+    assert saying_it, "the historical records were expected to keep the phrase"
+    current = [
+        relative
+        for relative in saying_it
+        if not relative.startswith(_HISTORICAL_PREFIXES)
+        and relative not in _HISTORICAL_FILES
+    ]
+    assert current == []
+
+
+def test_the_protocol_sentences() -> None:
+    expected = {
+        "site/reproduce/reproducibility.qmd": (
+            "By protocol each reserved block is for one run: block 400–411 was run "
+            "under the frozen settings, using the scenario-default cell via "
+            "`--seed-block 400`, and protected blocks reject control overrides. "
+            "The repository records that run; it does not enforce that there was "
+            "only one."
+        ),
+        "site/reproduce/getting-started.qmd": (
+            "By protocol the 400–411 block is reserved for one run, made under "
+            "those frozen settings;"
+        ),
+        "README.md": (
+            "which by protocol is for one run and was run under those frozen settings."
+        ),
+        "site/method/the-particle-filter.qmd": (
+            "and the reserved 400–411 block, which by protocol is for one run, was "
+            "run under those frozen settings."
+        ),
+    }
+    for relative, sentence in expected.items():
+        assert sentence in _normalised(relative), relative
+
+
+def test_the_earlier_seed_blocks_are_disclosed_with_their_records() -> None:
+    """Only this catches a disclosure whose citation has gone."""
+    page = " ".join(_reproducibility_page().split())
+    assert (
+        "Earlier implementations used three earlier blocks, as their design "
+        "records state: seeds 100–111 as a holdout"
+    ) in page
+    for relative, phrase in _EARLIER_BLOCK_RECORDS.items():
+        assert f"]({_SPEC_URL}{relative})" in page, relative
+        assert (ROOT / relative).is_file(), relative
+        assert phrase in _normalised(relative), relative

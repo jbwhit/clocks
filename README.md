@@ -82,7 +82,8 @@ echolocation range study behind the site's final page:
 `uv run pytest` runs the default non-slow suite; run `uv run pytest -m slow`
 for long fixed-seed regression cases. Corrected SMC controls and tolerances
 were frozen on development seeds before the reserved certification block,
-which was then run exactly once. Its fixed-seed outcomes are deterministic
+which by protocol is for one run and was run under those frozen settings. Its
+fixed-seed outcomes are deterministic
 regression evidence, never population reliability estimates.
 
 ```bash
