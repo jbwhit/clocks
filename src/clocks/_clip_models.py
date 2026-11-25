@@ -2,10 +2,11 @@
 
 ``build_models`` draws ``demo_model_comparison``: one panel of posterior
 probability against observations, a line per candidate in ``model_ks`` growing
-from the model prior at row 0, coloured by its position in ``model_ks``. Each
-line is named by a label just right of its head, which follows the head from
-row to row; the labels keep ``LABEL_GAP`` apart without changing their order
-from the top (decision D50). Call it inside ``with style(theme) as colors:``.
+from the model prior at row 0, coloured by its position in ``model_ks``, with
+a dot of its colour at its head. Each line is named by a label just right of
+its head, which follows the head from row to row; the labels keep
+``LABEL_GAP`` apart without changing their order from the top (decision D50).
+Call it inside ``with style(theme) as colors:``.
 """
 
 from collections.abc import Sequence
@@ -26,6 +27,7 @@ HEIGHT_MODELS = 420
 # The least width, in observations, of the room right of the last observation
 # for the final labels; a longer run gets as much more as its labels need.
 GUTTER = 22.0
+HEAD_SIZE = 5.0  # points: the dot at each line's head
 LABEL_GAP = 12.0  # points between adjacent label centres, at least
 LABEL_OFFSET = 6.0  # points right of a line's head
 LABEL_SIZE = 10.0
@@ -53,7 +55,22 @@ def build_models(replay: Replay, colors: Palette) -> Clip:
     lines, labels = [], []
     for i, k in enumerate(ks):
         colour = colors.ordered[i]
-        (line,) = ax.plot([], [], color=colour, linewidth=1.8)
+        # The head is marked, so at row 0, where each line is one point at the
+        # prior on the y axis, its label sits beside something drawn: a whole
+        # dot, unclipped and over the spine (2.5). The data never leave the
+        # limits. Earlier candidates are drawn on top, so the dot the tied
+        # heads share at row 0 has the colour of the label beside it, the top.
+        (line,) = ax.plot(
+            [],
+            [],
+            color=colour,
+            linewidth=1.8,
+            marker="o",
+            markersize=HEAD_SIZE,
+            clip_on=False,
+            zorder=3.0 - 0.1 * i,
+        )
+        line.set_markevery([-1])
         line.set_gid(f"model-{k}")
         lines.append(line)
         labels.append(_model_label(ax, k, replay.meta["true_k"], colour))

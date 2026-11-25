@@ -37,11 +37,14 @@ from clocks._style import Palette
 from clocks._video import dwell_frames
 
 # Figure fractions, from the probe (Task 1), except the fit panel's height:
-# 7.5 * 0.17 / 5.5 makes it square in inches, where the probe's 0.232 was not.
+# 7.5 * 0.17 / 5.5 makes it square in inches, where the probe's 0.232 was not;
+# and the scene's width, 0.42 where the probe's was 0.45 (Task 13's sheets):
+# at the resting azimuth the close view's z axis then ends far enough from the
+# trace column for its label to sit by its own ticks.
 LAYOUT_ECHO: dict[str, Rect] = {
     "overview": (0.06, 0.57, 0.19, 0.259),
     "fit": (0.08, 0.11, 0.17, 7.5 * 0.17 / 5.5),
-    "scene": (0.255, 0.03, 0.45, 0.90),
+    "scene": (0.255, 0.03, 0.42, 0.90),
     "trace-x": (0.795, 0.75, 0.19, 0.15),
     "trace-y": (0.795, 0.53, 0.19, 0.15),
     "trace-z": (0.795, 0.31, 0.19, 0.15),
@@ -52,6 +55,7 @@ ELEVATION = 18.0
 FIRST_AZIMUTH = -75.0
 TURN = 40.0  # degrees the camera turns before the final hold
 SCENE_DOT_SIZE = 1.2
+Z_LABEL_PAD = -4.0  # points: keeps the close view's "z" by its own ticks
 OVERVIEW_DOT_SIZE = 1.2
 FIT_PAD = 0.06  # of the fit panel's span, on each side
 
@@ -188,6 +192,10 @@ def _style_cube(scene: Axes3D, low: float, high: float, colors: Palette) -> None
     ):
         set_ticks(ticks)
         set_label(name, fontsize=SMALL, labelpad=0)
+    # By default the z label sits farther from its ticks than the x and y
+    # labels do; with the probe's scene it ended under the z trace's ticks at
+    # the resting azimuth, where it read as that panel's label.
+    scene.zaxis.labelpad = Z_LABEL_PAD
 
 
 def _draw_head(scene: Axes3D, positions: NDArray, colors: Palette) -> None:

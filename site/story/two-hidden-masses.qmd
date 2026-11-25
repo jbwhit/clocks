@@ -35,8 +35,7 @@ Each ± is one standard deviation of the final cloud for that parameter.
 
 ::: {#demo-multi-mass-2d-text}
 Before any reading both clouds cover the whole square. The first readings
-barely narrow them, and for a while each cloud is split between two
-arrangements of the masses, which the ellipses cannot show and the dots can.
+barely narrow them.
 After 80 readings the run ends at x₁ = -2.38 ± 0.42, y₁ = 2.03 ± 0.22,
 x₂ = 4.13 ± 0.80, y₂ = -0.95 ± 0.63, M₁ = 0.052 ± 0.004 and M₂ = 0.028 ± 0.003,
 against true values of -3.00, 2.00, 4.00, -1.00, 0.050 and 0.030. The final

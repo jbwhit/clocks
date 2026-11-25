@@ -1520,6 +1520,51 @@ def test_model_colours_go_by_position_in_model_ks(theme: str) -> None:
             clip.fig.canvas.draw()
 
 
+@pytest.mark.parametrize("theme", THEMES)
+def test_model_line_heads_are_marked(theme: str) -> None:
+    """Each line's head is a dot of its colour, even at row 0, a single point.
+
+    At row 0 every line is one point at the prior, so without a head mark the
+    labels would sit beside nothing drawn. Each line is shown alone, and the
+    pixel just right of its head must be the line's colour, where only the mark
+    can paint it; ``markevery`` keeps the mark to the head.
+    """
+    replay = small(MODELS)
+    posterior = replay.arrays["model_posterior"]
+    ks = [int(k) for k in replay.arrays["model_ks"]]
+    with built(replay, theme) as (clip, colors):
+        fig = clip.fig
+        ax = axes_named(fig, "posterior")
+        lines = [one(ax, f"model-{k}") for k in ks]
+        for label in (one(ax, f"label-{k}") for k in ks):
+            label.set_visible(False)
+        height = round(fig.get_figheight() * 200)
+        scale = 200 / fig.dpi
+        for row in (0, 4):
+            clip.show(row)
+            for i, line in enumerate(lines):
+                for other in lines:
+                    other.set_visible(other is line)
+                pixels = np.frombuffer(frame_rgba(fig), dtype=np.uint8).reshape(
+                    height, 1500, 4
+                )
+                x, y = ax.transData.transform((row, posterior[row, i])) * scale
+                # Four pixels right of the head: clear of the y-axis spine at
+                # row 0 and of the line itself at later rows, inside the mark.
+                head = pixels[int(round(height - y)), int(round(x)) + 4, :3]
+                assert to_hex(head / 255) == to_hex(colors.ordered[i])
+            assert all(line.get_markevery() == [-1] for line in lines)
+        # All shown at row 0, the tied heads share one dot: the first
+        # candidate's, beside the top label.
+        clip.show(0)
+        for line in lines:
+            line.set_visible(True)
+        pixels = np.frombuffer(frame_rgba(fig), dtype=np.uint8).reshape(height, 1500, 4)
+        x, y = ax.transData.transform((0, posterior[0, 0])) * scale
+        head = pixels[int(round(height - y)), int(round(x)) + 4, :3]
+        assert to_hex(head / 255) == to_hex(colors.ordered[0])
+
+
 def test_model_clip_refuses_a_fourth_candidate() -> None:
     base = small(MODELS)
     arrays = dict(base.arrays)
@@ -1644,6 +1689,43 @@ def test_echo_shots_turn_the_camera_and_hold() -> None:
     assert len(short) == 25
     assert (short[-1].row, short[-1].repeat) == (1, 50)
     assert short[-1].azimuth == pytest.approx(-35.0, abs=1e-9)
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_echo_z_label_stays_by_the_scene(theme: str) -> None:
+    """The close view's ``z`` reads as its own axis's label as the camera turns.
+
+    With the probe's scene, at the resting azimuth the label sat under the z
+    trace's "3.5", nearer the trace column's tick labels than its own, where it
+    read as that panel's label. Every tenth turning shot and the hold are
+    drawn: the label keeps at least 6 pixels (at 100 per inch) from its own
+    tick labels and at least 6 more from the trace column's.
+    """
+    replay = committed(ECHO)
+    plan = shots(replay)
+    with built(replay, theme) as (clip, _):
+        fig = clip.fig
+        scene = axes_named(fig, "scene")
+        renderer = fig.canvas.get_renderer()
+        pixel = fig.dpi / 100
+        for shot in plan[::10] + [plan[-1]]:
+            clip.show(shot.row, shot.azimuth)
+            fig.canvas.draw()
+            column = min(
+                label.get_window_extent(renderer).x0
+                for gid in ("trace-x", "trace-y", "trace-z", "trace-M")
+                for label in axes_named(fig, gid).get_yticklabels()
+                if label.get_text()
+            )
+            ticks = max(
+                tick.label1.get_window_extent(renderer).x1
+                for tick in scene.zaxis.get_major_ticks()
+                if tick.label1.get_visible()
+            )
+            label = scene.zaxis.label.get_window_extent(renderer)
+            own, other = label.x0 - ticks, column - label.x1
+            assert own >= 6 * pixel, (shot.azimuth, own / pixel)
+            assert other >= own + 6 * pixel, (shot.azimuth, own / pixel, other / pixel)
 
 
 def test_echo_camera_follows_the_shot() -> None:
