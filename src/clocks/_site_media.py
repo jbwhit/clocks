@@ -137,11 +137,14 @@ def render_site_media(
     tree must still read the same before each rebuilt pair is published and
     before its record is written (``SourcesChanged`` otherwise). A source
     tree that cannot be read raises the ``OSError``.
-    ``check_code``, when given, is called for each rebuilt pair once it is
-    staged, before anything of the old pair is replaced, and again before its
-    record is written; whatever it raises propagates with the old pair as it
-    was (``site/prerender.py`` checks there that every clocks module loaded
-    came from its copy of the snapshot).
+    ``check_code``, when given, is called for each rebuilt pair twice, and
+    whatever it raises propagates (``site/prerender.py`` checks there that
+    every clocks module loaded came from its copy of the snapshot). The first
+    call comes once the pair is staged, before anything of the old pair is
+    replaced: a failure there leaves the old pair and its record as they were.
+    The second comes once the new pair is in place, before its record is
+    written: a failure there leaves the new pair without a record, so the
+    next run rebuilds it.
 
     An archive holding another demo's replay raises ``ValueError`` before that
     demo is drawn. An archive that changes or cannot be read while one of its

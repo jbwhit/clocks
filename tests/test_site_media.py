@@ -955,6 +955,41 @@ def test_a_source_changed_during_a_render_certifies_nothing(
     assert site.render(full=False) == site.outputs()
 
 
+def test_a_code_check_failing_after_publication_leaves_no_record(
+    site: Site,
+) -> None:
+    """``check_code`` fails at its second call for the pair, once the new pair
+    is in place and before its record is written (an outside module appearing
+    in between, say): the error propagates, the new pair has no record, and
+    the next partial run rebuilds it."""
+    site.render(full=True)
+    clip, poster = site.pair("light")
+    poster.unlink()
+    clip.write_bytes(b"old clip")
+    calls: list[int] = []
+
+    def check_code() -> None:
+        calls.append(len(calls) + 1)
+        if len(calls) == 2:
+            raise RuntimeError("clocks._late was imported from elsewhere")
+
+    with pytest.raises(RuntimeError, match="clocks._late"):
+        render_site_media(
+            site.archives,
+            site.media,
+            full=False,
+            demos=(DEMO,),
+            sources=site.sources,
+            check_code=check_code,
+            report=site.lines.append,
+        )
+
+    assert calls == [1, 2]
+    assert clip.read_bytes() != b"old clip" and poster.is_file()
+    assert not site.record("light").exists()
+    assert site.render(full=False) == site.pair("light")
+
+
 def test_a_snapshot_given_is_what_the_records_name(site: Site) -> None:
     """A caller's snapshot, taken before anything ran, is what the digest is
     of: every pair is fresh for the tree, so only the snapshot can make one
