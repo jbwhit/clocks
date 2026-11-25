@@ -28,9 +28,11 @@ takes it before importing ``clocks``, writes it to a private temporary
 directory, imports the renderer from that copy and passes the snapshot as
 ``sources_snapshot``: the code that draws is the snapshot, whatever the live
 tree or bytecode cached beside it does meanwhile. A caller that passes none
-gets a snapshot taken when the call starts, after its own imports. Before
-each record is written the live tree is read again, and a difference raises
-``SourcesChanged`` with the pair left unrecorded, so stale.
+gets a snapshot taken when the call starts, after its own imports. Before a
+rebuilt pair replaces the old one, and again before its record is written,
+the live tree is read again; a difference raises ``SourcesChanged``, so a
+pair drawn while the code changed is not certified: before publication the
+old pair stays as it was, after it the pair is left without a record, stale.
 
 The limit: an archive replaced while the step runs is caught, for each pair
 this run rebuilds, by the check that runs again after that pair's final
@@ -57,6 +59,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -110,6 +113,7 @@ def render_site_media(
     demos: Sequence[str] = CLIP_DEMOS,
     sources: Path = PACKAGE,
     sources_snapshot: Sequence[tuple[str, bytes]] | None = None,
+    check_code: Callable[[], None] | None = None,
     report: Callable[[str], None] = print,
 ) -> list[Path]:
     """Draw each demo's clip and poster, in every theme, into ``media``.
@@ -130,8 +134,14 @@ def render_site_media(
 
     ``sources_snapshot``, when given, is what ``read_sources(sources)`` returned
     before anything of ``clocks`` was imported; the records name it, and the
-    tree must still read the same before each is written (``SourcesChanged``
-    otherwise). A source tree that cannot be read raises the ``OSError``.
+    tree must still read the same before each rebuilt pair is published and
+    before its record is written (``SourcesChanged`` otherwise). A source
+    tree that cannot be read raises the ``OSError``.
+    ``check_code``, when given, is called for each rebuilt pair once it is
+    staged, before anything of the old pair is replaced, and again before its
+    record is written; whatever it raises propagates with the old pair as it
+    was (``site/prerender.py`` checks there that every clocks module loaded
+    came from its copy of the snapshot).
 
     An archive holding another demo's replay raises ``ValueError`` before that
     demo is drawn. An archive that changes or cannot be read while one of its
@@ -158,6 +168,9 @@ def render_site_media(
         unchanged = functools.partial(
             _require_unchanged, archive, archive_digest, media, demo
         )
+        checks = functools.partial(
+            _before_publishing, unchanged, sources, source_items, check_code
+        )
         for theme in THEMES:
             clip, poster = media_paths(media, demo, theme)
             record = record_path(media, demo, theme)
@@ -168,8 +181,10 @@ def render_site_media(
                 replay = _load_demo(archive, data, demo)
             started = time.perf_counter()
             try:
-                frames = _rebuild_pair(replay, theme, clip, poster, encoder, unchanged)
+                frames = _rebuild_pair(replay, theme, clip, poster, encoder, checks)
                 _require_sources(sources, source_items)
+                if check_code is not None:
+                    check_code()
                 _write_record(record, inputs)
                 unchanged()
             except BaseException:
@@ -199,13 +214,26 @@ def inputs_digest(archive: bytes, sources: Sequence[tuple[str, bytes]]) -> str:
     return digest.hexdigest()
 
 
+def _before_publishing(
+    unchanged: Callable[[], None],
+    sources: Path,
+    source_items: list[tuple[str, bytes]],
+    check_code: Callable[[], None] | None,
+) -> None:
+    """Every check a staged pair must pass before it replaces the old one."""
+    unchanged()
+    _require_sources(sources, source_items)
+    if check_code is not None:
+        check_code()
+
+
 def _require_sources(sources: Path, snapshot: list[tuple[str, bytes]]) -> None:
     """Raise ``SourcesChanged`` unless ``sources`` still reads as ``snapshot``."""
     if read_sources(sources) != snapshot:
         raise SourcesChanged(
             f"the source tree under {sources} changed during the run, so the code "
-            "that drew this pair is not known; it is left without a record, and "
-            "the next run rebuilds it"
+            "that drew this pair is not known; it is not certified, and the next "
+            "run rebuilds it"
         )
 
 
@@ -215,9 +243,9 @@ def _rebuild_pair(
     clip: Path,
     poster: Path,
     encoder: str,
-    unchanged: Callable[[], None],
+    checks: Callable[[], None],
 ) -> int:
-    """Stage, check the archive is ``unchanged``, retire, publish; return frames.
+    """Stage, run the ``checks``, retire, publish; return frames.
 
     The pair's record is removed before the old pair is retired, so an
     interruption from then on leaves the pair stale.
@@ -228,7 +256,7 @@ def _rebuild_pair(
         frames = render_clip(replay, staged_clip, theme=theme, encoder=encoder)
         with style(theme) as colors, staged_poster.open("xb") as file:
             save_png(final_frame(replay, colors), file)
-        unchanged()
+        checks()
     except BaseException:
         staged_clip.unlink(missing_ok=True)
         staged_poster.unlink(missing_ok=True)
@@ -242,27 +270,38 @@ def _rebuild_pair(
 
 
 def _refuse_a_linked_media(media: Path) -> None:
-    """Refuse a ``media`` that cannot be followed (a link loop on its path), whose
-    last component is a symbolic link, dangling or not, or which resolves
-    elsewhere than its parent's entry of its name (a path ending in ``..`` past
-    a link names the parent of the link's target). Each is a ``ValueError``."""
+    """Refuse, with ``ValueError``, a ``media`` whose last component is a
+    symbolic link (read with ``lstat``, dangling or looping or not), whose path
+    cannot be resolved or resolves to something that cannot be followed (a
+    link loop anywhere on it, on any Python), or which resolves elsewhere than
+    its parent's entry of its name (``linked/..`` names the parent of the
+    link's target). A ``media`` not made yet is fine."""
     try:
-        os.stat(media)
+        if stat.S_ISLNK(os.lstat(media).st_mode):
+            where = f"a symbolic link to {os.readlink(media)}"
+            raise ValueError(_LINKED_MEDIA.format(media=media, where=where))
     except FileNotFoundError:
-        pass  # not made yet: what matters is what its name resolves to
-    except OSError as error:  # a link loop on the way, say
-        where = f"a path that cannot be followed ({error.strerror})"
-        raise ValueError(_LINKED_MEDIA.format(media=media, where=where)) from error
-    if media.is_symlink():
-        where = f"a symbolic link to {os.readlink(media)}"
-    else:
-        # Safe to resolve: a loop anywhere on the path failed the stat above
-        # (on Python 3.12, ``resolve`` raises ``RuntimeError`` on one).
+        pass
+    except OSError as error:
+        raise ValueError(_unfollowable(media)) from error
+    try:
         resolved = media.resolve()
-        if resolved == media.parent.resolve() / media.name:
-            return
+        expected = media.parent.resolve() / media.name
+    except (OSError, RuntimeError) as error:  # RuntimeError: 3.12 on a loop
+        raise ValueError(_unfollowable(media)) from error
+    try:
+        os.stat(resolved)  # 3.13 and later resolve past a loop without raising
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise ValueError(_unfollowable(media)) from error
+    if resolved != expected:
         where = f"a path that resolves elsewhere ({resolved})"
-    raise ValueError(_LINKED_MEDIA.format(media=media, where=where))
+        raise ValueError(_LINKED_MEDIA.format(media=media, where=where))
+
+
+def _unfollowable(media: Path) -> str:
+    return _LINKED_MEDIA.format(media=media, where="a path that cannot be resolved")
 
 
 def _load_demo(archive: Path, data: bytes, demo: str) -> Replay:

@@ -47,6 +47,7 @@ meanwhile. The live tree is read again before each record is written, so an
 edit that persists is caught too.
 """
 
+import functools
 import importlib.util
 import os
 import sys
@@ -96,9 +97,10 @@ def main(
                 full=full,
                 sources=package,
                 sources_snapshot=snapshot,
+                check_code=functools.partial(_check_origins, copy),
                 **options,
             )
-            _check_origins(copy)  # a module imported while drawing
+            _check_origins(copy)  # a module imported after the last pair
         finally:
             for name in [n for n in sys.modules if n.split(".")[0] == "clocks"]:
                 del sys.modules[name]
@@ -933,10 +935,12 @@ def test_an_archive_replaced_after_both_pairs_are_kept_is_rebuilt_next_run(
 def test_a_source_changed_during_a_render_certifies_nothing(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The pair drawn while a source changed is published without a record,
-    and the next run rebuilds it."""
+    """The pair drawn while a source changed is not published: the old files
+    and record stay as they were, and the next run, reading the changed
+    source, rebuilds the pair."""
     site.render(full=True)
     site.pair("light")[1].unlink()
+    before = _media_bytes(site)
 
     def editing(replay, path, *, theme="light", encoder=None):
         site.source.write_text("x = 2\n")
@@ -947,15 +951,16 @@ def test_a_source_changed_during_a_render_certifies_nothing(
         site.render(full=False)
     monkeypatch.setattr(clocks._site_media, "render_clip", render_clip)
 
-    assert not site.record("light").exists()
+    assert _media_bytes(site) == before
     assert site.render(full=False) == site.outputs()
 
 
 def test_a_snapshot_given_is_what_the_records_name(site: Site) -> None:
     """A caller's snapshot, taken before anything ran, is what the digest is
     of: every pair is fresh for the tree, so only the snapshot can make one
-    stale, and the tree then differs from it before the record is written."""
+    stale, and the tree then differs from it before the pair is published."""
     site.render(full=True)
+    before = _media_bytes(site)
     with pytest.raises(clocks._site_media.SourcesChanged):
         render_site_media(
             site.archives,
@@ -966,7 +971,11 @@ def test_a_snapshot_given_is_what_the_records_name(site: Site) -> None:
             sources_snapshot=[("a.py", b"x = 0\n")],
             report=site.lines.append,
         )
-    assert not site.record("light").exists()
+    assert _media_bytes(site) == before
+
+
+def _media_bytes(site: Site) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in site.media.iterdir()}
 
 
 @pytest.mark.parametrize("broken", ["missing", "unreadable_subdirectory"])
@@ -1006,39 +1015,69 @@ def test_a_source_that_cannot_be_inspected_fails_the_render(
         site.render(full=True)
 
 
-def test_a_media_path_that_links_to_itself_is_refused(
-    site: Site, monkeypatch: pytest.MonkeyPatch
+def _loop_media(tmp_path: Path, case: str) -> Path:
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    return {
+        "self": loop,
+        "ancestor": loop / "media",
+        "missing_dotdot": tmp_path / "missing" / ".." / "loop",
+        "missing_dotdot_ancestor": tmp_path / "missing" / ".." / "loop" / "media",
+    }[case]
+
+
+@pytest.mark.parametrize(
+    "case", ["self", "ancestor", "missing_dotdot", "missing_dotdot_ancestor"]
+)
+def test_a_media_path_through_a_link_loop_is_refused(
+    site: Site, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
 ) -> None:
-    """A link loop is a link: the documented ``ValueError``. On Python 3.12,
-    which the site's workflows use, ``resolve`` raises ``RuntimeError`` on a
-    loop (3.13 stopped); the stand-in does the same here."""
-    site.media.symlink_to(site.media)
+    """Every link loop on the media path is the documented ``ValueError``, named
+    by the path and not by the system's error text, with nothing created.
+
+    ``resolve`` is given Python 3.12's behaviour (the site's workflows use
+    3.12): ``RuntimeError`` on a loop, where 3.13 stopped raising."""
+    media = _loop_media(tmp_path, case)
     real_resolve = Path.resolve
 
     def resolve_312(self, *args, **kwargs):
-        if self == site.media:
+        if "loop" in self.parts:
             raise RuntimeError(f"Symlink loop from {self}")
         return real_resolve(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "resolve", resolve_312)
-    with pytest.raises(ValueError, match="symbolic link"):
-        site.render(full=True)
-
-
-def test_a_media_path_under_a_link_loop_is_refused(site: Site, tmp_path: Path) -> None:
-    """A loop in an ancestor is the documented ``ValueError``, not ``OSError``
-    from ``mkdir`` (or ``RuntimeError`` from ``resolve`` on Python 3.12)."""
-    loop = tmp_path / "loop"
-    loop.symlink_to(loop)
-    with pytest.raises(ValueError, match="cannot be followed"):
+    with pytest.raises(ValueError) as raised:
         render_site_media(
             site.archives,
-            loop / "media",
+            media,
             full=True,
             demos=(DEMO,),
             sources=site.sources,
             report=site.lines.append,
         )
+    assert str(media) in str(raised.value)
+    if case == "self":  # read with lstat, before anything resolves it
+        assert f"a symbolic link to {media}" in str(raised.value)
+    assert not (tmp_path / "missing").exists()
+
+
+def test_a_path_through_a_missing_directory_into_a_loop_is_refused_unpatched(
+    site: Site, tmp_path: Path
+) -> None:
+    """On Python 3.13 and later ``resolve`` passes a loop it meets after a
+    missing directory without raising; the resolved path is then checked."""
+    media = _loop_media(tmp_path, "missing_dotdot")
+    with pytest.raises(ValueError) as raised:
+        render_site_media(
+            site.archives,
+            media,
+            full=True,
+            demos=(DEMO,),
+            sources=site.sources,
+            report=site.lines.append,
+        )
+    assert str(media) in str(raised.value)
+    assert not (tmp_path / "missing").exists()
 
 
 def test_a_staged_poster_is_created_exclusively(
@@ -1292,9 +1331,22 @@ def test_prerender_refuses_code_from_outside_the_copy(
     package: _Package, mode: str, message: str
 ) -> None:
     """An import hook ahead of the path that serves the live tree is refused
-    before any live module runs; a clocks module from elsewhere that appears
-    while drawing is refused when drawing ends."""
+    before any live module runs. A clocks module from elsewhere that appears
+    while a pair is drawn is refused before that pair is published: the old
+    pair and its record stay exactly as they were, and nothing else is added."""
+    package.media.mkdir()
+    old = {
+        f"{DEMO}.light.mp4": b"old clip",
+        f"{DEMO}.light.png": b"old poster",
+        f"{DEMO}.light.sha256": b"0" * 64 + b"\n",
+    }
+    for name, data in old.items():
+        (package.media / name).write_bytes(data)
+
     state = package.prerender(mode, "", "")
+
+    left = {p.name: p.read_bytes() for p in package.media.iterdir()}
+    assert left == old
 
     assert state.pop("live_ran", False) is False
     assert message in str(state.pop("message"))
@@ -1379,15 +1431,17 @@ elif mode == "late_live_module":
 
     def importing_late(root):
         renderer = import_renderer(root)
+        site_media = sys.modules["clocks._site_media"]
+        render_clip = site_media.render_clip
 
         def drawing(*args, **kwargs):
-            result = renderer(*args, **kwargs)
             late = types.ModuleType("clocks._late")
             late.__file__ = str(Path(style).parent / "_late.py")
             sys.modules["clocks._late"] = late
-            return result
+            return render_clip(*args, **kwargs)
 
-        return drawing
+        site_media.render_clip = drawing
+        return renderer
 
     module._import_renderer = importing_late
 path = list(sys.path)

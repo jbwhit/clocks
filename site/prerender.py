@@ -8,6 +8,7 @@ meanwhile. The live tree is read again before each record is written, so an
 edit that persists is caught too.
 """
 
+import functools
 import importlib.util
 import os
 import sys
@@ -57,9 +58,10 @@ def main(
                 full=full,
                 sources=package,
                 sources_snapshot=snapshot,
+                check_code=functools.partial(_check_origins, copy),
                 **options,
             )
-            _check_origins(copy)  # a module imported while drawing
+            _check_origins(copy)  # a module imported after the last pair
         finally:
             for name in [n for n in sys.modules if n.split(".")[0] == "clocks"]:
                 del sys.modules[name]
