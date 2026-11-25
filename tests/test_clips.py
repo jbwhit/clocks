@@ -810,6 +810,24 @@ def test_render_clip_releases_its_figure(
     assert refs[0]() is None
 
 
+@pytest.mark.parametrize("name", CLIPS)
+def test_building_and_rendering_a_clip_leaves_pyplot_alone(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``build_clip``, ``final_frame`` and ``render_clip`` register no figure
+    with pyplot and leave the active backend as it was: clip figures are made
+    outside pyplot (``new_figure``), so going back to ``plt.figure`` fails."""
+    monkeypatch.setattr(clocks._clips, "encode", _consume)
+    replay = small(name)
+    before, backend = plt.get_fignums(), matplotlib.get_backend()
+    with style("light") as colors:
+        build_clip(replay, colors)
+        final_frame(replay, colors)
+    render_clip(replay, tmp_path / "x.mp4", encoder="unused")
+    assert plt.get_fignums() == before
+    assert matplotlib.get_backend() == backend
+
+
 @pytest.mark.parametrize("backend", ["svg", "pdf"])
 def test_clips_draw_on_their_own_canvas_whatever_the_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
@@ -1645,11 +1663,9 @@ def test_model_clip_refuses_a_fourth_candidate() -> None:
         column = base.arrays[key]
         arrays[key] = np.concatenate([column, column[..., -1:]], axis=-1)
     four = Replay(dict(base.meta), arrays)
-    before = plt.get_fignums()
     with style("light") as colors:
         with pytest.raises(ValueError, match="at most three candidates"):
             build_models(four, colors)
-    assert plt.get_fignums() == before
     assert "at most three candidates" in " ".join(render_clip.__doc__.split())
 
 
