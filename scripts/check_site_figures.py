@@ -34,7 +34,9 @@ and requires, for every listed page:
   marked hidden (decision D39): a class in `HIDING_CLASSES`, the attribute
   `hidden`, `aria-hidden="true"`, an inline `display:none` or
   `visibility:hidden`, a `<template>`, a `<noscript>` or a `<details>` without
-  `open`.
+  `open`; and a description's text is counted only outside such elements, so
+  a visible description element whose every word sits inside a nested hidden
+  one fails as having text only inside a hidden element.
 
 A page not in the manifest must hold no themed element at all. Images outside
 the wrappers are ignored. The output's `media/` must hold only
@@ -188,11 +190,17 @@ class _Hider(_Open):
 
 
 class _Text:
-    """The text of one element carrying an ``id``, and what hides it."""
+    """The text of one element carrying an ``id``, and what hides it.
+
+    ``parts`` holds only the text outside every hiding element that opened
+    inside this one; ``hidden_text_by`` is the start tag of the first such
+    element that held text, or ``None``.
+    """
 
     def __init__(self, hidden_by: str | None) -> None:
         self.parts: list[str] = []
         self.hidden_by = hidden_by
+        self.hidden_text_by: str | None = None
 
     @property
     def text(self) -> str:
@@ -286,7 +294,11 @@ class _FigureParser(HTMLParser):
         if self._caption is not None:
             self._caption[1].append(data)
         for element in self._text_elements:
-            element.entry.parts.append(data)
+            inner = next((h for h in self._hiders if h.serial > element.serial), None)
+            if inner is None:
+                element.entry.parts.append(data)
+            elif data.strip() and element.entry.hidden_text_by is None:
+                element.entry.hidden_text_by = inner.start_tag
 
     def _tracked(self) -> Iterator[_Open]:
         yield from self._open
@@ -659,6 +671,11 @@ def _description_problem(name: str | None, texts: dict[str, list[_Text]]) -> str
         return f"aria-describedby {name!r} names no element on the page"
     if len(elements) > 1:
         return f"aria-describedby {name!r} names {len(elements)} elements"
+    if not elements[0].text and elements[0].hidden_text_by:
+        return (
+            f"the description {name!r} has text only inside a hidden element: "
+            f"{elements[0].hidden_text_by}"
+        )
     if not elements[0].text:
         return f"the description {name!r} is empty"
     if elements[0].hidden_by:

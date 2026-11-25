@@ -4,8 +4,9 @@ The limit of the clip checks, as decision D39 states it: the check refuses a
 clip or a description whose own start tag, or an ancestor's, carries one of the
 markers D39 names (a class in ``HIDING_CLASSES``, the ``hidden`` attribute,
 ``aria-hidden="true"``, an inline ``display:none`` or ``visibility:hidden``, a
-``<template>``, a ``<noscript>`` or a closed ``<details>``), a clip file anywhere
-but ``media/``, a poster that does not decode and a stream that does not decode
+``<template>``, a ``<noscript>`` or a closed ``<details>``), a description
+whose only text lies inside such a marked element, a clip file anywhere but
+``media/``, a poster that does not decode and a stream that does not decode
 to the expected frames. It does not compute visibility: a stylesheet rule, a
 script, an ancestor's opacity, an ancestor that clips it (``clip-path``, or
 ``overflow: hidden`` on a box too small to hold it) or any marker outside that
@@ -818,6 +819,41 @@ def test_a_hidden_description(clip_site: Callable[..., Path]) -> None:
     )
     reason = "the description 'demo-2d-text' is inside a hidden element"
     _failures(site, reason, reason)
+
+
+NESTED_HIDDEN_DESCRIPTION = """\
+<div id="demo-2d-text">
+<div class="d-none">
+<p>Words.</p>
+</div>
+</div>
+"""
+
+
+def test_a_description_whose_text_is_all_inside_a_hidden_element(
+    clip_site: Callable[..., Path],
+) -> None:
+    """The visible id wrapper does not lend its hidden paragraph's text.
+
+    ``NESTED_HIDDEN_DESCRIPTION`` is what Quarto's Pandoc writes for a nested
+    ``::: {.d-none}`` inside the description div.
+    """
+    site = clip_site()
+    _edit(site, '<div id="demo-2d-text">\n<p>Words.</p>\n</div>\n', "")
+    _edit(site, "</figure>\n", "</figure>\n" + NESTED_HIDDEN_DESCRIPTION)
+    reason = (
+        "the description 'demo-2d-text' has text only inside a hidden element: "
+        '<div class="d-none">'
+    )
+    _failures(site, reason, reason)
+
+
+def test_a_description_with_visible_text_beside_hidden_text_passes(
+    clip_site: Callable[..., Path],
+) -> None:
+    site = clip_site()
+    _edit(site, "<p>Words.</p>", '<p>Words.</p>\n<p class="d-none">More.</p>')
+    assert check_site_figures.figure_failures(site) == OK
 
 
 def test_wrong_clip_height(clip_site: Callable[..., Path]) -> None:
