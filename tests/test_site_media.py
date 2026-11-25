@@ -5,6 +5,9 @@ import functools
 import inspect
 import os
 import re
+import shutil
+import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -15,13 +18,14 @@ import numpy as np
 import pytest
 from _clip_replays import edited, first_pixel, shortest
 from _figure_artists import one, png_size
-from matplotlib.colors import to_rgba
+from matplotlib.colors import to_hex, to_rgba
 
 import clocks._site_media
 from clocks._clips import CLIP_HEIGHTS, final_frame, render_clip
 from clocks._demos import demo_2d
 from clocks._replay import DEMOS, Replay, load_replay, save_replay
 from clocks._site_media import CLIP_DEMOS, render_site_media
+from clocks._sources import read_sources
 from clocks._style import THEMES, palette, save_png
 from clocks._video import EncoderError, EncoderNotFound, StreamInfo, probe
 
@@ -29,23 +33,64 @@ ROOT = Path(__file__).resolve().parents[1]
 DEMO = "demo_2d"
 OLD = ("old clip", "old poster")
 
-PINNED = '''"""Quarto pre-render step: draw the site's clips and posters into media/."""
+PINNED = '''"""Quarto pre-render step: draw the site's clips and posters into media/.
 
+The package's source tree is read before any clocks module is imported, and
+clocks is then compiled from source into a fresh bytecode cache: cached
+bytecode is trusted by its source's size and time, which an edit can keep, so
+without this the digest each pair's record holds could name code that did not
+draw it.
+"""
+
+import importlib.util
 import os
+import sys
+import tempfile
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 
-from clocks._site_media import render_site_media
-
 SITE = Path(__file__).resolve().parent
-render_site_media(
-    SITE.parent / "assets" / "replays",
-    SITE / "media",
-    full=os.environ.get("QUARTO_PROJECT_RENDER_ALL") == "1",
-)
+
+
+def main(
+    archives: Path, media: Path, *, full: bool, demos: tuple[str, ...] | None = None
+) -> None:
+    spec = importlib.util.find_spec("clocks")  # locates the package, imports nothing
+    package = Path(spec.submodule_search_locations[0]).resolve()
+    with tempfile.TemporaryDirectory(prefix="clocks-bytecode-") as cache:
+        sys.pycache_prefix = cache
+        sources = _load("clocks_sources", package / "_sources.py")
+        snapshot = sources.read_sources(package)
+        from clocks._site_media import render_site_media
+
+        options = {} if demos is None else {"demos": demos}
+        render_site_media(
+            archives,
+            media,
+            full=full,
+            sources=package,
+            sources_snapshot=snapshot,
+            **options,
+        )
+
+
+def _load(name: str, path: Path):
+    """Run the module at ``path`` alone, without importing its package."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+if __name__ == "__main__":
+    main(
+        SITE.parent / "assets" / "replays",
+        SITE / "media",
+        full=os.environ.get("QUARTO_PROJECT_RENDER_ALL") == "1",
+    )
 '''
 
 
@@ -105,10 +150,15 @@ class Site:
         )
 
     def put_old_pair(self) -> None:
+        """An old light pair with a record of the current inputs: fresh."""
         self.media.mkdir(parents=True, exist_ok=True)
         clip, poster = self.pair("light")
         clip.write_bytes(OLD[0].encode())
         poster.write_bytes(OLD[1].encode())
+        self.record("light").write_text(f"{self.digest()}\n")
+
+    def old_pair_is_fresh(self) -> bool:
+        return self.record("light").read_text() == f"{self.digest()}\n"
 
     def old_pair(self) -> tuple[str, str]:
         clip, poster = self.pair("light")
@@ -357,6 +407,7 @@ def test_a_failed_encode_leaves_a_fresh_old_pair_alone(
     with pytest.raises(EncoderError, match="the encoder failed"):
         site.render(full=True)
     assert site.old_pair() == OLD
+    assert site.old_pair_is_fresh()
     assert site.staged_names() == []
 
 
@@ -365,14 +416,15 @@ def test_a_failed_poster_leaves_the_old_pair_alone(
 ) -> None:
     site.put_old_pair()
 
-    def failing(fig, path):
-        Path(path).write_bytes(b"partial")
+    def failing(fig, file):
+        file.write(b"partial")
         raise OSError("disk")
 
     monkeypatch.setattr(clocks._site_media, "save_png", failing)
     with pytest.raises(OSError, match="disk"):
         site.render(full=True)
     assert site.old_pair() == OLD
+    assert site.old_pair_is_fresh()
     assert site.staged_names() == []
 
 
@@ -517,9 +569,10 @@ def _nothing_kept(site: Site) -> None:
     assert site.render(full=False) == site.outputs()
 
 
+@pytest.mark.parametrize("renamed", ["poster", "record"])
 @pytest.mark.parametrize("theme", THEMES)
 def test_an_archive_replaced_at_a_final_rename_leaves_the_demo_stale(
-    site: Site, monkeypatch: pytest.MonkeyPatch, theme: str
+    site: Site, monkeypatch: pytest.MonkeyPatch, theme: str, renamed: str
 ) -> None:
     """Replaced as the pair's poster is moved into place, after every check
     that runs before publication, the archive still marks the demo stale.
@@ -531,10 +584,11 @@ def test_an_archive_replaced_at_a_final_rename_leaves_the_demo_stale(
     site.render(full=True)
     _, poster = site.pair(theme)
     poster.unlink()
+    target = poster if renamed == "poster" else site.record(theme)
     real_replace = os.replace
 
     def replacing(source, destination, *args, **kwargs):
-        if Path(destination) == poster:
+        if Path(destination) == target:
             _replace_archive(site)
         return real_replace(source, destination, *args, **kwargs)
 
@@ -552,20 +606,30 @@ def test_an_archive_gone_at_the_recheck_leaves_the_demo_stale(
     site: Site, monkeypatch: pytest.MonkeyPatch, theme: str
 ) -> None:
     """The archive disappears once the pair is staged, just before the check
-    that precedes publication; it comes back unchanged, at its old time."""
+    that precedes publication, which must stop the pair being published; it
+    then comes back unchanged."""
     site.render(full=True)
     kept = site.archive.read_bytes()
+    real_replace = os.replace
+    published: list[Path] = []
 
-    def vanishing(fig, path):
-        save_png(fig, path)
-        if Path(path).name == f".staged-{DEMO}.{theme}.png":
+    def vanishing(fig, file):
+        save_png(fig, file)
+        if Path(file.name).name == f".staged-{DEMO}.{theme}.png":
             site.archive.unlink()
 
+    def recording(source, destination, *args, **kwargs):
+        published.append(Path(destination))
+        return real_replace(source, destination, *args, **kwargs)
+
     monkeypatch.setattr(clocks._site_media, "save_png", vanishing)
+    monkeypatch.setattr(clocks._site_media.os, "replace", recording)
     with pytest.raises(clocks._site_media.ArchiveChanged) as raised:
         site.render(full=True)
     monkeypatch.setattr(clocks._site_media, "save_png", save_png)
+    monkeypatch.setattr(clocks._site_media.os, "replace", real_replace)
 
+    assert not set(site.pair(theme)) & set(published), published
     assert str(site.archive) in str(raised.value)
     site.archive.write_bytes(kept)
     _nothing_kept(site)
@@ -615,10 +679,10 @@ def test_the_replay_drawn_is_the_bytes_checked(
             with _time_held(site.archive):
                 site.archive.write_bytes(original)
 
-    def reading(fig, path):
+    def reading(fig, file):
         (cloud,) = [ax for ax in fig.axes if ax.get_gid() == "map"]
         drawn.append(np.array(one(cloud, "dots").get_xydata()))
-        save_png(fig, path)
+        save_png(fig, file)
 
     monkeypatch.setattr(clocks._site_media, "load_replay", swapping)
     monkeypatch.setattr(clocks._site_media, "save_png", reading)
@@ -668,15 +732,16 @@ def test_a_pair_drawn_from_another_archive_version_is_not_kept(
     site.pair("dark")[1].unlink()
     dots: list[np.ndarray] = []
 
-    def reading(fig, path):
+    def reading(fig, file):
         (cloud,) = [ax for ax in fig.axes if ax.get_gid() == "map"]
         dots.append(np.array(one(cloud, "dots").get_xydata()))
-        save_png(fig, path)
+        save_png(fig, file)
 
     monkeypatch.setattr(clocks._site_media, "save_png", reading)
     assert site.render(full=False) == site.outputs()
 
     expected = load_replay(site.archive).arrays["cloud"][-1][:, :2]
+    assert len(dots) == len(THEMES)
     for found in dots:
         np.testing.assert_allclose(found, expected, rtol=1e-12, atol=1e-12)
     assert [r.read_text() for r in site.records()] == [f"{site.digest()}\n"] * 2
@@ -739,8 +804,9 @@ def test_a_failed_record_rename_leaves_the_pair_stale(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     site.render(full=True)
-    site.pair("light")[1].unlink()
     clip, poster = site.pair("light")
+    poster.unlink()
+    clip.write_bytes(b"old clip")
     real_replace = os.replace
 
     def failing(source, destination, *args, **kwargs):
@@ -753,6 +819,7 @@ def test_a_failed_record_rename_leaves_the_pair_stale(
         site.render(full=False)
     monkeypatch.setattr(clocks._site_media.os, "replace", real_replace)
 
+    assert clip.read_bytes() != b"old clip"
     assert probe(clip).frames == 92
     assert png_size(poster) == (1500, 900)
     assert not site.record("light").exists()
@@ -783,6 +850,227 @@ def test_an_archive_replaced_after_both_pairs_are_kept_is_rebuilt_next_run(
     assert site.render(full=False) == site.outputs()
 
 
+def test_a_source_changed_during_a_render_certifies_nothing(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pair drawn while a source changed is published without a record,
+    and the next run rebuilds it."""
+    site.render(full=True)
+    site.pair("light")[1].unlink()
+
+    def editing(replay, path, *, theme="light", encoder=None):
+        site.source.write_text("x = 2\n")
+        return render_clip(replay, path, theme=theme, encoder=encoder)
+
+    monkeypatch.setattr(clocks._site_media, "render_clip", editing)
+    with pytest.raises(clocks._site_media.SourcesChanged, match="changed"):
+        site.render(full=False)
+    monkeypatch.setattr(clocks._site_media, "render_clip", render_clip)
+
+    assert not site.record("light").exists()
+    assert site.render(full=False) == site.outputs()
+
+
+def test_a_snapshot_given_is_what_the_records_name(site: Site) -> None:
+    """A caller's snapshot, taken before anything ran, must match the tree."""
+    site.render(full=True)
+    site.pair("light")[1].unlink()
+    with pytest.raises(clocks._site_media.SourcesChanged):
+        render_site_media(
+            site.archives,
+            site.media,
+            full=False,
+            demos=(DEMO,),
+            sources=site.sources,
+            sources_snapshot=[("a.py", b"x = 0\n")],
+            report=site.lines.append,
+        )
+    assert not site.record("light").exists()
+
+
+@pytest.mark.parametrize("broken", ["missing", "unreadable_subdirectory"])
+def test_an_unreadable_source_tree_fails_the_render(site: Site, broken: str) -> None:
+    if broken == "missing":
+        site.source.unlink()
+        site.sources.rmdir()
+        expected: type[OSError] = FileNotFoundError
+    else:
+        locked = site.sources / "sub"
+        locked.mkdir()
+        (locked / "b.py").write_text("y = 1\n")
+        locked.chmod(0)
+        expected = PermissionError
+    try:
+        with pytest.raises(expected):
+            site.render(full=True)
+    finally:
+        if broken != "missing":
+            (site.sources / "sub").chmod(0o755)
+    assert [p for p in site.outputs() if p.exists()] == []
+
+
+def test_a_staged_poster_is_created_exclusively(
+    site: Site, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A link planted at the staged poster's name while the clip encodes stops
+    the poster, and nothing is written where it points."""
+    site.render(full=True)
+    site.pair("light")[1].unlink()
+    outside = tmp_path / "outside.png"
+
+    def planting(replay, path, *, theme="light", encoder=None):
+        frames = render_clip(replay, path, theme=theme, encoder=encoder)
+        site.path(f".staged-{DEMO}.{theme}.png").symlink_to(outside)
+        return frames
+
+    monkeypatch.setattr(clocks._site_media, "render_clip", planting)
+    with pytest.raises(FileExistsError):
+        site.render(full=False)
+    assert not outside.exists()
+    assert site.staged_names() == []
+
+
+@pytest.mark.parametrize("name", ["old.mp4", "old.png", "demo_retired.light.sha256"])
+def test_a_full_render_removes_a_dangling_link_of_an_owned_name(
+    site: Site, tmp_path: Path, name: str
+) -> None:
+    site.media.mkdir()
+    site.path(name).symlink_to(tmp_path / "nowhere")
+    site.render(full=True)
+    assert not site.path(name).is_symlink()
+    assert f"removed {name}" in site.lines
+
+
+@pytest.mark.parametrize("linked", ["clip", "poster", "record"])
+def test_a_linked_output_is_stale(site: Site, tmp_path: Path, linked: str) -> None:
+    """A clip, poster or record that is a link, even to a valid copy, is rebuilt."""
+    site.render(full=True)
+    clip, poster = site.pair("light")
+    path = {"clip": clip, "poster": poster, "record": site.record("light")}[linked]
+    copy = tmp_path / f"copy{path.suffix}"
+    copy.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(copy)
+    assert site.render(full=False) == site.pair("light")
+    assert not path.is_symlink()
+
+
+def test_staging_cleanup_never_follows_a_link(
+    site: Site, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A staged link is removed without a lookup through it (on Python 3.12,
+    ``is_dir`` follows the link and can raise for an inaccessible target)."""
+    site.media.mkdir()
+    link = site.path(".staged-link")
+    link.symlink_to(tmp_path)
+    real_is_dir = Path.is_dir
+
+    def strict_is_dir(self, *args, **kwargs):
+        if self.is_symlink():
+            raise PermissionError(f"followed {self}")
+        return real_is_dir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", strict_is_dir)
+    site.render(full=True)
+    assert not link.is_symlink()
+
+
+def test_a_media_path_ending_in_dotdot_through_a_link_is_refused(
+    site: Site, tmp_path: Path
+) -> None:
+    """``linked/..`` names the parent of the link's target, not of the link:
+    the guard compares the resolved path, which a symlink test alone misses."""
+    elsewhere = tmp_path / "elsewhere" / "inner"
+    elsewhere.mkdir(parents=True)
+    (tmp_path / "linked").symlink_to(elsewhere, target_is_directory=True)
+    media = tmp_path / "linked" / ".."
+    assert not media.is_symlink()
+    with pytest.raises(ValueError, match="resolves elsewhere"):
+        render_site_media(
+            site.archives,
+            media,
+            full=True,
+            demos=(DEMO,),
+            sources=site.sources,
+            report=site.lines.append,
+        )
+    assert sorted(p.name for p in (tmp_path / "elsewhere").iterdir()) == ["inner"]
+
+
+def test_prerender_draws_with_the_source_it_records(tmp_path: Path) -> None:
+    """An imported renderer file is changed with its size and time kept, so a
+    plain import reuses the old bytecode (checked first: the trap is armed).
+    The pre-render step must draw with the new source, which its record names.
+    """
+    root = tmp_path / "pkg"
+    shutil.copytree(
+        ROOT / "src" / "clocks",
+        root / "clocks",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+    env["PYTHONPATH"] = str(root)
+
+    def run(*args: str) -> str:
+        result = subprocess.run(
+            [sys.executable, *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=tmp_path,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    run("-c", "import clocks._site_media")
+    assert list((root / "clocks" / "__pycache__").glob("_style.*.pyc"))
+    style = root / "clocks" / "_style.py"
+    old, new = palette("light").background, "#123456"
+    text = style.read_text(encoding="utf-8")
+    assert len(old) == len(new) and text.count(f'background="{old}"') == 1
+    with _time_held(style):
+        style.write_text(text.replace(f'background="{old}"', f'background="{new}"'))
+    shown = "from clocks._style import palette; print(palette('light').background)"
+    assert run("-c", shown).strip() == old
+
+    archives = tmp_path / "archives"
+    archives.mkdir()
+    save_replay(archives / f"{DEMO}.npz", _recorded())
+    media = tmp_path / "media"
+    out = run(
+        "-c",
+        _PRERENDER_DRIVER,
+        str(ROOT / "site" / "prerender.py"),
+        str(archives),
+        str(media),
+        DEMO,
+    )
+
+    assert Path(out.splitlines()[-1]).is_relative_to(root)
+    pixel = _poster_pixels(media / f"{DEMO}.light.png")[0, 0, :3]
+    assert to_hex(pixel / 255) == new
+    expected = clocks._site_media.inputs_digest(
+        (archives / f"{DEMO}.npz").read_bytes(), read_sources(root / "clocks")
+    )
+    assert (media / f"{DEMO}.light.sha256").read_text() == f"{expected}\n"
+
+
+_PRERENDER_DRIVER = """\
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("prerender", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.main(Path(sys.argv[2]), Path(sys.argv[3]), full=True, demos=(sys.argv[4],))
+import clocks
+
+print(clocks.__file__)
+"""
+
+
 def _archive_with(site: Site, name: str, row: int) -> Path:
     """A copy of the fixture archive with 0.5 added to ``cloud[row]``."""
     base = load_replay(site.archive)
@@ -801,10 +1089,10 @@ def test_the_poster_is_the_last_row_of_its_archive(
     second_changed = _archive_with(site, "second-changed", 1)
     dots: list[np.ndarray] = []
 
-    def reading(fig, path):
+    def reading(fig, file):
         (cloud,) = [ax for ax in fig.axes if ax.get_gid() == "map"]
         dots.append(np.array(one(cloud, "dots").get_xydata()))
-        save_png(fig, path)
+        save_png(fig, file)
 
     monkeypatch.setattr(clocks._site_media, "save_png", reading)
     posters = []
@@ -823,6 +1111,7 @@ def test_the_poster_is_the_last_row_of_its_archive(
     assert not np.array_equal(posters[1], posters[0])
     assert np.array_equal(posters[2], posters[0])
     expected = load_replay(site.archive).arrays["cloud"][-1][:, :2]
+    assert len(dots) == 3 * len(THEMES)
     for found in dots[:2]:
         np.testing.assert_allclose(found, expected, rtol=1e-12, atol=1e-12)
 
@@ -850,9 +1139,10 @@ def test_the_report_names_the_encoder_and_each_file(site: Site) -> None:
     site.render(full=True)
     assert site.lines[0].startswith("encoder: ")
     assert "ffmpeg version" in site.lines[0]
-    for line in site.lines[1:3]:
+    assert len(site.lines) == 1 + len(THEMES)
+    for theme, line in zip(THEMES, site.lines[1:], strict=True):
         assert re.fullmatch(
-            r"rendered demo_2d\.(light|dark)\.mp4 \(92 frames, \d+\.\d s\)", line
+            rf"rendered demo_2d\.{theme}\.mp4 \(92 frames, \d+\.\d s\)", line
         ), line
 
 
@@ -869,3 +1159,18 @@ def test_the_prerender_script_is_its_pinned_program() -> None:
 def test_site_media_is_git_ignored() -> None:
     lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "site/media/" in lines
+
+
+def test_the_sources_module_imports_nothing_of_clocks() -> None:
+    """``site/prerender.py`` runs it before ``clocks`` is imported."""
+    tree = ast.parse((ROOT / "src" / "clocks" / "_sources.py").read_text("utf-8"))
+    names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    names |= {
+        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+    }
+    assert names <= {"collections.abc", "pathlib"}, names

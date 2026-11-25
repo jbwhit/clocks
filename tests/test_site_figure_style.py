@@ -1805,7 +1805,13 @@ def test_every_clip_module_is_scanned() -> None:
 
 # What a renderer may import from the package: never the forward model.
 _RENDERER_IMPORTS = frozenset(
-    {"clocks._replay", "clocks._style", "clocks._figures", "clocks._video"}
+    {
+        "clocks._replay",
+        "clocks._style",
+        "clocks._figures",
+        "clocks._video",
+        "clocks._sources",
+    }
 )
 
 
@@ -1826,6 +1832,7 @@ def _package_imports(path: Path) -> set[str]:
         *_clip_modules(),
         REPO / "src" / "clocks" / "_video.py",
         REPO / "src" / "clocks" / "_site_media.py",
+        REPO / "src" / "clocks" / "_sources.py",
     ],
     ids=lambda path: path.name,
 )

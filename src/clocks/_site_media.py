@@ -23,20 +23,32 @@ holds exactly the run's digest; anything else rebuilds it, from the same
 archive bytes that were hashed. Quarto publishes only the ``.mp4`` and
 ``.png`` files of the directory, so the records stay out of the site.
 
-The limit: an input replaced while the step runs is not seen at once for every
-pair. An archive replaced during the run is caught, for each pair this run
-rebuilds, by the check that runs again after that pair's final rename; for a
-pair this run kept, and for any source file changed during the run, it is
-caught by the next run, whose digest no longer matches the record.
+The sources' snapshot must be of the code that runs. ``site/prerender.py``
+takes it before importing ``clocks`` and has the package compiled from source
+into a fresh bytecode cache (cached bytecode is trusted by its source's size
+and time, which an edit can keep), and passes it as ``sources_snapshot``; a
+caller that passes none gets a snapshot taken when the call starts, after its
+own imports. Before each record is written the source tree is read again, and
+a difference raises ``SourcesChanged`` with the pair left unrecorded, so stale.
 
-Three inputs are refused rather than trusted. A media path that is itself a
-symbolic link is refused before anything is created or removed, since the
-cleanup would follow it into another directory. An archive whose replay is of
-another demo is refused before anything is drawn. And an archive that differs
-from its snapshot, or cannot be read, when a rebuilt pair is checked (before
-and after its publication, or when anything fails while it is rebuilt) removes
-every clip, poster and record of that demo; outside a failure it raises
-``ArchiveChanged``.
+The limit: an archive replaced while the step runs is caught, for each pair
+this run rebuilds, by the check that runs again after that pair's final
+rename; for a pair this run kept, it is caught by the next run, whose digest
+no longer matches the record.
+
+Three inputs are refused rather than trusted. A media path whose last
+component is a symbolic link, or that resolves elsewhere than its parent's
+entry of that name (``linked/..``, say), is refused before anything is created
+or removed, since the cleanup would follow it into another directory. An
+archive whose replay is of another demo is refused before that demo is drawn.
+And an archive that differs from its snapshot, or cannot be read, when a
+rebuilt pair is checked (before and after its publication, or when anything
+fails while it is rebuilt) removes every clip, poster and record of that demo;
+outside a failure it raises ``ArchiveChanged``.
+
+No file of the step is written through a link: the staged poster and record
+are created exclusively, the clip is moved into its staged name, and an output
+that is a link is stale and replaced rather than kept.
 """
 
 import functools
@@ -45,11 +57,12 @@ import os
 import re
 import shutil
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from clocks._clips import final_frame, render_clip
 from clocks._replay import DEMOS, Replay, load_replay
+from clocks._sources import read_sources
 from clocks._style import THEMES, save_png, style
 from clocks._video import encoder_version, find_encoder
 
@@ -62,6 +75,10 @@ _MEDIA_SUFFIXES = frozenset({".mp4", ".png"})
 _RECORD_NAME = re.compile(
     r"[^.]+\.(?:" + "|".join(map(re.escape, THEMES)) + r")\.sha256", re.ASCII
 )
+
+
+class SourcesChanged(RuntimeError):
+    """The source tree differs from the snapshot its records would name."""
 
 
 class ArchiveChanged(RuntimeError):
@@ -85,11 +102,13 @@ def render_site_media(
     full: bool,
     demos: Sequence[str] = CLIP_DEMOS,
     sources: Path = PACKAGE,
+    sources_snapshot: Sequence[tuple[str, bytes]] | None = None,
     report: Callable[[str], None] = print,
 ) -> list[Path]:
     """Draw each demo's clip and poster, in every theme, into ``media``.
 
-    A ``media`` that is a symbolic link raises ``ValueError`` first. The encoder
+    A ``media`` that is a symbolic link, or resolves elsewhere, raises
+    ``ValueError`` first. The encoder
     is found next: when there is none, ``EncoderNotFound`` propagates before
     anything is created or removed. Every run removes every entry whose name
     starts with ``STAGED``, a dangling link included. A pair is rebuilt when
@@ -102,6 +121,11 @@ def render_site_media(
     it did not just write. Returns the paths written, clip then poster, in the
     order written.
 
+    ``sources_snapshot``, when given, is what ``read_sources(sources)`` returned
+    before anything of ``clocks`` was imported; the records name it, and the
+    tree must still read the same before each is written (``SourcesChanged``
+    otherwise). A source tree that cannot be read raises the ``OSError``.
+
     An archive holding another demo's replay raises ``ValueError`` before that
     demo is drawn. An archive that changes or cannot be read while one of its
     pairs renders or is published raises ``ArchiveChanged`` after removing all
@@ -113,7 +137,10 @@ def render_site_media(
     report(f"encoder: {encoder} ({encoder_version(encoder)})")
     media.mkdir(parents=True, exist_ok=True)
     _remove_leftovers(media)
-    source_items = _read_sources(sources)
+    if sources_snapshot is None:
+        source_items = read_sources(sources)
+    else:
+        source_items = list(sources_snapshot)
     written: list[Path] = []
     for demo in demos:
         archive = archives / f"{demo}.npz"
@@ -135,6 +162,7 @@ def render_site_media(
             started = time.perf_counter()
             try:
                 frames = _rebuild_pair(replay, theme, clip, poster, encoder, unchanged)
+                _require_sources(sources, source_items)
                 _write_record(record, inputs)
                 unchanged()
             except BaseException:
@@ -164,13 +192,14 @@ def inputs_digest(archive: bytes, sources: Sequence[tuple[str, bytes]]) -> str:
     return digest.hexdigest()
 
 
-def _read_sources(sources: Path) -> list[tuple[str, bytes]]:
-    """Each source file's path relative to ``sources`` and its bytes, sorted."""
-    items = [
-        (path.relative_to(sources).as_posix(), path.read_bytes())
-        for path in _source_files(sources)
-    ]
-    return sorted(items)
+def _require_sources(sources: Path, snapshot: list[tuple[str, bytes]]) -> None:
+    """Raise ``SourcesChanged`` unless ``sources`` still reads as ``snapshot``."""
+    if read_sources(sources) != snapshot:
+        raise SourcesChanged(
+            f"the source tree under {sources} changed during the run, so the code "
+            "that drew this pair is not known; it is left without a record, and "
+            "the next run rebuilds it"
+        )
 
 
 def _rebuild_pair(
@@ -190,8 +219,8 @@ def _rebuild_pair(
     staged_poster = poster.with_name(STAGED + poster.name)
     try:
         frames = render_clip(replay, staged_clip, theme=theme, encoder=encoder)
-        with style(theme) as colors:
-            save_png(final_frame(replay, colors), staged_poster)
+        with style(theme) as colors, staged_poster.open("xb") as file:
+            save_png(final_frame(replay, colors), file)
         unchanged()
     except BaseException:
         staged_clip.unlink(missing_ok=True)
@@ -206,11 +235,14 @@ def _rebuild_pair(
 
 
 def _refuse_a_linked_media(media: Path) -> None:
-    """Refuse a ``media`` whose last component is a symbolic link, dangling or not."""
+    """Refuse a ``media`` whose last component is a symbolic link, dangling or
+    not, or which resolves elsewhere than its parent's entry of its name (a
+    path ending in ``..`` past a link names the parent of the link's target)."""
     if media.is_symlink() or media.resolve() != media.parent.resolve() / media.name:
         raise ValueError(
-            f"the media directory {media} is a symbolic link; the pre-render step "
-            "removes files there, so it must be a real directory (remove the link)"
+            f"the media directory {media} is a symbolic link or resolves elsewhere "
+            f"({media.resolve()}); the pre-render step removes files there, so it "
+            "must be a real directory named directly"
         )
 
 
@@ -268,20 +300,12 @@ def _require_unchanged(archive: Path, digest: str, media: Path, demo: str) -> No
 
 
 def _is_stale(clip: Path, poster: Path, record: Path, inputs: str) -> bool:
-    """Either file or the record missing, or the record not exactly ``inputs``."""
-    if not (clip.is_file() and poster.is_file() and record.is_file()):
+    """Either file or the record missing or a link, or the record not exactly
+    ``inputs``."""
+    paths = (clip, poster, record)
+    if any(path.is_symlink() or not path.is_file() for path in paths):
         return True
     return record.read_text(encoding="utf-8", errors="replace") != f"{inputs}\n"
-
-
-def _source_files(sources: Path) -> Iterator[Path]:
-    """Every regular file under ``sources``, outside ``__pycache__`` directories."""
-    for directory, subdirectories, files in sources.walk():
-        subdirectories[:] = [d for d in subdirectories if d != "__pycache__"]
-        for name in files:
-            path = directory / name
-            if path.is_file():
-                yield path
 
 
 def _remove_leftovers(media: Path) -> None:
@@ -293,7 +317,7 @@ def _remove_leftovers(media: Path) -> None:
     for path in media.iterdir():
         if not path.name.startswith(STAGED):
             continue
-        if path.is_dir() and not path.is_symlink():
+        if not path.is_symlink() and path.is_dir():
             shutil.rmtree(path)
         else:
             path.unlink()
@@ -303,9 +327,10 @@ def _remove_other_media(
     media: Path, keep: set[Path], report: Callable[[str], None]
 ) -> None:
     """Remove each ``.mp4`` and ``.png``, and each record of the reserved form,
-    directly in ``media`` and not in ``keep``."""
+    directly in ``media`` and not in ``keep``: a regular file, or a link of such
+    a name, dangling or not, removed itself. A directory is left alone."""
     for path in sorted(media.iterdir()):
-        if path in keep or not path.is_file():
+        if path in keep or not (path.is_symlink() or path.is_file()):
             continue
         if path.suffix in _MEDIA_SUFFIXES or _RECORD_NAME.fullmatch(path.name):
             path.unlink()

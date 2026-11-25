@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -157,8 +158,9 @@ def show(fig: Figure) -> None:
     display(Image(data=buffer.getvalue(), retina=True))
 
 
-def save_png(fig: Figure, path: Path) -> None:
-    """Write ``fig`` to ``path`` as PNG bytes, the pixels ``show`` displays.
+def save_png(fig: Figure, path: Path | BinaryIO) -> None:
+    """Write ``fig`` to ``path``, or an open binary file, as PNG bytes, the
+    pixels ``show`` displays.
 
     The file is rendered at 200 dpi, twice the style's 100, as ``show`` does, never
     cropped, opaque, and PNG whatever the path's suffix and whatever
@@ -178,7 +180,7 @@ def frame_rgba(fig: Figure) -> bytes:
     return buffer.getvalue()
 
 
-def _save_canvas(fig: Figure, target: Path | io.BytesIO, format: str) -> None:
+def _save_canvas(fig: Figure, target: Path | BinaryIO, format: str) -> None:
     """Save ``fig``'s whole canvas at 200 dpi on its own face colour."""
     with matplotlib.rc_context({"savefig.bbox": None}):
         fig.savefig(

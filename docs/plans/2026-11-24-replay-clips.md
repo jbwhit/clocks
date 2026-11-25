@@ -1313,7 +1313,8 @@ The run changes no file. This task proves the new tests can fail; a fix that it 
 | 7 | the scan of pages the manifest does not list removed | `test_a_wrapper_on_an_unlisted_page`; `test_a_clip_on_an_unlisted_page` |
 | 7 | the stylesheet and encoder checks made for every manifest | `test_plot_pages_need_no_stylesheet_or_encoder`, and every other plot-only test of the file that asserts an exact list of failures; the coordinator writes that list out from the baseline before the run |
 | 7 | a missing encoder ignored | `test_no_encoder` |
-| 8 | `_is_stale`: the record's digest not compared | `test_a_partial_render_rebuilds_what_is_stale[archive_replaced_same_time]`, `[source_rewritten_same_time]`, `[source_renamed]`; `test_a_pair_without_its_archive_record_is_stale[other_digest]` (the time rule these rows tested was retired in round 4) |
+| 8 | `_is_stale`: the record's digest not compared | `test_a_partial_render_rebuilds_what_is_stale[archive_replaced_same_time]`, `[source_rewritten_same_time]`, `[source_renamed]`; `test_a_pair_without_its_archive_record_is_stale[other_digest]`; `test_a_pair_drawn_from_another_archive_version_is_not_kept`; `test_an_archive_replaced_after_both_pairs_are_kept_is_rebuilt_next_run` (the time rule these rows tested was retired in round 4) |
+| 8 | `site/prerender.py`: clocks compiled with the default bytecode cache (no fresh `sys.pycache_prefix`) | `test_prerender_draws_with_the_source_it_records` (added in round 5) |
 | 8 | `inputs_digest`: the sources left out | `test_a_partial_render_rebuilds_what_is_stale[source_rewritten_same_time]`, `[source_renamed]` |
 | 8 | only the clip's existence checked | `test_a_partial_render_rebuilds_what_is_stale[poster_missing]`; `test_an_interrupted_publication_leaves_a_file_missing` (its partial render then finds the clip and not the missing poster) |
 | 8 | `__pycache__` not skipped | `test_a_cached_bytecode_file_does_not_make_media_stale` |
