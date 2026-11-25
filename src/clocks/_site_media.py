@@ -12,8 +12,19 @@ file missing, which makes the pair stale on the next run, never a new clip
 beside an old poster. A render that is not full keeps every other clip and
 poster in the directory, current or not: only a full render followed by the
 rendered-site check establishes the published set.
+
+Three inputs are refused rather than trusted. A media path that is itself a
+symbolic link is refused before anything is created or removed, since the
+cleanup would follow it into another directory. An archive whose replay is of
+another demo is refused before anything is drawn. And each archive's bytes are
+hashed when it is loaded and again before each of its pairs is published: if
+they differ, every clip and poster of that demo is removed and
+``ArchiveChanged`` is raised, so no pair drawn from the old content can look
+fresh beside the new archive, whatever its modification time says.
 """
 
+import functools
+import hashlib
 import os
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -33,6 +44,10 @@ STAGED = ".staged-"
 _MEDIA_SUFFIXES = frozenset({".mp4", ".png"})
 
 
+class ArchiveChanged(RuntimeError):
+    """An archive changed while a pair drawn from it was being rendered."""
+
+
 def media_paths(media: Path, demo: str, theme: str) -> tuple[Path, Path]:
     """The clip and the poster of ``demo`` in ``theme``, under ``media``."""
     return media / f"{demo}.{theme}.mp4", media / f"{demo}.{theme}.png"
@@ -49,15 +64,21 @@ def render_site_media(
 ) -> list[Path]:
     """Draw each demo's clip and poster, in every theme, into ``media``.
 
-    The encoder is found first: when there is none, ``EncoderNotFound``
-    propagates before anything is created or removed. Every run removes the
-    staging leftovers of an interrupted one. A pair is rebuilt when ``full`` is
-    true, when either file is missing, or when the older of the two is not
-    strictly newer than ``archives / f"{demo}.npz"`` and the newest file under
-    ``sources`` (``__pycache__`` directories skipped). A full render then removes
-    every other ``.mp4`` and ``.png`` directly inside ``media``. Returns the paths
+    A ``media`` that is a symbolic link raises ``ValueError`` first. The encoder
+    is found next: when there is none, ``EncoderNotFound`` propagates before
+    anything is created or removed. Every run removes the staging leftovers of
+    an interrupted one. A pair is rebuilt when ``full`` is true, when either
+    file is missing, or when the older of the two is not strictly newer than
+    ``archives / f"{demo}.npz"`` and the newest file under ``sources``
+    (``__pycache__`` directories skipped). A full render then removes every
+    other ``.mp4`` and ``.png`` directly inside ``media``. Returns the paths
     written, clip then poster, in the order written.
+
+    An archive holding another demo's replay raises ``ValueError`` before that
+    demo is drawn; an archive that changes while one of its pairs renders
+    raises ``ArchiveChanged`` after removing all of that demo's media.
     """
+    _refuse_a_linked_media(media)
     encoder = find_encoder()
     report(f"encoder: {encoder} ({encoder_version(encoder)})")
     media.mkdir(parents=True, exist_ok=True)
@@ -70,15 +91,20 @@ def render_site_media(
         archive = archives / f"{demo}.npz"
         inputs_time = max(archive.stat().st_mtime_ns, newest_source)
         replay: Replay | None = None
+        digest = ""
         for theme in THEMES:
             clip, poster = media_paths(media, demo, theme)
             if not (full or _is_stale(clip, poster, inputs_time)):
                 report(f"kept {clip.name}")
                 continue
             if replay is None:
-                replay = load_replay(archive)
+                digest = _digest(archive)
+                replay = _load_demo(archive, demo)
+            unchanged = functools.partial(
+                _require_unchanged, archive, digest, media, demo
+            )
             started = time.perf_counter()
-            frames = _rebuild_pair(replay, theme, clip, poster, encoder)
+            frames = _rebuild_pair(replay, theme, clip, poster, encoder, unchanged)
             seconds = time.perf_counter() - started
             report(f"rendered {clip.name} ({frames} frames, {seconds:.1f} s)")
             written += [clip, poster]
@@ -88,9 +114,14 @@ def render_site_media(
 
 
 def _rebuild_pair(
-    replay: Replay, theme: str, clip: Path, poster: Path, encoder: str
+    replay: Replay,
+    theme: str,
+    clip: Path,
+    poster: Path,
+    encoder: str,
+    unchanged: Callable[[], None],
 ) -> int:
-    """Stage, retire, publish; return the clip's frame count."""
+    """Stage, check the archive is ``unchanged``, retire, publish; return frames."""
     staged_clip = clip.with_name(STAGED + clip.name)
     staged_poster = poster.with_name(STAGED + poster.name)
     try:
@@ -101,6 +132,7 @@ def _rebuild_pair(
                 save_png(fig, staged_poster)
             finally:
                 plt.close(fig)
+        unchanged()
     except BaseException:
         staged_clip.unlink(missing_ok=True)
         staged_poster.unlink(missing_ok=True)
@@ -110,6 +142,44 @@ def _rebuild_pair(
     os.replace(staged_clip, clip)
     os.replace(staged_poster, poster)
     return frames
+
+
+def _refuse_a_linked_media(media: Path) -> None:
+    """Refuse a ``media`` whose last component is a symbolic link, dangling or not."""
+    if media.is_symlink() or media.resolve() != media.parent.resolve() / media.name:
+        raise ValueError(
+            f"the media directory {media} is a symbolic link; the pre-render step "
+            "removes files there, so it must be a real directory (remove the link)"
+        )
+
+
+def _load_demo(archive: Path, demo: str) -> Replay:
+    """Load ``archive``; refuse it unless its replay is of ``demo``."""
+    replay = load_replay(archive)
+    found = replay.meta["demo"]
+    if found != demo:
+        raise ValueError(
+            f"{archive} holds a replay of {found!r}, not {demo!r}: "
+            f"restore {demo}'s own archive (it may have been copied over)"
+        )
+    return replay
+
+
+def _digest(archive: Path) -> str:
+    return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def _require_unchanged(archive: Path, digest: str, media: Path, demo: str) -> None:
+    """Raise ``ArchiveChanged``, removing ``demo``'s media, if ``archive`` changed."""
+    if _digest(archive) == digest:
+        return
+    for theme in THEMES:
+        for path in media_paths(media, demo, theme):
+            path.unlink(missing_ok=True)
+    raise ArchiveChanged(
+        f"{archive} changed while a {demo} pair was rendering; every {demo} clip "
+        "and poster was removed so the next run rebuilds them from the new archive"
+    )
 
 
 def _is_stale(clip: Path, poster: Path, inputs_time: int) -> bool:

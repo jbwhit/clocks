@@ -12,7 +12,7 @@ from pathlib import Path
 import matplotlib.image
 import numpy as np
 import pytest
-from _clip_replays import edited, first_pixel
+from _clip_replays import edited, first_pixel, shortest
 from _figure_artists import one, png_size
 from matplotlib.colors import to_rgba
 
@@ -366,6 +366,107 @@ def test_an_interrupted_publication_leaves_a_file_missing(
     assert destinations.index(light_clip) < destinations.index(light_poster)
     assert probe(light_clip).frames == 92
     assert not light_poster.exists()
+    assert site.render(full=False) == site.outputs()
+
+
+@pytest.mark.parametrize("dangling", [False, True], ids=["to_a_directory", "dangling"])
+def test_a_symlinked_media_directory_is_refused_before_anything_is_touched(
+    site: Site, tmp_path: Path, dangling: bool
+) -> None:
+    """A link at the media path could send the cleanup into another directory."""
+    target = tmp_path / "shared"
+    if not dangling:
+        target.mkdir()
+        for name in ("unrelated.png", "unrelated.mp4", ".staged-x"):
+            (target / name).write_text(name)
+    site.media.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic link") as raised:
+        site.render(full=True)
+
+    assert str(site.media) in str(raised.value)
+    assert site.media.is_symlink()
+    if dangling:
+        assert not target.exists()
+    else:
+        assert sorted(p.name for p in target.iterdir()) == [
+            ".staged-x",
+            "unrelated.mp4",
+            "unrelated.png",
+        ]
+        assert (target / "unrelated.png").read_text() == "unrelated.png"
+
+
+def test_a_media_directory_reached_through_a_linked_parent_is_accepted(
+    site: Site, tmp_path: Path
+) -> None:
+    """Only the media path's own last component is refused when it is a link."""
+    real = tmp_path / "real-site"
+    real.mkdir()
+    linked = tmp_path / "linked-site"
+    linked.symlink_to(real, target_is_directory=True)
+    written = render_site_media(
+        site.archives,
+        linked / "media",
+        full=True,
+        demos=(DEMO,),
+        sources=site.sources,
+        report=site.lines.append,
+    )
+    assert [p.name for p in written] == [p.name for p in site.outputs()]
+    assert (real / "media" / f"{DEMO}.light.mp4").is_file()
+
+
+def test_an_archive_of_another_demo_is_refused_before_drawing(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """demo_1d's archive saved under demo_2d's name draws nothing for demo_2d."""
+    save_replay(site.archive, shortest("demo_1d"))
+    site.put_old_pair()
+    clips = _spy(monkeypatch, "render_clip", render_clip)
+
+    with pytest.raises(ValueError, match="'demo_1d'.*'demo_2d'") as raised:
+        site.render(full=True)
+
+    assert str(site.archive) in str(raised.value)
+    assert clips == []
+    assert site.old_pair() == OLD
+    assert site.staged_names() == []
+
+
+@pytest.mark.parametrize("during", [0, 1], ids=["light_pair", "dark_pair"])
+def test_an_archive_replaced_while_a_pair_renders_leaves_the_demo_stale(
+    site: Site, monkeypatch: pytest.MonkeyPatch, during: int
+) -> None:
+    """No pair of the demo survives to look fresh after its archive changes.
+
+    The replacement keeps the old archive's modification time, so only the
+    content shows the change: the timestamps alone would call every output
+    fresh on the next run.
+    """
+    site.render(full=True)
+    site.set_times()
+    base = load_replay(site.archive)
+    changed = edited(base, cloud=np.array(base.arrays["cloud"]) + 0.5)
+    calls = 0
+
+    def replacing(replay, path, *, theme="light", encoder=None):
+        nonlocal calls
+        if calls == during:
+            save_replay(site.archive, changed)
+            os.utime(site.archive, (1_000, 1_000))
+        calls += 1
+        return render_clip(replay, path, theme=theme, encoder=encoder)
+
+    monkeypatch.setattr(clocks._site_media, "render_clip", replacing)
+    with pytest.raises(clocks._site_media.ArchiveChanged, match="changed") as raised:
+        site.render(full=True)
+    monkeypatch.setattr(clocks._site_media, "render_clip", render_clip)
+
+    assert str(site.archive) in str(raised.value)
+    assert calls == during + 1
+    assert [p for p in site.outputs() if p.exists()] == []
+    assert site.staged_names() == []
     assert site.render(full=False) == site.outputs()
 
 
