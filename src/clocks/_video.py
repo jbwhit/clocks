@@ -218,13 +218,19 @@ def box_order(path: Path) -> list[str]:
 def probe(path: Path, encoder: str | None = None) -> StreamInfo:
     """Decode ``path`` to nothing and report its stream, frame count and box order.
 
-    Raises ``ValueError`` when the decoder fails or its report cannot be read. A
-    file cut short may decode with fewer frames; callers compare the count.
+    Raises ``ValueError`` when the decoder fails or its report cannot be read.
+    The decoder runs with ``-xerror``, so a frame it cannot decode cleanly fails
+    the probe even when the stream keeps its length (FFmpeg otherwise conceals
+    the damage, exits 0 and counts the frame). It decodes on one thread: with
+    frame threads, an error in one of the last frames can reach ``-xerror`` too
+    late and the decoder exits 0 anyway (measured with FFmpeg 9.0). A file cut
+    short may decode with fewer frames; callers compare the count.
     """
     if encoder is None:
         encoder = find_encoder()
     command = [
-        encoder, "-hide_banner", "-nostdin", "-i", str(path), "-map", "0:v:0",
+        encoder, "-hide_banner", "-nostdin", "-xerror", "-threads", "1",
+        "-i", str(path), "-map", "0:v:0",
         "-f", "null", "-", "-progress", "pipe:1", "-nostats",
     ]  # fmt: skip
     status, out, err = _run_decoder(command)

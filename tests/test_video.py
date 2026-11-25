@@ -678,6 +678,68 @@ def test_probe_refuses_a_file_that_is_not_video(tmp_path: Path) -> None:
         probe(path)
 
 
+_DECODE_ERRORS = ("error while decoding", "concealing", "corrupt decoded frame")
+
+
+def _mdat_payload(data: bytes) -> tuple[int, int]:
+    """The offset and length of the top-level ``mdat`` box's payload."""
+    offset = 0
+    while offset + 8 <= len(data):
+        size, kind = struct.unpack(">I4s", data[offset : offset + 8])
+        if kind == b"mdat":
+            return offset + 8, size - 8
+        offset += size
+    raise AssertionError("the clip has no mdat box")
+
+
+def _lenient_decode(path: Path) -> tuple[int, bool]:
+    """Decode ``path`` without ``-xerror``: its frame count, and whether it erred."""
+    command = [
+        find_encoder(), "-hide_banner", "-nostdin", "-i", str(path),
+        "-map", "0:v:0", "-f", "null", "-", "-progress", "pipe:1", "-nostats",
+    ]  # fmt: skip
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    erred = any(marker in result.stderr for marker in _DECODE_ERRORS)
+    return parse_progress(result.stdout), erred
+
+
+def test_probe_refuses_a_clip_with_a_corrupt_frame_of_full_length(
+    tmp_path: Path,
+) -> None:
+    """Zeroed bytes inside a frame fail ``probe`` even when no frame goes missing.
+
+    Encoded bytes differ between FFmpeg builds, so the damage is tried at many
+    offsets of the ``mdat`` payload; the copies that matter are those a lenient
+    decode (the decoder without ``-xerror``) reports errors in while still
+    counting every frame. At least one such copy must exist, and ``probe`` must
+    refuse each of them.
+    """
+    rng = np.random.default_rng(0)
+    frames = []
+    for _ in range(20):
+        frame = rng.integers(0, 256, (HEIGHT, WIDTH, 4), np.uint8)
+        frame[..., 3] = 255
+        frames.append((frame.tobytes(), 1))
+    clip = tmp_path / "clip.mp4"
+    encode(frames, clip, width=WIDTH, height=HEIGHT)
+    data = clip.read_bytes()
+    start, length = _mdat_payload(data)
+
+    damaged = 0
+    for fraction in np.linspace(0.02, 0.98, 49):
+        at = start + int((length - 32) * fraction)
+        copy = tmp_path / f"damaged-{at}.mp4"
+        copy.write_bytes(data[:at] + bytes(32) + data[at + 32 :])
+        frames_decoded, erred = _lenient_decode(copy)
+        if not (erred and frames_decoded == 20):
+            continue
+        damaged += 1
+        with pytest.raises(ValueError, match="the decoder failed"):
+            probe(copy)
+
+    assert damaged > 0, "no damaged copy kept its length while decoding with errors"
+
+
 def test_encoder_version_is_the_first_line() -> None:
     assert encoder_version(find_encoder()).startswith("ffmpeg version ")
 
