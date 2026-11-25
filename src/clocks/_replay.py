@@ -6,6 +6,7 @@ figure or animation can be drawn from the file instead of pinning image bytes.
 loads is shaped exactly as the format says.
 """
 
+import io
 import json
 import math
 import os
@@ -158,9 +159,14 @@ def _write_archive(
         raise
 
 
-def load_replay(path: Path) -> Replay:
-    """Read and validate the archive at ``path``."""
-    meta_text, arrays = _read_members(path)
+def load_replay(path: Path, data: bytes | None = None) -> Replay:
+    """Read and validate the archive at ``path``.
+
+    With ``data``, the archive is read from those bytes instead, and ``path``
+    only names it in errors: a caller that hashed ``data`` then knows which
+    replay it holds, whatever happens to the file meanwhile.
+    """
+    meta_text, arrays = _read_members(path, data)
     meta = _decode_meta(meta_text, str(path))
     replay = Replay(meta, arrays)
     validate_replay(replay, str(path))
@@ -493,10 +499,16 @@ def filter_controls(pf) -> dict[str, object]:
 _OPEN_ERRORS = (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error)
 
 
-def _read_members(path: Path) -> tuple[NDArray, dict[str, NDArray]]:
-    """Return the ``meta`` member and every array, with the file closed."""
+def _read_members(
+    path: Path, data: bytes | None = None
+) -> tuple[NDArray, dict[str, NDArray]]:
+    """Return the ``meta`` member and every array, with the file closed.
+
+    The archive is read from ``data`` when given, else from ``path``.
+    """
+    source = path if data is None else io.BytesIO(data)
     try:
-        archive = np.load(path, allow_pickle=False)
+        archive = np.load(source, allow_pickle=False)
     except _OPEN_ERRORS as error:
         raise ValueError(f"{path}: not a replay archive: {error}") from error
     if not isinstance(archive, np.lib.npyio.NpzFile):

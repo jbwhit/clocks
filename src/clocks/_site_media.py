@@ -16,11 +16,16 @@ rendered-site check establishes the published set.
 Three inputs are refused rather than trusted. A media path that is itself a
 symbolic link is refused before anything is created or removed, since the
 cleanup would follow it into another directory. An archive whose replay is of
-another demo is refused before anything is drawn. And each archive's bytes are
-hashed when it is loaded and again before each of its pairs is published: if
-they differ, every clip and poster of that demo is removed and
-``ArchiveChanged`` is raised, so no pair drawn from the old content can look
-fresh beside the new archive, whatever its modification time says.
+another demo is refused before anything is drawn. And each archive is read
+once, its replay loaded from the bytes that were hashed; the file is hashed
+again before each of its pairs is published and again after. If it differs or
+cannot be read, every clip and poster of that demo is removed and
+``ArchiveChanged`` is raised; and when anything else fails while a pair is
+rebuilt, the archive is checked the same way before the error propagates. So
+no pair drawn from old content can look fresh beside a new archive, whatever
+its modification time says. An archive replaced after the last check of a run
+keeping an older modification time than the media is not seen: freshness is
+judged by time.
 """
 
 import functools
@@ -73,8 +78,10 @@ def render_site_media(
     written, clip then poster, in the order written.
 
     An archive holding another demo's replay raises ``ValueError`` before that
-    demo is drawn; an archive that changes while one of its pairs renders
-    raises ``ArchiveChanged`` after removing all of that demo's media.
+    demo is drawn. An archive that changes or cannot be read while one of its
+    pairs renders or is published raises ``ArchiveChanged`` after removing all
+    of that demo's media; any other error while a pair is rebuilt also removes
+    them when the archive has changed, then propagates.
     """
     _refuse_a_linked_media(media)
     encoder = find_encoder()
@@ -88,21 +95,26 @@ def render_site_media(
     for demo in demos:
         archive = archives / f"{demo}.npz"
         inputs_time = max(archive.stat().st_mtime_ns, newest_source)
-        replay: Replay | None = None
-        digest = ""
+        loaded: tuple[Replay, str] | None = None
         for theme in THEMES:
             clip, poster = media_paths(media, demo, theme)
             if not (full or _is_stale(clip, poster, inputs_time)):
                 report(f"kept {clip.name}")
                 continue
-            if replay is None:
-                digest = _digest(archive)
-                replay = _load_demo(archive, demo)
+            if loaded is None:
+                loaded = _load_demo(archive, demo)
+            replay, digest = loaded
             unchanged = functools.partial(
                 _require_unchanged, archive, digest, media, demo
             )
             started = time.perf_counter()
-            frames = _rebuild_pair(replay, theme, clip, poster, encoder, unchanged)
+            try:
+                frames = _rebuild_pair(replay, theme, clip, poster, encoder, unchanged)
+                unchanged()
+            except BaseException:
+                if _has_changed(archive, digest):
+                    _remove_demo_media(media, demo)
+                raise
             seconds = time.perf_counter() - started
             report(f"rendered {clip.name} ({frames} frames, {seconds:.1f} s)")
             written += [clip, poster]
@@ -147,32 +159,47 @@ def _refuse_a_linked_media(media: Path) -> None:
         )
 
 
-def _load_demo(archive: Path, demo: str) -> Replay:
-    """Load ``archive``; refuse it unless its replay is of ``demo``."""
-    replay = load_replay(archive)
+def _load_demo(archive: Path, demo: str) -> tuple[Replay, str]:
+    """Read ``archive`` once; return the replay of those bytes and their digest.
+
+    Refuses the archive unless its replay is of ``demo``.
+    """
+    data = archive.read_bytes()
+    replay = load_replay(archive, data)
     found = replay.meta["demo"]
     if found != demo:
         raise ValueError(
             f"{archive} holds a replay of {found!r}, not {demo!r}: "
             f"restore {demo}'s own archive (it may have been copied over)"
         )
-    return replay
+    return replay, hashlib.sha256(data).hexdigest()
 
 
-def _digest(archive: Path) -> str:
-    return hashlib.sha256(archive.read_bytes()).hexdigest()
+def _has_changed(archive: Path, digest: str) -> bool:
+    """Whether ``archive`` no longer reads as the bytes ``digest`` names."""
+    try:
+        data = archive.read_bytes()
+    except OSError:
+        return True
+    return hashlib.sha256(data).hexdigest() != digest
 
 
-def _require_unchanged(archive: Path, digest: str, media: Path, demo: str) -> None:
-    """Raise ``ArchiveChanged``, removing ``demo``'s media, if ``archive`` changed."""
-    if _digest(archive) == digest:
-        return
+def _remove_demo_media(media: Path, demo: str) -> None:
     for theme in THEMES:
         for path in media_paths(media, demo, theme):
             path.unlink(missing_ok=True)
+
+
+def _require_unchanged(archive: Path, digest: str, media: Path, demo: str) -> None:
+    """Raise ``ArchiveChanged``, removing ``demo``'s media, if ``archive`` changed
+    or cannot be read."""
+    if not _has_changed(archive, digest):
+        return
+    _remove_demo_media(media, demo)
     raise ArchiveChanged(
-        f"{archive} changed while a {demo} pair was rendering; every {demo} clip "
-        "and poster was removed so the next run rebuilds them from the new archive"
+        f"{archive} changed or could not be read while a {demo} pair was "
+        f"rendering; every {demo} clip and poster was removed so the next run "
+        "rebuilds them from the archive as it then is"
     )
 
 

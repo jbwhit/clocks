@@ -470,6 +470,130 @@ def test_an_archive_replaced_while_a_pair_renders_leaves_the_demo_stale(
     assert site.render(full=False) == site.outputs()
 
 
+def _replace_archive(site: Site) -> None:
+    """Save a different replay at the archive, keeping its modification time."""
+    base = load_replay(site.archive)
+    save_replay(site.archive, edited(base, cloud=np.array(base.arrays["cloud"]) + 0.5))
+    os.utime(site.archive, (1_000, 1_000))
+
+
+def _nothing_kept(site: Site) -> None:
+    """No output of the demo is left for a partial render to keep as fresh."""
+    assert [p for p in site.outputs() if p.exists()] == []
+    assert site.staged_names() == []
+    assert site.render(full=False) == site.outputs()
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_an_archive_replaced_at_a_final_rename_leaves_the_demo_stale(
+    site: Site, monkeypatch: pytest.MonkeyPatch, theme: str
+) -> None:
+    """Replaced as the pair's poster is moved into place, after every check
+    that runs before publication, the archive still marks the demo stale."""
+    site.render(full=True)
+    site.set_times()
+    _, poster = site.pair(theme)
+    real_replace = os.replace
+
+    def replacing(source, destination, *args, **kwargs):
+        if Path(destination) == poster:
+            _replace_archive(site)
+        return real_replace(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(clocks._site_media.os, "replace", replacing)
+    with pytest.raises(clocks._site_media.ArchiveChanged) as raised:
+        site.render(full=True)
+    monkeypatch.setattr(clocks._site_media.os, "replace", real_replace)
+
+    assert str(site.archive) in str(raised.value)
+    _nothing_kept(site)
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_an_archive_gone_at_the_recheck_leaves_the_demo_stale(
+    site: Site, monkeypatch: pytest.MonkeyPatch, theme: str
+) -> None:
+    """The archive disappears once the pair is staged, just before the check
+    that precedes publication; it comes back unchanged, at its old time."""
+    site.render(full=True)
+    site.set_times()
+    kept = site.archive.read_bytes()
+
+    def vanishing(fig, path):
+        save_png(fig, path)
+        if Path(path).name == f".staged-{DEMO}.{theme}.png":
+            site.archive.unlink()
+
+    monkeypatch.setattr(clocks._site_media, "save_png", vanishing)
+    with pytest.raises(clocks._site_media.ArchiveChanged) as raised:
+        site.render(full=True)
+    monkeypatch.setattr(clocks._site_media, "save_png", save_png)
+
+    assert str(site.archive) in str(raised.value)
+    site.archive.write_bytes(kept)
+    os.utime(site.archive, (1_000, 1_000))
+    _nothing_kept(site)
+
+
+@pytest.mark.parametrize("during", [0, 1], ids=["light_pair", "dark_pair"])
+def test_an_encoder_failure_after_a_replacement_leaves_the_demo_stale(
+    site: Site, monkeypatch: pytest.MonkeyPatch, during: int
+) -> None:
+    """The encoder's error propagates, and no output of the old content stays."""
+    site.render(full=True)
+    site.set_times()
+    calls = 0
+
+    def failing(replay, path, *, theme="light", encoder=None):
+        nonlocal calls
+        calls += 1
+        if calls <= during:
+            return render_clip(replay, path, theme=theme, encoder=encoder)
+        _replace_archive(site)
+        raise EncoderError("the encoder failed")
+
+    monkeypatch.setattr(clocks._site_media, "render_clip", failing)
+    with pytest.raises(EncoderError, match="the encoder failed"):
+        site.render(full=True)
+    monkeypatch.setattr(clocks._site_media, "render_clip", render_clip)
+
+    _nothing_kept(site)
+
+
+def test_the_replay_drawn_is_the_bytes_checked(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The archive is swapped for another replay while it is loaded and swapped
+    back, at its old time, before any check: the pair must show the first."""
+    original = site.archive.read_bytes()
+    base = load_replay(site.archive)
+    other = edited(base, cloud=np.array(base.arrays["cloud"]) + 0.5)
+    real_load = clocks._site_media.load_replay
+    drawn: list[np.ndarray] = []
+
+    def swapping(*args, **kwargs):
+        save_replay(site.archive, other)
+        try:
+            return real_load(*args, **kwargs)
+        finally:
+            site.archive.write_bytes(original)
+            os.utime(site.archive, (1_000, 1_000))
+
+    def reading(fig, path):
+        (cloud,) = [ax for ax in fig.axes if ax.get_gid() == "map"]
+        drawn.append(np.array(one(cloud, "dots").get_xydata()))
+        save_png(fig, path)
+
+    monkeypatch.setattr(clocks._site_media, "load_replay", swapping)
+    monkeypatch.setattr(clocks._site_media, "save_png", reading)
+    site.render(full=True)
+
+    expected = base.arrays["cloud"][-1][:, :2]
+    assert len(drawn) == len(THEMES)
+    for found in drawn:
+        np.testing.assert_allclose(found, expected, rtol=1e-12, atol=1e-12)
+
+
 def _archive_with(site: Site, name: str, row: int) -> Path:
     """A copy of the fixture archive with 0.5 added to ``cloud[row]``."""
     base = load_replay(site.archive)

@@ -292,6 +292,21 @@ def test_saved_archive_reads_back_as_literals(name: str, tmp_path: Path) -> None
             assert z[key].dtype == expected.dtype, key
 
 
+def test_load_replay_reads_the_bytes_it_is_given(tmp_path: Path) -> None:
+    """With ``data``, the file at ``path`` is not read; ``path`` names errors."""
+    meta, arrays = filter_fixture()
+    first, second = tmp_path / "first.npz", tmp_path / "second.npz"
+    save_replay(first, Replay(meta, arrays))
+    changed = {**arrays, "cloud": arrays["cloud"] + 0.5}
+    save_replay(second, Replay(meta, changed))
+
+    replay = load_replay(first, second.read_bytes())
+
+    assert np.array_equal(replay.arrays["cloud"], changed["cloud"])
+    with pytest.raises(ValueError, match=re.escape(f"{first}: not a replay archive")):
+        load_replay(first, b"not an archive")
+
+
 @pytest.mark.parametrize(("name", "key"), EACH_KEY)
 def test_missing_key_is_rejected(name: str, key: str) -> None:
     meta, arrays = FIXTURES[name]()
