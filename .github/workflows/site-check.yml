@@ -38,7 +38,8 @@ jobs:
     # one.
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 5.2 min on the first build that draws the clips (2026-11-25).
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

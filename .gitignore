@@ -37,3 +37,4 @@ output/
 site/_output/
 site/.quarto/
 /.quarto/
+site/media/

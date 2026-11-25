@@ -62,6 +62,9 @@ FORBIDDEN_CURRENT_CLAIMS: dict[str, str] = {
     "deliberately deep in the relativistic " + "regime": "scenarios are weak-field",
     "_" + "cli": "demo entry points are packaged beneath clocks._demos",
 }
+# Claims matched only where no word character follows them: the old command
+# module's name is a prefix of current ones (clocks._clips, the _clip_* modules).
+WORD_ENDED_CLAIMS: frozenset[str] = frozenset({"_" + "cli"})
 
 
 def _current_prose_files(root: Path = ROOT) -> list[Path]:
@@ -84,12 +87,20 @@ def _current_prose_files(root: Path = ROOT) -> list[Path]:
 def _prose_claim_failures(root: Path = ROOT) -> list[str]:
     failures: list[str] = []
     for path in _current_prose_files(root):
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8").casefold()
         for claim, correction in FORBIDDEN_CURRENT_CLAIMS.items():
-            if claim.casefold() in text.casefold():
+            if _claim_found(claim, text):
                 relative = path.relative_to(root)
                 failures.append(f"{relative}: {claim!r} ({correction})")
     return failures
+
+
+def _claim_found(claim: str, folded_text: str) -> bool:
+    """Whether ``claim`` occurs in the case-folded text, word-ended if listed."""
+    folded_claim = claim.casefold()
+    if claim in WORD_ENDED_CLAIMS:
+        return re.search(re.escape(folded_claim) + r"(?!\w)", folded_text) is not None
+    return folded_claim in folded_text
 
 
 # (scope, source, target, fragment) — source/target are html paths

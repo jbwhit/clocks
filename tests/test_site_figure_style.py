@@ -23,6 +23,22 @@ visible on the rendered page: a surrounding block that hides its contents, a
 stylesheet, or a script could still hide one. The rendered-site check
 (``scripts/check_site_figures.py``) covers the rendered structure, and the
 contact sheets and the phone-width measurements cover what a visitor sees.
+
+Clip embeds are pinned whole: each is the text ``_embed_block`` builds from
+``REPLAY_EMBEDS``, present exactly once and in the table's order, followed by
+its description, and video markup anywhere else on a page is a violation. This
+catches an embed's markup changed by mistake. It does not check what surrounds
+a block, so it does not catch a canonical block inside a code fence or an HTML
+comment, which Markdown does not render, or inside a wrapper that hides it. The
+rendered-site check (``scripts/check_site_figures.py``) catches the first, and
+part of the second: a block that was not rendered leaves no video, and the
+count of themed elements against the manifest fails; a wrapper carrying one of
+the markers that script names (``HIDING_CLASSES``, ``hidden``, ``aria-hidden``,
+two inline styles, ``template``, ``noscript``, a closed ``details``) fails its
+hidden-ancestor rule. A wrapper that hides by any other means, an opacity of
+zero or a ``clip-path`` for two, passes both. Actual visibility, keyboard reach
+and playback are browser checks, made by hand for each pull request that
+changes a clip or its page.
 """
 
 import ast
@@ -30,13 +46,31 @@ import html
 import importlib.util
 import re
 import string
+import sys
 import urllib.parse
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
+import numpy as np
 import pytest
 
 import clocks.viz
+from clocks import (
+    ClockArray,
+    InferenceConfig,
+    MassConfig,
+    NoiseConfig,
+    PriorConfig,
+    SimulationConfig,
+    infer,
+    simulate,
+)
+from clocks._clip_parts import standard_deviations
+from clocks._clips import CLIP_HEIGHTS
+from clocks._demos import demo_2d
+from clocks._figures import trace_decimals
+from clocks._replay import Replay, load_replay
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_site_figures.py"
 _SPEC = importlib.util.spec_from_file_location("check_site_figures", _SCRIPT)
@@ -63,6 +97,85 @@ PLOT_PAGES = (
     "story/the-search-in-one-dimension.qmd",
     "story/two-hidden-masses.qmd",
 )
+
+
+class Embed(NamedTuple):
+    """One clip embedded on a page."""
+
+    clip: str
+    label: str  # the aria-label of both videos
+    caption: str
+
+
+# Page (relative to site/) -> its clip embeds, in document order.
+REPLAY_EMBEDS: dict[str, tuple[Embed, ...]] = {
+    "index.qmd": (
+        Embed(
+            "demo_2d",
+            "Animation: the 2D search",
+            "One simulated run: a particle filter finding a hidden mass on a plane "
+            "from clock rates alone. Left: the cloud of hypotheses, the eight clocks "
+            "and the true position. Right: the estimates of x, y and M after each "
+            "observation.",
+        ),
+    ),
+    "story/the-search-in-one-dimension.qmd": (
+        Embed(
+            "demo_1d",
+            "Animation: the search in one dimension",
+            "The 1D search, one simulated run. Left: the cloud of hypotheses in "
+            "position and mass, above the three clocks and, clock by clock, the "
+            "true, predicted and measured slowing. Right: the estimates of x and M "
+            "after each observation.",
+        ),
+    ),
+    "story/into-the-plane.qmd": (
+        Embed(
+            "demo_2d",
+            "Animation: the 2D search",
+            "The 2D search, one simulated run: 8 clocks, one hidden mass, three "
+            "unknowns (x, y, M). Left: the cloud and the clocks, each given a "
+            "stronger fill the slower it runs. Right: the three estimates after "
+            "each observation.",
+        ),
+    ),
+    "story/two-hidden-masses.qmd": (
+        Embed(
+            "demo_multi_mass",
+            "Animation: two masses on a line",
+            "Two masses in 1D: five clocks, four unknowns. One simulated run.",
+        ),
+        Embed(
+            "demo_multi_mass_2d",
+            "Animation: two masses on a plane",
+            "Two masses in 2D: ten randomly placed clocks, six unknowns. "
+            "One simulated run.",
+        ),
+    ),
+    "story/how-many-masses.qmd": (
+        Embed(
+            "demo_model_comparison",
+            "Animation: the probability of one, two and three masses",
+            "One simulated run: posterior probability over K=1, 2, 3 as 80 "
+            "observations accumulate. Truth is K=2.",
+        ),
+    ),
+    "story/gravitational-echolocation.qmd": (
+        Embed(
+            "demo_echolocation_3d",
+            "Animation: the head locating an exterior mass",
+            "The echolocation demo, one simulated run. Center: the head, its "
+            "clocks, the cloud and the true mass (ring). Upper left: the whole "
+            "search box. Lower left: the fitted readings against the observed "
+            "ones: agreement with the readings used in the fit, not a test on new "
+            "data. Right: the four estimates after each observation.",
+        ),
+    ),
+}
+FIGURE_PAGES: tuple[str, ...] = tuple(sorted(set(PLOT_PAGES) | set(REPLAY_EMBEDS)))
+# A digit, ASCII, subscript or superscript: what a description's leftover text
+# may not hold.
+STRAY = re.compile(r"[0-9₀-₉¹²³⁰⁴-⁹]")
 _EXCLUDED_DIRS = {"_output", ".quarto"}
 _CELL = re.compile(r"^```\{python\}[^\n]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 _CAPTION_ENTRY = re.compile(r'^#\|\s{2,}-\s*"(.*)"\s*$')
@@ -111,11 +224,23 @@ FIGURE_FUNCTION_HEIGHTS: dict[str, int] = {
 RETIRED_ASSETS: tuple[str, ...] = (
     "demo_density.png",
     "echolocation_range_study.png",
+    "demo_1d.gif",
+    "demo_2d.gif",
+    "demo_multi_mass.gif",
+    "demo_multi_mass_2d.gif",
+    "demo_model_comparison.gif",
+    "demo_echolocation_3d.gif",
 )
 LIBRARY_DRAWING_MODULES: tuple[str, ...] = (
     "src/clocks/_figures.py",
     "src/clocks/_demos/demo_density.py",
     "src/clocks/_echo_study.py",
+    "src/clocks/_clip_parts.py",
+    "src/clocks/_clip_maps.py",
+    "src/clocks/_clip_models.py",
+    "src/clocks/_clip_tracks.py",
+    "src/clocks/_clip_echo.py",
+    "src/clocks/_clips.py",
 )
 
 
@@ -808,22 +933,706 @@ def _manifest_page(page: str) -> str:
     return page.replace(".qmd", ".html")
 
 
-@pytest.mark.parametrize("page", PLOT_PAGES)
+def _description_id(clip: str) -> str:
+    """Return the id of a clip's description: ``demo_2d`` -> ``demo-2d-text``."""
+    return f"{clip.replace('_', '-')}-text"
+
+
+def _embed_block(embed: Embed, page: str) -> str:
+    """Return the canonical raw block that embeds a clip on a page.
+
+    Its paths are relative to the page, and its last line ends with a newline,
+    so the closing fence is a whole line.
+    """
+    up = "../" * (len(PurePosixPath(page).parts) - 1)
+    videos = [
+        f'<video class="{theme}-content" aria-label="{embed.label}" '
+        f'aria-describedby="{_description_id(embed.clip)}" '
+        f'src="{up}media/{embed.clip}.{theme}.mp4" '
+        f'poster="{up}media/{embed.clip}.{theme}.png" '
+        f'width="750" height="{CLIP_HEIGHTS[embed.clip]}" '
+        'controls playsinline preload="none"></video>'
+        for theme in ("light", "dark")
+    ]
+    lines = [
+        "```{=html}",
+        '<figure class="replay">',
+        *videos,
+        f"<figcaption>{embed.caption}</figcaption>",
+        "</figure>",
+        "```",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+_VIDEO_MARKUP = (
+    "<video",
+    "<source",
+    "<figure",
+    "<iframe",
+    ".mp4",
+    "{=html}",
+    "{{< video",
+)
+_DIV_CLOSE = re.compile(r"^:{3,}[ \t]*$")
+
+
+def _replay_embed_violations(
+    text: str, page: str, embeds: Sequence[Embed]
+) -> list[str]:
+    """Return how a page's source departs from its pinned clip embeds.
+
+    Each embed's block must occur exactly once, the blocks in the table's
+    order, each followed by its non-empty description div whose id occurs once;
+    with every pinned block removed, no line may hold video markup. Nothing is
+    said about what surrounds a block (see the module docstring).
+    """
+    blocks = [_embed_block(embed, page) for embed in embeds]
+    messages: list[str] = []
+    starts: list[int] = []
+    for number, (embed, block) in enumerate(zip(embeds, blocks, strict=True), 1):
+        count = text.count(block)
+        if count == 0:
+            messages.append(
+                f"embed {number} ({embed.clip}): the pinned block is missing or altered"
+            )
+        elif count > 1:
+            messages.append(
+                f"embed {number} ({embed.clip}): the pinned block occurs {count} times"
+            )
+        else:
+            starts.append(text.index(block))
+    if len(starts) == len(blocks) and starts != sorted(starts):
+        messages.append("the embeds are out of order")
+    for number, (embed, block) in enumerate(zip(embeds, blocks, strict=True), 1):
+        if text.count(block) == 1:
+            messages += _description_violations(text, number, embed, block)
+    remainder = text
+    for block in blocks:
+        remainder = remainder.replace(block, "\n" * block.count("\n"))
+    messages += [
+        f"unpinned video markup: line {number}"
+        for number, line in enumerate(remainder.split("\n"), start=1)
+        if any(marker in line.lower() for marker in _VIDEO_MARKUP)
+    ]
+    return messages
+
+
+def _description_violations(
+    text: str, number: int, embed: Embed, block: str
+) -> list[str]:
+    """Return how the description after an embed's one block departs from the pin."""
+    where = f"embed {number} ({embed.clip})"
+    div_id = _description_id(embed.clip)
+    messages: list[str] = []
+    following = text[text.index(block) + len(block) :].split("\n")
+    nonblank = [index for index, line in enumerate(following) if line.strip()]
+    opening = f"::: {{#{div_id}}}"
+    if not nonblank or following[nonblank[0]] != opening:
+        messages.append(f"{where}: not followed by its description `{opening}`")
+    else:
+        body = []
+        for line in following[nonblank[0] + 1 :]:
+            if _DIV_CLOSE.match(line):
+                break
+            body.append(line)
+        if not any(line.strip() for line in body):
+            messages.append(f"{where}: the description is empty")
+    count = text.count(f"{{#{div_id}}}")
+    if count > 1:
+        messages.append(f"{where}: the description id occurs {count} times")
+    return messages
+
+
+_DIV_OPEN = re.compile(r"^:{3,}[ \t]*\{#([^\s{}]+)\}[ \t]*$")
+
+
+def _descriptions(text: str) -> dict[str, str]:
+    """Map the id of each ``::: {#<id>}`` div to its whitespace-normalised body.
+
+    A body runs to the next closing ``:::`` line. Divs with classes or other
+    attributes (a callout, say) are not descriptions and are left out.
+    """
+    found: dict[str, str] = {}
+    lines = text.split("\n")
+    for index, line in enumerate(lines):
+        match = _DIV_OPEN.match(line)
+        if match is None:
+            continue
+        body = []
+        for following in lines[index + 1 :]:
+            if _DIV_CLOSE.match(following):
+                break
+            body.append(following)
+        found.setdefault(match.group(1), " ".join(" ".join(body).split()))
+    return found
+
+
+def _page_figures(text: str, page: str) -> list[tuple[str, int, str | None]]:
+    """Return a page's plot cells and pinned clip blocks, in source order.
+
+    A plot cell is ``("plot", height, None)``; each occurrence of a block that
+    ``REPLAY_EMBEDS`` lists for the page is ``("clip", height, clip)``.
+    """
+    found: list[tuple[int, tuple[str, int, str | None]]] = [
+        (match.start(), ("plot", _cell_height(match.group(1)), None))
+        for match in _CELL.finditer(text)
+        if _is_plot_cell(match.group(1))
+    ]
+    for embed in REPLAY_EMBEDS.get(page, ()):
+        block = _embed_block(embed, page)
+        found += [
+            (match.start(), ("clip", CLIP_HEIGHTS[embed.clip], embed.clip))
+            for match in re.finditer(re.escape(block), text)
+        ]
+    return [figure for _, figure in sorted(found, key=lambda item: item[0])]
+
+
+def _without(description: str, sentences: Sequence[str]) -> str:
+    """Return the description with each sentence removed once, in turn.
+
+    Raises AssertionError naming the first sentence not in what is left.
+    """
+    for sentence in sentences:
+        assert sentence in description, f"not in the description: {sentence!r}"
+        description = description.replace(sentence, "", 1)
+    return description
+
+
+@pytest.mark.parametrize("page", FIGURE_PAGES)
 def test_manifest_matches_the_source(page: str) -> None:
     figures = check_site_figures.EXPECTED_FIGURES[_manifest_page(page)]
-    assert all(fig.clip is None for fig in figures), page  # clips: pull request 3
-    from_manifest = tuple((fig.kind, fig.height) for fig in figures)
-    from_source = tuple(
-        ("plot", _cell_height(cell)) for cell in _plot_cells(SITE / page)
-    )
-    assert from_manifest == from_source
+    from_manifest = tuple((fig.kind, fig.height, fig.clip) for fig in figures)
+    text = (SITE / page).read_text(encoding="utf-8")
+    assert from_manifest == tuple(_page_figures(text, page))
 
 
-def test_the_manifest_lists_exactly_the_plot_pages() -> None:
+def test_the_manifest_lists_exactly_the_figure_pages() -> None:
     assert set(check_site_figures.EXPECTED_FIGURES) == {
-        _manifest_page(page) for page in PLOT_PAGES
+        _manifest_page(page) for page in FIGURE_PAGES
     }
     assert len(PLOT_PAGES) == 9
+    assert len(FIGURE_PAGES) == 10
+
+
+_PAGE = "story/into-the-plane.qmd"
+_EMBED_2D = Embed("demo_2d", "Animation: the 2D search", "A caption.")
+
+
+def test_embed_block_is_the_pinned_markup() -> None:
+    """Only this catches a generated block that drifts from the design's markup."""
+    pinned = (
+        "```{=html}\n"
+        '<figure class="replay">\n'
+        '<video class="light-content" aria-label="Animation: the 2D search" '
+        'aria-describedby="demo-2d-text" src="../media/demo_2d.light.mp4" '
+        'poster="../media/demo_2d.light.png" width="750" height="450" '
+        'controls playsinline preload="none"></video>\n'
+        '<video class="dark-content" aria-label="Animation: the 2D search" '
+        'aria-describedby="demo-2d-text" src="../media/demo_2d.dark.mp4" '
+        'poster="../media/demo_2d.dark.png" width="750" height="450" '
+        'controls playsinline preload="none"></video>\n'
+        "<figcaption>A caption.</figcaption>\n"
+        "</figure>\n"
+        "```\n"
+    )
+    assert _embed_block(_EMBED_2D, _PAGE) == pinned
+    at_root = _embed_block(_EMBED_2D, "index.qmd")
+    paths = re.findall(r'(?:src|poster)="([^"]*)"', at_root)
+    assert len(paths) == 4
+    assert all(path.startswith("media/") for path in paths)
+    assert at_root == pinned.replace('"../media/', '"media/')
+
+
+# Built with _embed_block, which the test above pins, so each test below fails
+# for its own rule.
+_BLOCK_2D = _embed_block(_EMBED_2D, _PAGE)
+PAGE_TEXT = "A paragraph.\n\n" + _BLOCK_2D + "\n::: {#demo-2d-text}\nWords.\n:::\n"
+_ALTERED = ["embed 1 (demo_2d): the pinned block is missing or altered"]
+_NOT_FOLLOWED = [
+    "embed 1 (demo_2d): not followed by its description `::: {#demo-2d-text}`"
+]
+_MASS = Embed("demo_multi_mass", "Animation: one mass", "One.")
+_MASS_2D = Embed("demo_multi_mass_2d", "Animation: two masses", "Two.")
+_SWAPPED = (
+    _embed_block(_MASS_2D, _PAGE)
+    + "\n::: {#demo-multi-mass-2d-text}\nB.\n:::\n\n"
+    + _embed_block(_MASS, _PAGE)
+    + "\n::: {#demo-multi-mass-text}\nA.\n:::\n"
+)
+
+
+def _altered(pattern: str, new: str, count: int = 0) -> str:
+    """Return PAGE_TEXT with a change made where only the pinned block matches."""
+    return re.sub(pattern, new, PAGE_TEXT, count=count)
+
+
+@pytest.mark.parametrize(
+    ("text", "embeds", "expected"),
+    [
+        pytest.param(PAGE_TEXT, (_EMBED_2D,), [], id="canonical"),
+        pytest.param(
+            _altered("></video>", " autoplay></video>", 1),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="autoplay_added",
+        ),
+        pytest.param(
+            _altered("A caption.", "Another caption."),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="caption_changed",
+        ),
+        pytest.param(
+            _altered('height="450"', 'height="500"'),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="height_changed",
+        ),
+        pytest.param(
+            _altered('<video class="dark-content".*\n', ""),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="dark_video_removed",
+        ),
+        pytest.param(
+            _altered("```\\{=html\\}\n|(?<=</figure>\n)```\n", ""),
+            (_EMBED_2D,),
+            _ALTERED,
+            id="fence_removed",
+        ),
+        pytest.param(
+            PAGE_TEXT + "\n" + _BLOCK_2D,
+            (_EMBED_2D,),
+            ["embed 1 (demo_2d): the pinned block occurs 2 times"],
+            id="block_twice",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<video src="x.mp4"></video>\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="a_second_video",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace(
+                "A paragraph.", "A paragraph, [the clip](../media/demo_2d.light.mp4)."
+            ),
+            (_EMBED_2D,),
+            ["unpinned video markup: line 1"],
+            id="a_link_to_a_clip",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<iframe src="x.html"></iframe>\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="an_iframe",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<source src="x.webm">\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="a_source_element",
+        ),
+        pytest.param(
+            PAGE_TEXT + '<VIDEO SRC="x.webm"></VIDEO>\n',
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="upper_case_video",
+        ),
+        pytest.param(
+            PAGE_TEXT + "\n```{=html}\n<p>Words.</p>\n```\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 15"],
+            id="another_raw_block",
+        ),
+        pytest.param(
+            PAGE_TEXT + "{{< video https://www.example.com/clip >}}\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="a_video_shortcode",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace("\n::: {#demo-2d-text}\nWords.\n:::\n", ""),
+            (_EMBED_2D,),
+            _NOT_FOLLOWED,
+            id="description_missing",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace(
+                "\n::: {#demo-2d-text}", "\nA paragraph between.\n\n::: {#demo-2d-text}"
+            ),
+            (_EMBED_2D,),
+            _NOT_FOLLOWED,
+            id="description_not_adjacent",
+        ),
+        pytest.param(
+            PAGE_TEXT.replace("Words.\n", "\n"),
+            (_EMBED_2D,),
+            ["embed 1 (demo_2d): the description is empty"],
+            id="description_empty",
+        ),
+        pytest.param(
+            PAGE_TEXT + "\n::: {#demo-2d-text}\nMore words.\n:::\n",
+            (_EMBED_2D,),
+            ["embed 1 (demo_2d): the description id occurs 2 times"],
+            id="description_id_twice",
+        ),
+        pytest.param(
+            _SWAPPED,
+            (_MASS, _MASS_2D),
+            ["the embeds are out of order"],
+            id="two_embeds_swapped",
+        ),
+    ],
+)
+def test_replay_embed_violations(
+    text: str, embeds: tuple[Embed, ...], expected: list[str]
+) -> None:
+    """Catches an embed edited by hand, a second video outside the table, and
+    a description that the videos name but that is not there.
+
+    An altered block is reported as missing, and its markup, no longer pinned,
+    as unpinned video markup.
+    """
+    messages = _replay_embed_violations(text, _PAGE, embeds)
+    if expected is _ALTERED:
+        assert messages[:1] == _ALTERED
+        assert len(messages) > 1
+        assert all(
+            message.startswith("unpinned video markup: line ")
+            for message in messages[1:]
+        )
+    else:
+        assert messages == expected
+
+
+def test_descriptions_are_found_by_id() -> None:
+    text = (
+        PAGE_TEXT
+        + "\n::: {#other}\nOther   words\nhere.\n:::\n"
+        + "\n::: {.callout-note}\nA note.\n:::\n"
+    )
+    assert _descriptions(text) == {
+        "demo-2d-text": "Words.",
+        "other": "Other words here.",
+    }
+
+
+def test_page_figures_merges_cells_and_embeds_in_source_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only this catches clips listed after all plots whatever their place."""
+    monkeypatch.setattr(sys.modules[__name__], "REPLAY_EMBEDS", {_PAGE: (_EMBED_2D,)})
+    text = (
+        "```{python}\n#| renderings: [light, dark]\n"
+        "fig, ax = plt.subplots(figsize=(7.5, 5.4))\n```\n\n"
+        + _BLOCK_2D
+        + "\n::: {#demo-2d-text}\nWords.\n:::\n\n"
+        "```{python}\n#| renderings: [light, dark]\nfig, ax = plt.subplots()\n```\n"
+    )
+    assert _page_figures(text, _PAGE) == [
+        ("plot", 540, None),
+        ("clip", 450, "demo_2d"),
+        ("plot", 420, None),
+    ]
+
+
+def test_without_removes_pinned_sentences_and_reports_a_missing_one() -> None:
+    assert _without("A 1. B 2.", ["A 1."]) == " B 2."
+    assert _without("A 1. B 2.", ["A 1.", " B 2."]) == ""
+    with pytest.raises(AssertionError, match="C 3"):
+        _without("A 1. B 2.", ["A 1.", "C 3."])
+
+
+def test_stray_numbers_are_found() -> None:
+    """Only this catches a subscript or superscript digit, which ``[0-9]`` does
+    not match, passing as no number."""
+    assert STRAY.pattern == r"[0-9₀-₉¹²³⁰⁴-⁹]"
+    assert STRAY.search("after 12 readings")
+    assert STRAY.search("x₃")
+    for superscript in "⁰¹²³⁴⁵⁶⁷⁸⁹":
+        assert STRAY.search(f"one over R{superscript}"), superscript
+    assert STRAY.search("0.4%")
+    assert not STRAY.search("after twelve readings, x and M")
+
+
+def test_embed_labels_and_captions_are_plain_text() -> None:
+    for page, embeds in REPLAY_EMBEDS.items():
+        for embed in embeds:
+            for text in (embed.label, embed.caption):
+                assert not set(text) & set('<>&"'), f"{page}: {embed.clip}: {text!r}"
+
+
+def test_each_clip_is_embedded_at_its_declared_height() -> None:
+    """Only this catches a clip dropped consistently from the embeds, the page
+    and the manifest (the set equality with ``CLIP_HEIGHTS`` and the count of
+    seven)."""
+    embedded: list[str] = []
+    for page, embeds in REPLAY_EMBEDS.items():
+        figures = check_site_figures.EXPECTED_FIGURES[_manifest_page(page)]
+        clips = [fig for fig in figures if fig.kind == "clip"]
+        for embed, fig in zip(embeds, clips, strict=True):
+            assert fig.clip == embed.clip, page
+            assert fig.height == CLIP_HEIGHTS[embed.clip], page
+            embedded.append(embed.clip)
+    assert len(embedded) == 7
+    assert set(embedded) == set(CLIP_HEIGHTS)
+
+
+ARCHIVES = REPO / "assets" / "replays"
+ORDINAL = {10: "tenth", 20: "twentieth"}
+
+
+def _listing(items: Sequence[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return ", ".join(items[:-1]) + " and " + items[-1] if len(items) > 1 else items[0]
+
+
+def _number(replay: Replay, j: int, value: float) -> str:
+    """``value`` at the trace headers' decimals for parameter ``j``."""
+    return f"{value:.{trace_decimals(replay.meta['prior_ranges'][j])}f}"
+
+
+def _run_ends(replay: Replay) -> str:
+    """``After T readings the run ends at x = m ± s, ...``, from the last row."""
+    mean = replay.arrays["mean"][-1]
+    sd = standard_deviations(replay)[-1]
+    ends = [
+        f"{name} = {_number(replay, j, mean[j])} ± {_number(replay, j, sd[j])}"
+        for j, name in enumerate(replay.meta["param_names"])
+    ]
+    return (
+        f"After {replay.meta['n_observations']} readings the run ends at "
+        f"{_listing(ends)}"
+    )
+
+
+def _against_a_true(replay: Replay) -> str:
+    truth = replay.arrays["true_params"]
+    named = [
+        f"{name} = {_number(replay, j, truth[j])}"
+        for j, name in enumerate(replay.meta["param_names"])
+    ]
+    return f", against a true {_listing(named)}."
+
+
+def _against_true_values(replay: Replay) -> str:
+    truth = replay.arrays["true_params"]
+    values = [_number(replay, j, value) for j, value in enumerate(truth)]
+    return f", against true values of {_listing(values)}."
+
+
+def _sentences_1d(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    cloud = replay.arrays["cloud"][0]
+    for j, (lo, hi) in enumerate(replay.meta["prior_ranges"]):
+        # "span the prior range": the dots reach within 5% of both ends
+        assert cloud[:, j].min() - lo < 0.05 * (hi - lo)
+        assert hi - cloud[:, j].max() < 0.05 * (hi - lo)
+    assert sd[1, 0] < 0.1 * sd[0, 0]  # "a narrow band" after the first reading
+    return [_run_ends(replay) + _against_a_true(replay)]
+
+
+def _sentences_2d(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    mean, truth = replay.arrays["mean"][-1], replay.arrays["true_params"]
+    assert sd[8, :2].max() < 0.1 * sd[0, :2].min()  # "by the eighth"
+    assert 1.5 < abs(mean[1] - truth[1]) / sd[-1, 1] < 2.5  # "about two of those"
+    return [_run_ends(replay) + _against_a_true(replay)]
+
+
+def _sentences_multi_mass(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    mean = replay.arrays["mean"]
+    assert sd[1, 1] > 1.5 * sd[1, 0]  # the second "takes longer"
+    early = (
+        f"after one reading its position is x₂ = {_number(replay, 1, mean[1, 1])} "
+        f"± {_number(replay, 1, sd[1, 1])}, and after eight it is "
+        f"{_number(replay, 1, mean[8, 1])} ± {_number(replay, 1, sd[8, 1])}."
+    )
+    # Two of the ± values are from readings 1 and 8, not from the final cloud.
+    at_reading = (
+        "Each ± is one standard deviation of the cloud for that parameter at that "
+        "reading."
+    )
+    return [early, _run_ends(replay) + _against_true_values(replay), at_reading]
+
+
+def _sentences_multi_mass_2d(replay: Replay) -> list[str]:
+    sd = standard_deviations(replay)
+    # "narrow them only partly, and they remain broad": after three readings
+    # every position's spread is below its prior's, yet above 40% of it.
+    assert (sd[3, :4] < sd[0, :4]).all()
+    assert (sd[3, :4] > 0.4 * sd[0, :4]).all()
+    return [_run_ends(replay) + _against_true_values(replay)]
+
+
+def _sentences_model_comparison(replay: Replay) -> list[str]:
+    ks = [int(k) for k in replay.arrays["model_ks"]]
+    posterior = replay.arrays["model_posterior"]
+    prior = replay.arrays["model_prior"]
+    share = round(1 / prior[0])
+    # "start level": an equal prior, which is the clip's row 0
+    np.testing.assert_allclose(prior, 1 / share, rtol=1e-12)
+    np.testing.assert_allclose(posterior[0], prior, rtol=1e-12)
+    assert len(ks) == share == 3  # "All three candidates"
+    assert posterior[1, ks.index(1)] < 1e-5  # "all but ruled out by the first"
+    leader = [ks[int(row.argmax())] for row in posterior]
+    changes = [k for k in range(2, len(leader)) if leader[k] != leader[k - 1]]
+    assert leader[1] == 3
+    assert changes == [10, 19]
+    assert [leader[k] for k in changes] == [2, 3]
+    p2, p3 = posterior[-1, ks.index(2)], posterior[-1, ks.index(3)]
+    return [
+        f"All three candidates start level, at a prior probability of 1/{share} each",
+        "Three masses lead at first, two take over around the "
+        f"{ORDINAL[round(changes[0], -1)]} observation, and from about the "
+        f"{ORDINAL[round(changes[1], -1)]} three stay ahead: the run ends at about "
+        f"{round(100 * p2)}% for two masses and {round(100 * p3)}% for three",
+    ]
+
+
+def _sentences_echolocation(replay: Replay) -> list[str]:
+    lo, hi = replay.meta["prior_ranges"][0]
+    weight = replay.arrays["weight_in_view"]
+    return [
+        f"Before any reading the dots fill the whole search box, {hi - lo:g} units "
+        f"on a side, and only {100 * weight[0]:.1f}% of the prior lies inside the "
+        "close view around the head.",
+        f"where {100 * weight[1:].min():.1f}% of its weight stays",
+        _run_ends(replay) + _against_true_values(replay),
+    ]
+
+
+# Clip -> the sentences of its description that hold a number, built from the
+# archive (with the qualitative words checked against it on the way).
+DESCRIPTION_SENTENCES = {
+    "demo_1d": _sentences_1d,
+    "demo_2d": _sentences_2d,
+    "demo_multi_mass": _sentences_multi_mass,
+    "demo_multi_mass_2d": _sentences_multi_mass_2d,
+    "demo_model_comparison": _sentences_model_comparison,
+    "demo_echolocation_3d": _sentences_echolocation,
+}
+EMBED_CASES = [
+    pytest.param(page, embed, id=f"{page}:{embed.clip}")
+    for page, embeds in REPLAY_EMBEDS.items()
+    for embed in embeds
+]
+
+
+@pytest.mark.parametrize(("page", "embed"), EMBED_CASES)
+def test_description_numbers_are_the_archives(page: str, embed: Embed) -> None:
+    """Only this catches a description whose numbers belong to another run, or
+    a number added to a description without a check."""
+    text = (SITE / page).read_text(encoding="utf-8")
+    description = _descriptions(text)[_description_id(embed.clip)]
+    replay = load_replay(ARCHIVES / f"{embed.clip}.npz")
+    sentences = DESCRIPTION_SENTENCES[embed.clip](replay)
+    assert STRAY.search(_without(description, sentences)) is None
+
+
+def test_the_two_2d_descriptions_are_the_same() -> None:
+    """Only this catches one of the two being edited alone (decision D24)."""
+    landing = _descriptions((SITE / "index.qmd").read_text(encoding="utf-8"))
+    plane = _descriptions((SITE / "story/into-the-plane.qmd").read_text("utf-8"))
+    assert landing["demo-2d-text"] == plane["demo-2d-text"]
+
+
+def _plane_cell() -> str:
+    (cell,) = _plot_cells(SITE / "story/into-the-plane.qmd")
+    return cell
+
+
+def test_the_plane_cell_uses_the_demos_truth() -> None:
+    """Only this catches the page's cell left at the old truth."""
+    cell = _plane_cell()
+
+    assert f"masses=np.array([{demo_2d.TRUE_M:.2f}])" in cell
+    assert f"positions=np.array([[{demo_2d.TRUE_X}, {demo_2d.TRUE_Y}]])" in cell
+    assert "mass_range=(0.005, 0.15)" in cell
+    assert "n_observations=25, seed=42" in cell
+    assert "n_particles=500" in cell
+
+
+def test_the_plane_cells_knot_is_offset_by_about_its_width() -> None:
+    """The cell's run, from its literals with the demo's mass: the cloud's
+    centre lies about one spread from the true position (0.94 at M = 0.10), and
+    the page says so rather than calling it a knot at the truth."""
+    clock_array = ClockArray(
+        positions=np.array(
+            [
+                [-4.0, 0.0],
+                [-2.0, 3.0],
+                [1.0, 4.0],
+                [4.0, 2.0],
+                [5.0, -1.0],
+                [2.0, -4.0],
+                [-1.0, -3.0],
+                [-3.0, -1.5],
+            ]
+        ),
+        track_offset=3.0,
+    )
+    noise = NoiseConfig(observation_std=0.005)
+    truth = MassConfig(
+        positions=np.array([[demo_2d.TRUE_X, demo_2d.TRUE_Y]]),
+        masses=np.array([demo_2d.TRUE_M]),
+    )
+    sim = simulate(
+        SimulationConfig(
+            clock_array=clock_array,
+            ground_truth=truth,
+            noise=noise,
+            n_observations=25,
+            seed=42,
+        )
+    )
+    result = infer(
+        sim.observations,
+        InferenceConfig(
+            clock_array=clock_array,
+            noise=noise,
+            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
+            n_particles=500,
+            n_masses=1,
+            ess_target=0.8,
+            rejuvenation_steps=2,
+            proposal_scale=2.38,
+            seed=42,
+        ),
+    )
+    offset = np.hypot(*(result.posterior_mean[:2] - truth.positions[0]))
+    ratio = offset / np.mean(result.posterior_std[:2])
+    page = " ".join((SITE / "story/into-the-plane.qmd").read_text("utf-8").split())
+
+    assert 0.5 < ratio < 1.5
+    assert (
+        "to a small knot beside the true position, offset from it by about its own "
+        "width"
+    ) in page
+    assert "tight knot at the truth" not in page
+
+
+def test_the_model_caption_counts_the_archives_observations() -> None:
+    meta = load_replay(ARCHIVES / "demo_model_comparison.npz").meta
+    (embed,) = REPLAY_EMBEDS["story/how-many-masses.qmd"]
+    assert f"as {meta['n_observations']} observations accumulate" in embed.caption
+    assert f"Truth is K={meta['true_k']}" in embed.caption
+
+
+def test_the_1d_page_says_how_many_dots_are_shown() -> None:
+    """Only this catches the page claiming the clip shows the whole cloud."""
+    meta = load_replay(ARCHIVES / "demo_1d.npz").meta
+    page = " ".join(
+        (SITE / "story/the-search-in-one-dimension.qmd").read_text("utf-8").split()
+    )
+    assert meta["n_particles"] == 1000
+    assert meta["cloud_size"] == 500
+    assert (
+        "one thousand of them in the run animated above, which shows a sample of "
+        "five hundred"
+    ) in page
 
 
 _RETIRED = ("demo_density.png",)
@@ -872,7 +1681,7 @@ _ONE_MENTION = ["line 1: demo_density.png"]
         ),
         pytest.param(
             '<picture><source srcset="../assets/demo_density.png">'
-            '<img src="../assets/demo_2d.gif" alt=""></picture>',
+            '<img src="../assets/kept.gif" alt=""></picture>',
             _ONE_MENTION,
             id="srcset",
         ),
@@ -924,7 +1733,7 @@ def test_retired_asset_mentions_are_found(text: str, expected: list[str]) -> Non
             id="command_output",
         ),
         pytest.param("[a](output/demo_density.png)", id="output_link"),
-        pytest.param("![a](../assets/demo_2d.gif)", id="other_asset"),
+        pytest.param("![a](../assets/kept.gif)", id="other_asset"),
         pytest.param("The density figure is drawn at build time.", id="no_mention"),
     ],
 )
@@ -951,6 +1760,20 @@ def test_no_page_mentions_a_retired_asset(path: Path) -> None:
     assert _retired_asset_mentions(text, RETIRED_ASSETS) == []
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(path, id=path.relative_to(REPO).as_posix())
+        for path in _MENTION_FILES
+        if path.suffix == ".qmd"
+    ],
+)
+def test_no_page_has_unpinned_video_markup(path: Path) -> None:
+    page = path.relative_to(SITE).as_posix()
+    text = path.read_text(encoding="utf-8")
+    assert _replay_embed_violations(text, page, REPLAY_EMBEDS.get(page, ())) == []
+
+
 @pytest.mark.parametrize("module", LIBRARY_DRAWING_MODULES)
 def test_library_drawing_code_has_no_unstyled_colour(module: str) -> None:
     text = (REPO / module).read_text(encoding="utf-8")
@@ -968,6 +1791,59 @@ def test_every_figure_builder_module_is_scanned() -> None:
         )
     }
     assert defining <= set(LIBRARY_DRAWING_MODULES)
+
+
+def _clip_modules() -> list[Path]:
+    return sorted((REPO / "src" / "clocks").glob("_clip*.py"))
+
+
+def test_every_clip_module_is_scanned() -> None:
+    clip_modules = {path.relative_to(REPO).as_posix() for path in _clip_modules()}
+    assert clip_modules
+    assert clip_modules <= set(LIBRARY_DRAWING_MODULES)
+
+
+# What a renderer may import from the package: never the forward model.
+_RENDERER_IMPORTS = frozenset(
+    {
+        "clocks._replay",
+        "clocks._style",
+        "clocks._figures",
+        "clocks._video",
+        "clocks._sources",
+    }
+)
+
+
+def _package_imports(path: Path) -> set[str]:
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0, f"{path.name}: relative import"
+            found.add(node.module or "")
+    return {name for name in found if name == "clocks" or name.startswith("clocks.")}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        *_clip_modules(),
+        REPO / "src" / "clocks" / "_video.py",
+        REPO / "src" / "clocks" / "_site_media.py",
+        REPO / "src" / "clocks" / "_sources.py",
+    ],
+    ids=lambda path: path.name,
+)
+def test_clip_modules_import_no_model_code(path: Path) -> None:
+    imported = _package_imports(path)
+    stray = {
+        name
+        for name in imported
+        if name not in _RENDERER_IMPORTS and not name.startswith("clocks._clip")
+    }
+    assert stray == set()
 
 
 def _draw_density_figure(colors):
@@ -1171,7 +2047,7 @@ _CANONICAL_CELL = _CANONICAL_OPTIONS + _SMALL_PROGRAM
             id="reordered",
         ),
         pytest.param(
-            _CANONICAL_CELL.replace("x = 1", "x = 1\n# | classes: [d-none]"),
+            _CANONICAL_OPTIONS + "# | classes: [d-none]\n" + _SMALL_PROGRAM,
             ["unexpected comment line: '# | classes: [d-none]'"],
             id="spaced_marker",
         ),
@@ -1226,9 +2102,11 @@ def test_builder_cell_options_are_exactly_the_three(
 def test_builder_cell_is_exactly_its_pinned_program(builder: str) -> None:
     """Each cell draws committed data that the Reproducibility page names.
 
-    So the whole cell is pinned, options included, compared by syntax tree
-    (comments and spacing do not matter; every statement, name, literal and
-    argument does): any change to a cell is a deliberate change to this test.
+    So the whole cell is pinned, options included: any change to a cell is a
+    deliberate change to this test. The program is compared by syntax tree, so
+    spacing inside a statement does not matter and every statement, name,
+    literal and argument does; the option block and every comment line are
+    compared as text, by ``_builder_cell_option_violations``.
     """
     page, cell = _builder_cell(builder)
     program = BUILDER_CELL_PROGRAMS[builder]

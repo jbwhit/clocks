@@ -5,7 +5,10 @@
 **Status:** Approved for implementation. Codex xhigh round 3, on `75ef763`:
 "SOUND ENOUGH TO IMPLEMENT", with three small findings that this revision folds
 in. Corrected after merge: clock positions are compared at `rtol=1e-12,
-atol=1e-12`, not exactly (`a108783`).
+atol=1e-12`, not exactly (`a108783`). Amended on 2026-11-24 after the clips
+plan's probe (`docs/plans/2026-11-24-replay-clips.md`, "Probe results"):
+section 5's model-comparison labels follow the line heads instead of sitting in
+a gutter with connectors.
 
 **Source:** findings V1, V5 and C6 of the 2026-11-17 audit
 (`docs/audits/2026-11-17/README.md`), the visual reviewer's critique
@@ -582,9 +585,13 @@ ellipse cannot show; the dots do.
 
 **`demo_model_comparison`, 750 by 420.** One panel: posterior probability of
 each count against observations, three lines growing from the model prior at
-k = 0, in `ordered[0..2]`. Labels sit in a fixed gutter to the right, in a
-fixed order, each joined to its line's head by a thin connector, so crossing
-lines cannot stack them. The true count's label reads "(true model)" and comes
+k = 0, in `ordered[0..2]`. Each label sits just right of its line's current
+head, in the line's colour, and the labels are kept a minimum distance apart
+without changing their top-to-bottom order, so crossing lines cannot stack
+them; there are no connectors, and the x-axis runs past the last observation so
+the final labels fit (amended after the clip probe of the clips plan: fixed
+gutter labels joined by connectors read as projections of the lines at early
+rows and crossed at the last). The true count's label reads "(true model)" and comes
 from `true_k`. Whether this page keeps an animation is the third track's
 decision; meanwhile the same run stays one and only its form changes.
 

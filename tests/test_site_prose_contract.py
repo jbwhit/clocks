@@ -23,9 +23,16 @@ def test_current_prose_contract_scans_scripts_but_not_archives(tmp_path: Path) -
     )
     stale_script.write_text('"""Set jitter_tau for inference."""\n', encoding="utf-8")
     archived_plan.write_text("jitter_tau is historical\n", encoding="utf-8")
+    clip_script = tmp_path / "scripts" / "clips.py"
+    clip_script.write_text('"""Draw with clocks._clips."""\n', encoding="utf-8")
+    old_command_script = tmp_path / "scripts" / "old_command.py"
+    old_command = "clocks." + "_" + "cli"
+    old_command_script.write_text(f'"""Run {old_command}."""\n', encoding="utf-8")
 
     assert check_site_links._prose_claim_failures(tmp_path) == [
-        "scripts/demo.py: 'jitter_tau' (tempered SMC replaced annealed jitter)"
+        "scripts/demo.py: 'jitter_tau' (tempered SMC replaced annealed jitter)",
+        "scripts/old_command.py: '_cli' "
+        "(demo entry points are packaged beneath clocks._demos)",
     ]
 
 

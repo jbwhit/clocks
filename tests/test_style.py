@@ -21,7 +21,15 @@ from matplotlib.colors import to_rgb
 from matplotlib.font_manager import FontProperties
 
 import clocks._style
-from clocks._style import THEMES, Palette, palette, save_png, show, style
+from clocks._style import (
+    THEMES,
+    Palette,
+    frame_rgba,
+    palette,
+    save_png,
+    show,
+    style,
+)
 
 
 def _luminance(hex_color: str) -> float:
@@ -466,3 +474,39 @@ def test_save_png_writes_the_authored_canvas(
         pixel[:3], to_rgb(palette("light").background), rtol=0, atol=1 / 255
     )
     assert pixel[3] == 1.0
+
+
+@pytest.mark.parametrize(
+    "caller_settings",
+    [
+        pytest.param({}, id="plain"),
+        pytest.param(
+            {
+                "savefig.bbox": "tight",
+                "savefig.transparent": True,
+                "savefig.facecolor": "magenta",
+            },
+            id="hostile",
+        ),
+    ],
+)
+def test_frame_rgba_is_what_save_png_writes(
+    tmp_path: Path, caller_settings: dict[str, object]
+) -> None:
+    with style("light"):
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        ax.plot([0, 1], [0, 1])
+    path = tmp_path / "poster.png"
+    try:
+        with matplotlib.rc_context(caller_settings):
+            frame = frame_rgba(fig)
+            save_png(fig, path)
+    finally:
+        plt.close(fig)
+
+    assert len(frame) == 1500 * 900 * 4
+    pixels = np.frombuffer(frame, dtype=np.uint8).reshape(900, 1500, 4)
+    written = np.round(matplotlib.image.imread(path, format="png") * 255)
+    np.testing.assert_array_equal(pixels, written.astype(np.uint8))
+    background = tuple(round(c * 255) for c in to_rgb(palette("light").background))
+    assert tuple(pixels[0, 0]) == (*background, 255)

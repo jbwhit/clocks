@@ -100,6 +100,10 @@ PRIOR_CHECKED_DEMOS = ("demo_1d", "demo_multi_mass")
 # float32 moves its reading by 6.4e-11 (demo_1d) and 1.4e-9 (demo_multi_mass) in
 # one-particle recordings.
 ZERO_SPREAD_ATOL = 1e-7
+# Every shipped continuous truth lies inside its prior box by at least this
+# fraction of the box's width (the audit's finding C6: the 2D truth sat on its
+# mass prior's upper bound).
+BOX_MARGIN = 0.05
 
 
 def _params(names: Sequence[str]) -> list[object]:
@@ -135,6 +139,30 @@ def _inside_prior(cloud: NDArray, prior_ranges: Sequence[Sequence[float]]) -> bo
     lo = np.asarray([r[0] for r in prior_ranges], dtype=np.float32)
     hi = np.asarray([r[1] for r in prior_ranges], dtype=np.float32)
     return bool(np.all((cloud >= lo) & (cloud <= hi)))
+
+
+def _box_margins(
+    true_params: NDArray, prior_ranges: Sequence[Sequence[float]], dimensions: int
+) -> NDArray[np.float64]:
+    """Per parameter, its smaller distance to an edge of its prior range, over
+    the range's width.
+
+    With as many ranges as parameters they pair off in order. With two ranges
+    (model comparison) the first serves every position and the second every
+    mass, the truth being laid out positions first.
+    """
+    truth = np.asarray(true_params, dtype=np.float64)
+    ranges = np.asarray(prior_ranges, dtype=np.float64)
+    if len(ranges) != len(truth):
+        if len(ranges) != 2 or len(truth) % (dimensions + 1):
+            raise ValueError(
+                f"{len(ranges)} prior ranges do not fit {len(truth)} parameters "
+                f"in {dimensions} dimension(s)"
+            )
+        n_masses = len(truth) // (dimensions + 1)
+        ranges = ranges[[0] * (n_masses * dimensions) + [1] * n_masses]
+    lo, hi = ranges[:, 0], ranges[:, 1]
+    return np.minimum(truth - lo, hi - truth) / (hi - lo)
 
 
 def _posterior_from_evidence(
@@ -355,6 +383,63 @@ def test_archive_truth_is_physical(name: str) -> None:
         assert true_params[0] < true_params[1]
     if name == "demo_multi_mass_2d":
         assert true_params[0] < true_params[2]
+
+
+def test_box_margins() -> None:
+    """Only this catches the margin measured from one edge only, or the
+    model-comparison truth paired with the wrong range."""
+    ranges = [[-8, 8], [0.005, 0.15]]
+
+    assert np.array_equal(_box_margins([0.0, 0.15], ranges, 1), [0.5, 0.0])
+    np.testing.assert_allclose(
+        _box_margins([-7.2, 0.01225], ranges, 1), [0.05, 0.05], rtol=1e-9
+    )
+    np.testing.assert_allclose(
+        _box_margins([-2.0, 3.0, 0.045, 0.03], ranges, 1),
+        [0.375, 0.3125, 0.2758620689655173, 0.17241379310344826],
+        rtol=1e-12,
+    )
+
+
+def _truth_in_box(source: str, name: str) -> tuple[NDArray, list, int, list[str]]:
+    """The truth, prior ranges, dimensions and names of a scenario or archive."""
+    if source == "scenario":
+        scenario = _scenario(name)
+        return (
+            scenario.true_params,
+            [list(pair) for pair in scenario.prior_ranges],
+            scenario.clock_array.positions.shape[1],
+            list(scenario.param_names),
+        )
+    meta, arrays = _archive(name).meta, _archive(name).arrays
+    return (
+        arrays["true_params"],
+        meta["prior_ranges"],
+        arrays["clock_positions"].shape[1],
+        meta["param_names"],
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "name"),
+    [
+        pytest.param(source, name, id=f"{source}-{name}")
+        for source in ("scenario", "archive")
+        for name in DEMOS
+    ],
+)
+def test_truth_sits_inside_its_prior_box(source: str, name: str) -> None:
+    """Only this catches a truth on or near its prior's edge (the audit's
+    finding C6); a truth 6% inside passes."""
+    truth, ranges, dimensions, names = _truth_in_box(source, name)
+    margins = _box_margins(truth, ranges, dimensions)
+
+    near_edge = [
+        f"{param}: {margin:.4f}"
+        for param, margin in zip(names, margins, strict=True)
+        if not margin >= BOX_MARGIN
+    ]
+    assert not near_edge, f"truth within {BOX_MARGIN} of its prior's edge: {near_edge}"
 
 
 @pytest.mark.parametrize("name", FILTER_DEMOS)
@@ -754,8 +839,8 @@ def test_archive_covariance_orientation_matches_the_dots(name: str) -> None:
 
 
 def test_a_tilted_covariance_is_caught() -> None:
-    # The row after the prior with the largest |x-y correlation| (row 5 today,
-    # -0.326). A reversed tilt is caught only where |r| exceeds about 0.2: the
+    # The row after the prior with the largest |x-y correlation| (row 3 today,
+    # -0.690). A reversed tilt is caught only where |r| exceeds about 0.2: the
     # bound is 0.4 and flipping r moves the dots' correlation by 2|r|.
     arrays = _archive("demo_2d").arrays
     cov = arrays["cov"]

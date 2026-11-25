@@ -36,10 +36,9 @@ Four workflows run on GitHub Actions:
   targeting `main`, including when a draft is marked ready for review.
 - [`site.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site.yml)
   is triggered by each push to `main` and re-renders and redeploys this site, so every
-  figure drawn by an executed cell is redrawn at deploy time: most by running
-  the model again from source, and the density and range-study figures from
-  committed data files. The demo GIFs are the exceptions: they are committed
-  images, described in the next section.
+  figure and animation is redrawn at deploy time: most figures by running the
+  model again from source, and the density figure, the range-study figure and
+  the six animations from committed data files.
 - [`site-check.yml`](https://github.com/jbwhit/clocks/blob/main/.github/workflows/site-check.yml)
   renders this site and runs the link and figure checks on non-draft pull
   requests targeting `main` that touch the site, the library, or the data the
@@ -58,45 +57,39 @@ establish. The
 is the record of the August 2026 release: the generating commit and the hashes
 of the files that release shipped, not of every figure now on this site.
 
-**Demo animations.** Each committed GIF is the packaged default output of its
-`uv run demo-*` command, generated explicitly from the corrected physics and
-SMC implementation after one-shot certification. The commands regenerate their
-scenarios, but image encoders are not claimed to be byte-deterministic across
-tool versions. Each animation depicts one named finite realization: a fixed
-scenario and seed. None establishes a population recovery rate. Where a story
-page also runs a smaller example in an executed cell, that is a separate finite
-run whose settings are shown in the cell.
-
-**Replay data.** The density figure on
-[Beyond Point Masses](../story/beyond-point-masses.qmd) is drawn when the site
-is built, from `assets/replays/demo_density.npz`, the recorder's archive of the
-demo's packaged run: 60 observations, 2,000 particles and seed 42. The archive
-holds the configuration, seed and observations, a summary of the cloud before
-any observation and after each, and a 500-particle sample for display. Tests
-run the demo again; they compare its inputs, the computed ones (clock
-positions, true rates and readings) at `rtol=1e-12, atol=1e-12` and the rest
-exactly, and its summaries within stated bounds; they do not require the same
-random path. `uv run demo-density` records the same configured scenario and
-draws its result. The archive is one finite realization: it establishes no
-population recovery rate.
+**Replay data.** Each animation, and the density figure on
+[Beyond Point Masses](../story/beyond-point-masses.qmd), is drawn when the site
+is built, from `assets/replays/<name>.npz`, the recorder's archive of that
+demo's packaged run. For the density demo that is 60 observations, 2,000
+particles and seed 42. An archive of a filter run holds the configuration, seed
+and observations, a summary of the cloud before any observation and after each,
+and a 500-particle sample for display. The model-comparison archive holds no
+cloud: it records each candidate's posterior probability, evidence and
+effective sample size after each observation, and each candidate's final
+estimate. Tests run each demo again; they compare its inputs, the computed ones
+(clock positions, true rates and readings) at `rtol=1e-12, atol=1e-12` and the
+rest exactly, and its summaries within stated bounds; they do not require the
+same random path. The video files are build products: they are not committed,
+and their bytes are not pinned. `uv run demo-density` records the same
+configured scenario and draws its result. The other six `uv run demo-*`
+commands run the same scenarios again and still write GIFs, drawn by the
+earlier animation code and not from these archives. Each archive is one finite
+realization: a fixed scenario and seed. None establishes a population recovery
+rate. Where a story page also runs a smaller example in an executed cell, that
+is a separate finite run whose settings are shown in the cell.
 
 The density demo samples a uniform box in $(\mu,\sigma,A)$ conditioned on
 that box and weak-field validity, and uses the same support for its prior
 density.
 
-**Echolocation animation.** The committed GIF is the packaged default output
-from the corrected contrast-space SMC release, not a re-render of the current
-code. Its differential-rates panel draws the forward model evaluated at the
-posterior mean; the code now plots the posterior mean of the particles' own
-predictions, so that panel will change when the assets are next regenerated.
-It places the mass at two circumradii along a fixed off-axis direction, and
-is one fixed-seed visualization at the closest, most favorable range, not a
-reliability measurement.
+**Echolocation animation.** The animation places the mass at two circumradii
+along a fixed off-axis direction, and is one fixed-seed visualization at the
+closest, most favorable range, not a reliability measurement.
 
-**Model-comparison runs.** The committed GIF on
-[How Many Masses?](../story/how-many-masses.qmd) is the packaged default run:
-80 observations, 2,000 particles per candidate, and seed 42. With K=2 truth,
-its final estimate is K=2: 0.3990 and K=3: 0.6010. The executed cell on that
+**Model-comparison runs.** The animation on
+[How Many Masses?](../story/how-many-masses.qmd) replays the packaged default
+run: 80 observations, 2,000 particles per candidate, and seed 42. With K=2
+truth, its final estimate is K=2: 0.3990 and K=3: 0.6010. The executed cell on that
 page is a separate 25-observation, 400-particle calculation that ends near
 K=2: 0.740 and K=3: 0.260. A different finite data horizon changes the
 evidence supplied by the noisy realization, and a different finite-particle
@@ -116,9 +109,17 @@ evaluation counts. Development seeds 0–11 selected the controls by the
 declared ranking
 (`uv run scripts/scan_echolocation_range.py --seed-block 0`), and the
 controls and acceptance tolerances were frozen before the reserved block was
-run. The reserved 400–411 block was then run exactly once for the
-corrected implementation, using the scenario-default cell via
-`--seed-block 400`; protected blocks reject control overrides.
+run. By protocol each reserved block is for one run: block 400–411 was run
+under the frozen settings, using the scenario-default cell via
+`--seed-block 400`, and protected blocks reject control overrides. The
+repository records that run; it does not enforce that there was only one.
+Earlier implementations used three earlier blocks, as their design records
+state: seeds 100–111 and 200–211 were the multi-mass 2D filter's holdout and
+certification blocks
+([clone-freeze diagnosis](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-03-clone-freeze-diagnosis.md),
+[annealed-jitter design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-02-annealed-jitter-design.md)),
+and seeds 300–311 were this range study's own earlier certification block
+([3D echolocation design](https://github.com/jbwhit/clocks/blob/main/docs/superpowers/specs/2026-07-19-3d-echolocation-design.md)).
 
 The figure is drawn when the site is built, from the certified block-400
 records in `assets/echolocation_range_study.json`. The frozen cell passed 46/72

@@ -15,11 +15,17 @@ This document records the audit as it stood at `0171af3`. Since then:
 | C4 (one mass imitating two) | Prose fixed and the figure's offset disclosed in #20; the figure still uses an offset of 2.0 where the demo uses 1.0 |
 | C10 (smaller items) | "Task 11" removed in #19; the rest fixed in #20 |
 | C2 (the model-comparison callout) | Wording corrected in #19; the seed-averaged presentation is still to do |
-| T2 (prose guards) | Partly addressed in #19: the range-study sentences are now matched whole, with the pass counts, the overall total and the far/close ratio computed from the certification data (the 12/12 figures and the factor 20 are literals). "Run exactly once" is still unguarded |
+| T2 (prose guards) | Partly addressed in #19: the range-study sentences are now matched whole, with the pass counts, the overall total and the far/close ratio computed from the certification data (the 12/12 figures and the factor 20 are literals). The protocol wording is pinned since the replay-clips pull request. |
 | V3 (phone clipping and sideways scroll) | Fixed in #21 |
 | CI workflow: draft gating, concurrency, timeouts | Fixed in #22 |
 | `core.hooksPath` unset in the main clone | Set locally |
-| C3, C6, C8, C9, T1, T3-T5, P1, P2, S2-S5, V1, V2, V4-V6 | Open |
+| C6 (2D truth on the prior's bound) | Fixed in the replay-clips pull request: the truth is 0.10, and a test keeps every shipped truth 5% inside its prior box |
+| V1, V5 (animations; pinned media bytes) | Addressed in the replay track (#27, #28 and the replay-clips pull request): replay data is committed and the site draws its clips from it |
+| C9 ("run exactly once") | Reworded as a statement of protocol in the replay-clips pull request, with the earlier seed blocks disclosed and cited; a test pins the wording |
+| C3, C8, T1, T3-T5, P1, P2, S2-S5, V2, V4, V6 | Open |
+
+Rows for C6, V1 and V5 were added on 2026-11-24. The row for C9 was added on
+2026-11-24.
 
 Review of #20 corrected one thing this audit got wrong by omission: the phone
 screenshots given to the reviewers were cropped by headless Chrome rather than

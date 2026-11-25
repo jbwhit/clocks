@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -157,17 +158,34 @@ def show(fig: Figure) -> None:
     display(Image(data=buffer.getvalue(), retina=True))
 
 
-def save_png(fig: Figure, path: Path) -> None:
-    """Write ``fig`` to ``path`` as PNG bytes, the pixels ``show`` displays.
+def save_png(fig: Figure, path: Path | BinaryIO) -> None:
+    """Write ``fig`` to ``path``, or an open binary file, as PNG bytes, the
+    pixels ``show`` displays.
 
     The file is rendered at 200 dpi, twice the style's 100, as ``show`` does, never
     cropped, opaque, and PNG whatever the path's suffix and whatever
     ``savefig.*`` settings the caller has in force. It does not close ``fig``.
     """
+    _save_canvas(fig, path, "png")
+
+
+def frame_rgba(fig: Figure) -> bytes:
+    """Return the pixels ``save_png`` writes, as rows of RGBA with no header.
+
+    One video frame: the same 200 dpi, uncropped, opaque canvas as the poster.
+    It does not close ``fig``.
+    """
+    buffer = io.BytesIO()
+    _save_canvas(fig, buffer, "rgba")
+    return buffer.getvalue()
+
+
+def _save_canvas(fig: Figure, target: Path | BinaryIO, format: str) -> None:
+    """Save ``fig``'s whole canvas at 200 dpi on its own face colour."""
     with matplotlib.rc_context({"savefig.bbox": None}):
         fig.savefig(
-            path,
-            format="png",
+            target,
+            format=format,
             dpi=200,
             bbox_inches=None,
             transparent=False,

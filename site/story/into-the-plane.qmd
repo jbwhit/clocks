@@ -20,7 +20,23 @@ line. The interesting changes are *geometric*:
   could explain that clock's reading with an arbitrarily small mass — the
   offset keeps the geometry informative.
 
-![The 2D search, one simulated run: 8 clocks, one hidden mass, three unknowns (x, y, M).](../assets/demo_2d.gif)
+```{=html}
+<figure class="replay">
+<video class="light-content" aria-label="Animation: the 2D search" aria-describedby="demo-2d-text" src="../media/demo_2d.light.mp4" poster="../media/demo_2d.light.png" width="750" height="450" controls playsinline preload="none"></video>
+<video class="dark-content" aria-label="Animation: the 2D search" aria-describedby="demo-2d-text" src="../media/demo_2d.dark.mp4" poster="../media/demo_2d.dark.png" width="750" height="450" controls playsinline preload="none"></video>
+<figcaption>The 2D search, one simulated run: 8 clocks, one hidden mass, three unknowns (x, y, M). Left: the cloud and the clocks, each given a stronger fill the slower it runs. Right: the three estimates after each observation.</figcaption>
+</figure>
+```
+
+::: {#demo-2d-text}
+Before any reading the dots cover the whole square. The first readings pull
+them toward the mass, and by the eighth they are a small cloud around it; the
+three traces at the right narrow at the same time. After 50 readings the run
+ends at x = 1.42 ± 0.11, y = -1.22 ± 0.11 and M = 0.100 ± 0.001, against a true
+x = 1.50, y = -1.00 and M = 0.100. Each ± is one standard deviation of the
+final cloud. In this run the y estimate sits about two of those from the
+truth.
+:::
 
 ## The surviving hypotheses
 
@@ -46,7 +62,7 @@ clock_positions = np.array([
     [5.0, -1.0], [2.0, -4.0], [-1.0, -3.0], [-3.0, -1.5],
 ])
 clock_array = ClockArray(positions=clock_positions, track_offset=3.0)
-truth = MassConfig(positions=np.array([[1.5, -1.0]]), masses=np.array([0.15]))
+truth = MassConfig(positions=np.array([[1.5, -1.0]]), masses=np.array([0.10]))
 sim = simulate(SimulationConfig(
     clock_array=clock_array, ground_truth=truth,
     noise=NoiseConfig(observation_std=0.005), n_observations=25, seed=42,
@@ -93,8 +109,9 @@ for theme in THEMES:
         show(fig)
 ```
 
-The cloud has collapsed from a uniform smear over a 16×16 box to a tight
-knot at the truth — three parameters recovered from nothing but tick rates.
+The cloud has collapsed from a uniform smear over a 16×16 box to a small
+knot beside the true position, offset from it by about its own width — three
+parameters recovered from nothing but tick rates.
 
 ::: {.callout-note title="2D costs particles"}
 The same posterior precision needs a larger cloud as the parameter count
