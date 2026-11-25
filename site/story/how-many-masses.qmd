@@ -21,7 +21,10 @@ by-product of running, and that estimate carries sampling noise of its own.
 ```
 
 ::: {#demo-model-comparison-text}
-One mass is all but ruled out by the first observation. Three masses lead at
+All three candidates start level, at a prior probability of 1/3 each, so
+before any observation their lines are one shared point; the three labels
+beside it are only spaced apart to stay readable. One mass is all but ruled
+out by the first observation. Three masses lead at
 first, two take over around the tenth observation, and from about the
 twentieth three stay ahead: the run ends at about 40% for two masses and 60%
 for three, leaning toward the wrong answer. That is one run's

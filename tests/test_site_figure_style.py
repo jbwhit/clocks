@@ -1424,6 +1424,11 @@ def _against_true_values(replay: Replay) -> str:
 
 def _sentences_1d(replay: Replay) -> list[str]:
     sd = standard_deviations(replay)
+    cloud = replay.arrays["cloud"][0]
+    for j, (lo, hi) in enumerate(replay.meta["prior_ranges"]):
+        # "span the prior range": the dots reach within 5% of both ends
+        assert cloud[:, j].min() - lo < 0.05 * (hi - lo)
+        assert hi - cloud[:, j].max() < 0.05 * (hi - lo)
     assert sd[1, 0] < 0.1 * sd[0, 0]  # "a narrow band" after the first reading
     return [_run_ends(replay) + _against_a_true(replay)]
 
@@ -1450,13 +1455,22 @@ def _sentences_multi_mass(replay: Replay) -> list[str]:
 
 def _sentences_multi_mass_2d(replay: Replay) -> list[str]:
     sd = standard_deviations(replay)
-    assert (sd[3, :4] > 0.4 * sd[0, :4]).all()  # "barely narrow them"
+    # "narrow them only partly, and they remain broad": after three readings
+    # every position's spread is below its prior's, yet above 40% of it.
+    assert (sd[3, :4] < sd[0, :4]).all()
+    assert (sd[3, :4] > 0.4 * sd[0, :4]).all()
     return [_run_ends(replay) + _against_true_values(replay)]
 
 
 def _sentences_model_comparison(replay: Replay) -> list[str]:
     ks = [int(k) for k in replay.arrays["model_ks"]]
     posterior = replay.arrays["model_posterior"]
+    prior = replay.arrays["model_prior"]
+    share = round(1 / prior[0])
+    # "start level": an equal prior, which is the clip's row 0
+    np.testing.assert_allclose(prior, 1 / share, rtol=1e-12)
+    np.testing.assert_allclose(posterior[0], prior, rtol=1e-12)
+    assert len(ks) == share == 3  # "All three candidates"
     assert posterior[1, ks.index(1)] < 1e-5  # "all but ruled out by the first"
     leader = [ks[int(row.argmax())] for row in posterior]
     changes = [k for k in range(2, len(leader)) if leader[k] != leader[k - 1]]
@@ -1465,10 +1479,11 @@ def _sentences_model_comparison(replay: Replay) -> list[str]:
     assert [leader[k] for k in changes] == [2, 3]
     p2, p3 = posterior[-1, ks.index(2)], posterior[-1, ks.index(3)]
     return [
+        f"All three candidates start level, at a prior probability of 1/{share} each",
         "Three masses lead at first, two take over around the "
         f"{ORDINAL[round(changes[0], -1)]} observation, and from about the "
         f"{ORDINAL[round(changes[1], -1)]} three stay ahead: the run ends at about "
-        f"{round(100 * p2)}% for two masses and {round(100 * p3)}% for three"
+        f"{round(100 * p2)}% for two masses and {round(100 * p3)}% for three",
     ]
 
 

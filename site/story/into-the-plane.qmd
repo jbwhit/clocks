@@ -34,8 +34,8 @@ them toward the mass, and by the eighth they are a small cloud around it; the
 three traces at the right narrow at the same time. After 50 readings the run
 ends at x = 1.42 ± 0.11, y = -1.22 ± 0.11 and M = 0.100 ± 0.001, against a true
 x = 1.50, y = -1.00 and M = 0.100. Each ± is one standard deviation of the
-final cloud. The y estimate sits about two of those from the truth: that is
-this run's noise, and another seed would miss in another direction.
+final cloud. In this run the y estimate sits about two of those from the
+truth.
 :::
 
 ## The surviving hypotheses

@@ -17,8 +17,8 @@ rates. Here is the full search, animated:
 ```
 
 ::: {#demo-1d-text}
-Before any reading the dots cover the whole search: every position along the
-track and every mass the prior allows. The first reading pulls them into a
+Before any reading the dots span the prior range: positions along the whole
+track and masses from the lightest the prior allows to the heaviest. The first reading pulls them into a
 narrow band around the true position, and each of the next few tightens it;
 under the cloud, the filter's predicted slowing at each clock closes on the
 measured one. After 50 readings the run ends at x = 2.48 ± 0.04 and
