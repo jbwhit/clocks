@@ -15,7 +15,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import matplotlib
 import matplotlib.image
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from _clip_replays import edited, first_pixel, shortest
@@ -56,8 +58,6 @@ from pathlib import Path
 import matplotlib
 from matplotlib import font_manager
 
-matplotlib.use("Agg")
-
 SITE = Path(__file__).resolve().parent
 
 
@@ -67,7 +67,9 @@ def main(
     """Render the media from a private copy of the package; restore what it set.
 
     Refuses to run when any ``clocks`` module is already imported: that code,
-    not the snapshot, would draw.
+    not the snapshot, would draw. Writes no bytecode while it runs, so nothing
+    of the copy is cached outside it (a ``PYTHONPYCACHEPREFIX`` would keep one
+    per run), and releases the copy's fonts before the copy is removed.
     """
     loaded = sorted(n for n in sys.modules if n == "clocks" or n.startswith("clocks."))
     if loaded:
@@ -79,10 +81,13 @@ def main(
     package = Path(spec.submodule_search_locations[0]).resolve()
     saved_path = list(sys.path)
     saved_fonts = list(font_manager.fontManager.ttflist)
+    saved_bytecode = sys.dont_write_bytecode
     with tempfile.TemporaryDirectory(prefix="clocks-snapshot-") as root:
+        copy = Path(root) / "clocks"
         try:
+            sys.dont_write_bytecode = True
             snapshot = _snapshot(package)
-            _write_copy(Path(root) / "clocks", snapshot)
+            _write_copy(copy, snapshot)
             render_site_media = _import_renderer(Path(root))
             options = {} if demos is None else {"demos": demos}
             render_site_media(
@@ -93,19 +98,25 @@ def main(
                 sources_snapshot=snapshot,
                 **options,
             )
+            _check_origins(copy)  # a module imported while drawing
         finally:
             for name in [n for n in sys.modules if n.split(".")[0] == "clocks"]:
                 del sys.modules[name]
             sys.path[:] = saved_path
+            sys.dont_write_bytecode = saved_bytecode
             _restore_fonts(saved_fonts)
 
 
 def _restore_fonts(saved: list[font_manager.FontEntry]) -> None:
-    """Forget the fonts the copy registered: their files are about to go."""
+    """Forget the fonts the copy registered, and close the faces opened from its
+    files, before the copy is removed (an open file blocks that on Windows).
+
+    The private caches are cleared by name, so a Matplotlib that renames them
+    fails here rather than keeping a deleted path.
+    """
     font_manager.fontManager.ttflist[:] = saved
-    cached = getattr(font_manager.fontManager, "_findfont_cached", None)
-    if cached is not None:  # lookups made while the copy's fonts were listed
-        cached.cache_clear()
+    font_manager.fontManager._findfont_cached.cache_clear()
+    font_manager._get_font.cache_clear()
 
 
 def _snapshot(package: Path) -> list[tuple[str, bytes]]:
@@ -125,22 +136,36 @@ def _write_copy(copy: Path, snapshot: list[tuple[str, bytes]]) -> None:
 
 
 def _import_renderer(root: Path) -> Callable[..., object]:
-    """Import ``render_site_media`` from the copy under ``root``; check every
-    clocks module it loaded came from there."""
+    """Import ``render_site_media`` from the copy under ``root``.
+
+    The package is first located without running it, and refused unless it is
+    the copy (an import hook ahead of the path could choose the live tree);
+    then every clocks module the import loaded is checked to come from there.
+    """
     sys.path.insert(0, str(root))
+    copy = root / "clocks"
+    spec = importlib.util.find_spec("clocks")
+    found = Path(spec.origin or "") if spec is not None else Path()
+    if not found.is_relative_to(copy):
+        raise RuntimeError(f"clocks would be imported from {found}, not the snapshot")
     from clocks._site_media import render_site_media
 
-    copy = root / "clocks"
+    _check_origins(copy)
+    return render_site_media
+
+
+def _check_origins(copy: Path) -> None:
+    """Raise unless every loaded clocks module came from ``copy``."""
     for name, module in list(sys.modules.items()):
         if name.split(".")[0] != "clocks":
             continue
         origin = Path(getattr(module, "__file__", None) or "")
         if not origin.is_relative_to(copy):
             raise RuntimeError(f"{name} was imported from {origin}, not the snapshot")
-    return render_site_media
 
 
 if __name__ == "__main__":
+    matplotlib.use("Agg")  # only when run: importing the script keeps a backend
     main(
         SITE.parent / "assets" / "replays",
         SITE / "media",
@@ -1000,6 +1025,22 @@ def test_a_media_path_that_links_to_itself_is_refused(
         site.render(full=True)
 
 
+def test_a_media_path_under_a_link_loop_is_refused(site: Site, tmp_path: Path) -> None:
+    """A loop in an ancestor is the documented ``ValueError``, not ``OSError``
+    from ``mkdir`` (or ``RuntimeError`` from ``resolve`` on Python 3.12)."""
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    with pytest.raises(ValueError, match="cannot be followed"):
+        render_site_media(
+            site.archives,
+            loop / "media",
+            full=True,
+            demos=(DEMO,),
+            sources=site.sources,
+            report=site.lines.append,
+        )
+
+
 def test_a_staged_poster_is_created_exclusively(
     site: Site, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1096,24 +1137,27 @@ class _Package:
     env: dict[str, str]
     archives: Path
     media: Path
+    temp: Path  # TMPDIR of the pre-render, where its snapshot copy is made
 
     @property
     def style(self) -> Path:
         return self.root / "clocks" / "_style.py"
 
-    def run(self, *args: str) -> str:
+    def run(self, *args: str, env: dict[str, str] | None = None) -> str:
         result = subprocess.run(
             [sys.executable, *args],
             capture_output=True,
             text=True,
-            env=self.env,
+            env={**self.env, **(env or {})},
             cwd=self.root.parent,
             check=False,
         )
         assert result.returncode == 0, result.stderr
         return result.stdout
 
-    def prerender(self, mode: str, old: str, new: str) -> dict[str, object]:
+    def prerender(
+        self, mode: str, old: str, new: str, env: dict[str, str] | None = None
+    ) -> dict[str, object]:
         out = self.run(
             "-c",
             _PRERENDER_DRIVER,
@@ -1125,6 +1169,7 @@ class _Package:
             str(self.style),
             old,
             new,
+            env={"TMPDIR": str(self.temp), **(env or {})},
         )
         return json.loads(out.splitlines()[-1])
 
@@ -1156,7 +1201,9 @@ def package(tmp_path: Path) -> _Package:
     archives = tmp_path / "archives"
     archives.mkdir()
     save_replay(archives / f"{DEMO}.npz", _recorded())
-    return _Package(root, env, archives, tmp_path / "media")
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    return _Package(root, env, archives, tmp_path / "media", temp)
 
 
 _OLD_BACKGROUND, _NEW_BACKGROUND = palette("light").background, "#123456"
@@ -1168,9 +1215,26 @@ def _recoloured(text: str) -> str:
     return text.replace(old, new)
 
 
+_NOTHING_LEFT = {
+    "error": None,
+    "modules": [],
+    "path_restored": True,
+    "bytecode_setting_restored": True,
+    "copy_fonts": 0,
+    "font_lookups": 0,
+    "copy_font_found": False,
+    "open_faces": 0,
+    "copies_left": 0,
+}
+
+
 def _assert_nothing_left(state: dict[str, object]) -> None:
-    """``main`` returned with no clocks module, path entry or font of the copy."""
-    assert state == {"modules": [], "path_restored": True, "copy_fonts": 0}, state
+    """``main`` returned with no clocks module, path entry, bytecode setting,
+    listed font, cached font lookup or open face of the copy, and the copy
+    removed. ``findfont`` is asked afresh for the bundled family too, though a
+    lookup made under the style's settings is keyed apart from it, which is
+    why the cached lookups are counted."""
+    assert state == _NOTHING_LEFT, state
 
 
 def test_prerender_draws_with_the_source_it_records(package: _Package) -> None:
@@ -1200,22 +1264,57 @@ def test_prerender_draws_with_the_snapshot_whatever_the_tree_does(
     by any import of the live tree, and restored before the records are
     checked: the copy of the snapshot must be what draws."""
     text = package.style.read_text(encoding="utf-8")
+    prefix = package.temp.parent / "pycache-prefix"
 
-    state = package.prerender("edit_import_restore", text, _recoloured(text))
+    state = package.prerender(
+        "edit_import_restore",
+        text,
+        _recoloured(text),
+        env={"PYTHONPYCACHEPREFIX": str(prefix)},
+    )
 
+    cached = [p for p in prefix.rglob("*") if "clocks-snapshot-" in str(p)]
+    assert cached == [], "the copy's bytecode was cached outside it"
     assert package.style.read_text(encoding="utf-8") == text
     assert package.light_background() == _OLD_BACKGROUND
     assert package.recorded_digest() == package.tree_digest()
     _assert_nothing_left(state)
 
 
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("hook_to_live", "would be imported from"),
+        ("late_live_module", "was imported from"),
+    ],
+)
+def test_prerender_refuses_code_from_outside_the_copy(
+    package: _Package, mode: str, message: str
+) -> None:
+    """An import hook ahead of the path that serves the live tree is refused
+    before any live module runs; a clocks module from elsewhere that appears
+    while drawing is refused when drawing ends."""
+    state = package.prerender(mode, "", "")
+
+    assert state.pop("live_ran", False) is False
+    assert message in str(state.pop("message"))
+    assert state == {**_NOTHING_LEFT, "error": "RuntimeError"}, state
+
+
 def test_prerender_refuses_an_imported_clocks(tmp_path: Path) -> None:
-    """In this process clocks is imported: its code, not a snapshot, would draw."""
-    spec = importlib.util.spec_from_file_location(
-        "prerender_under_test", ROOT / "site" / "prerender.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    """In this process clocks is imported: its code, not a snapshot, would draw.
+    Loading the script leaves the caller's Matplotlib backend as it was."""
+    backend = matplotlib.get_backend()
+    plt.switch_backend("svg")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "prerender_under_test", ROOT / "site" / "prerender.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert matplotlib.get_backend() == "svg"
+    finally:
+        plt.switch_backend(backend)
     path = list(sys.path)
     with pytest.raises(RuntimeError, match="already imported"):
         module.main(tmp_path / "archives", tmp_path / "media", full=True)
@@ -1224,9 +1323,12 @@ def test_prerender_refuses_an_imported_clocks(tmp_path: Path) -> None:
 
 
 _PRERENDER_DRIVER = """\
+import importlib.abc
 import importlib.util
 import json
 import sys
+import tempfile
+import types
 from pathlib import Path
 
 from matplotlib import font_manager
@@ -1235,6 +1337,7 @@ prerender, archives, media, demo, mode, style, old, new = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("prerender", prerender)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+live_ran = []
 if mode == "edit_import_restore":
     snapshot, import_renderer = module._snapshot, module._import_renderer
 
@@ -1249,18 +1352,74 @@ if mode == "edit_import_restore":
         return renderer
 
     module._snapshot, module._import_renderer = edited_snapshot, restored_import
+elif mode == "hook_to_live":
+    live = Path(style).parent
+
+    class Recording(importlib.abc.Loader):
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            live_ran.append(module.__name__)
+
+    class ToLive(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name != "clocks":
+                return None
+            return importlib.util.spec_from_file_location(
+                name,
+                live / "__init__.py",
+                loader=Recording(),
+                submodule_search_locations=[str(live)],
+            )
+
+    sys.meta_path.insert(0, ToLive())
+elif mode == "late_live_module":
+    import_renderer = module._import_renderer
+
+    def importing_late(root):
+        renderer = import_renderer(root)
+
+        def drawing(*args, **kwargs):
+            result = renderer(*args, **kwargs)
+            late = types.ModuleType("clocks._late")
+            late.__file__ = str(Path(style).parent / "_late.py")
+            sys.modules["clocks._late"] = late
+            return result
+
+        return drawing
+
+    module._import_renderer = importing_late
 path = list(sys.path)
-module.main(Path(archives), Path(media), full=True, demos=(demo,))
+bytecode = sys.dont_write_bytecode
+error = message = None
+try:
+    module.main(Path(archives), Path(media), full=True, demos=(demo,))
+except RuntimeError as caught:
+    error, message = type(caught).__name__, str(caught)
+if mode == "hook_to_live":
+    sys.meta_path.pop(0)
 copy_fonts = [
     entry.fname
     for entry in font_manager.fontManager.ttflist
     if "clocks-snapshot-" in entry.fname
 ]
+lookups = font_manager.fontManager._findfont_cached.cache_info().currsize
+found = font_manager.findfont(font_manager.FontProperties(family="Source Sans 3"))
 state = {
+    "error": error,
     "modules": sorted(n for n in sys.modules if n.split(".")[0] == "clocks"),
     "path_restored": sys.path == path,
+    "bytecode_setting_restored": sys.dont_write_bytecode == bytecode,
     "copy_fonts": len(copy_fonts),
+    "font_lookups": lookups,
+    "copy_font_found": "clocks-snapshot-" in found,
+    "open_faces": font_manager._get_font.cache_info().currsize,
+    "copies_left": len(list(Path(tempfile.gettempdir()).glob("clocks-snapshot-*"))),
 }
+if mode in ("hook_to_live", "late_live_module"):
+    state["message"] = message
+    state["live_ran"] = bool(live_ran)
 print(json.dumps(state))
 """
 

@@ -78,6 +78,12 @@ _RECORD_NAME = re.compile(
 )
 
 
+_LINKED_MEDIA = (
+    "the media directory {media} is {where}; the pre-render step removes "
+    "files there, so it must be a real directory named directly"
+)
+
+
 class SourcesChanged(RuntimeError):
     """The source tree differs from the snapshot its records would name."""
 
@@ -236,19 +242,27 @@ def _rebuild_pair(
 
 
 def _refuse_a_linked_media(media: Path) -> None:
-    """Refuse a ``media`` whose last component is a symbolic link, dangling or
-    not, or which resolves elsewhere than its parent's entry of its name (a
-    path ending in ``..`` past a link names the parent of the link's target)."""
+    """Refuse a ``media`` that cannot be followed (a link loop on its path), whose
+    last component is a symbolic link, dangling or not, or which resolves
+    elsewhere than its parent's entry of its name (a path ending in ``..`` past
+    a link names the parent of the link's target). Each is a ``ValueError``."""
+    try:
+        os.stat(media)
+    except FileNotFoundError:
+        pass  # not made yet: what matters is what its name resolves to
+    except OSError as error:  # a link loop on the way, say
+        where = f"a path that cannot be followed ({error.strerror})"
+        raise ValueError(_LINKED_MEDIA.format(media=media, where=where)) from error
     if media.is_symlink():
         where = f"a symbolic link to {os.readlink(media)}"
-    elif media.resolve() != media.parent.resolve() / media.name:
-        where = f"a path that resolves elsewhere ({media.resolve()})"
     else:
-        return
-    raise ValueError(
-        f"the media directory {media} is {where}; the pre-render step removes "
-        "files there, so it must be a real directory named directly"
-    )
+        # Safe to resolve: a loop anywhere on the path failed the stat above
+        # (on Python 3.12, ``resolve`` raises ``RuntimeError`` on one).
+        resolved = media.resolve()
+        if resolved == media.parent.resolve() / media.name:
+            return
+        where = f"a path that resolves elsewhere ({resolved})"
+    raise ValueError(_LINKED_MEDIA.format(media=media, where=where))
 
 
 def _load_demo(archive: Path, data: bytes, demo: str) -> Replay:
