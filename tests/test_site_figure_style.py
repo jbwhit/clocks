@@ -1450,7 +1450,12 @@ def _sentences_multi_mass(replay: Replay) -> list[str]:
         f"± {_number(replay, 1, sd[1, 1])}, and after eight it is "
         f"{_number(replay, 1, mean[8, 1])} ± {_number(replay, 1, sd[8, 1])}."
     )
-    return [early, _run_ends(replay) + _against_true_values(replay)]
+    # Two of the ± values are from readings 1 and 8, not from the final cloud.
+    at_reading = (
+        "Each ± is one standard deviation of the cloud for that parameter at that "
+        "reading."
+    )
+    return [early, _run_ends(replay) + _against_true_values(replay), at_reading]
 
 
 def _sentences_multi_mass_2d(replay: Replay) -> list[str]:

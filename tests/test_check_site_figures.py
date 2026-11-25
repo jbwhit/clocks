@@ -848,6 +848,28 @@ def test_a_description_whose_text_is_all_inside_a_hidden_element(
     _failures(site, reason, reason)
 
 
+@pytest.mark.parametrize(
+    "raw",
+    ["<style>.x { color: red; }</style>", "<script>var x = 1;</script>"],
+    ids=["style", "script"],
+)
+def test_style_and_script_contents_are_not_description_text(
+    clip_site: Callable[..., Path], raw: str
+) -> None:
+    """All the prose hidden, a visible style or script beside it: still none."""
+    site = clip_site()
+    _edit(site, '<div id="demo-2d-text">\n<p>Words.</p>\n</div>\n', "")
+    described = NESTED_HIDDEN_DESCRIPTION.replace(
+        '<div id="demo-2d-text">\n', f'<div id="demo-2d-text">\n{raw}\n'
+    )
+    _edit(site, "</figure>\n", "</figure>\n" + described)
+    reason = (
+        "the description 'demo-2d-text' has text only inside a hidden element: "
+        '<div class="d-none">'
+    )
+    _failures(site, reason, reason)
+
+
 def test_a_description_with_visible_text_beside_hidden_text_passes(
     clip_site: Callable[..., Path],
 ) -> None:

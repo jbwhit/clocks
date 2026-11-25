@@ -34,7 +34,8 @@ and requires, for every listed page:
   marked hidden (decision D39): a class in `HIDING_CLASSES`, the attribute
   `hidden`, `aria-hidden="true"`, an inline `display:none` or
   `visibility:hidden`, a `<template>`, a `<noscript>` or a `<details>` without
-  `open`; and a description's text is counted only outside such elements, so
+  `open`; and a description's text is counted only outside such elements
+  (and outside `<style>` and `<script>`, whose contents are code), so
   a visible description element whose every word sits inside a nested hidden
   one fails as having text only inside a hidden element.
 
@@ -98,6 +99,8 @@ _VOID_TAGS = frozenset(
     {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta"}
     | {"source", "track", "wbr"}
 )
+# Elements whose contents are code, never counted as a description's text.
+_RAW_TEXT_TAGS = frozenset({"style", "script"})
 
 
 class Fig(NamedTuple):
@@ -193,8 +196,9 @@ class _Text:
     """The text of one element carrying an ``id``, and what hides it.
 
     ``parts`` holds only the text outside every hiding element that opened
-    inside this one; ``hidden_text_by`` is the start tag of the first such
-    element that held text, or ``None``.
+    inside this one, and outside ``<style>`` and ``<script>``;
+    ``hidden_text_by`` is the start tag of the first such hiding element that
+    held text, or ``None``.
     """
 
     def __init__(self, hidden_by: str | None) -> None:
@@ -240,8 +244,11 @@ class _FigureParser(HTMLParser):
         self._text_elements: list[_TextElement] = []
         self._caption: tuple[list[str], list[str]] | None = None
         self._serial = 0
+        self._in_raw_text = 0  # inside a <style> or <script>, whose text is code
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _RAW_TEXT_TAGS:
+            self._in_raw_text += 1
         for element in self._tracked():
             if element.tag == tag:
                 element.depth += 1
@@ -278,6 +285,8 @@ class _FigureParser(HTMLParser):
             self._figures.append(_ReplayFigure(index, self._serial))
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in _RAW_TEXT_TAGS and self._in_raw_text:
+            self._in_raw_text -= 1
         if tag == "figcaption" and self._caption is not None:
             sink, parts = self._caption
             sink.append(" ".join("".join(parts).split()))
@@ -293,6 +302,8 @@ class _FigureParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._caption is not None:
             self._caption[1].append(data)
+        if self._in_raw_text:
+            return  # style and script contents are not description text
         for element in self._text_elements:
             inner = next((h for h in self._hiders if h.serial > element.serial), None)
             if inner is None:
