@@ -26,7 +26,7 @@ from clocks.viz import animate_inference_2d
 
 TRUE_X = 1.5
 TRUE_Y = -1.0
-TRUE_M = 0.15
+TRUE_M = 0.10
 TRACK_OFFSET = 3.0
 N_OBSERVATIONS = 50
 NOISE_STD = 0.005

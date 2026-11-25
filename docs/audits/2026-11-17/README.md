@@ -19,7 +19,11 @@ This document records the audit as it stood at `0171af3`. Since then:
 | V3 (phone clipping and sideways scroll) | Fixed in #21 |
 | CI workflow: draft gating, concurrency, timeouts | Fixed in #22 |
 | `core.hooksPath` unset in the main clone | Set locally |
-| C3, C6, C8, C9, T1, T3-T5, P1, P2, S2-S5, V1, V2, V4-V6 | Open |
+| C6 (2D truth on the prior's bound) | Fixed in the replay-clips pull request: the truth is 0.10, and a test keeps every shipped truth 5% inside its prior box |
+| V1, V5 (animations; pinned media bytes) | Addressed in the replay track (#27, #28 and the replay-clips pull request): replay data is committed and the site draws its clips from it |
+| C3, C8, C9, T1, T3-T5, P1, P2, S2-S5, V2, V4, V6 | Open |
+
+Rows for C6, V1 and V5 were added on 2026-11-24.
 
 Review of #20 corrected one thing this audit got wrong by omission: the phone
 screenshots given to the reviewers were cropped by headless Chrome rather than

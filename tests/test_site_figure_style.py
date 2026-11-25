@@ -52,11 +52,23 @@ from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
+import numpy as np
 import pytest
 
 import clocks.viz
+from clocks import (
+    ClockArray,
+    InferenceConfig,
+    MassConfig,
+    NoiseConfig,
+    PriorConfig,
+    SimulationConfig,
+    infer,
+    simulate,
+)
 from clocks._clip_parts import standard_deviations
 from clocks._clips import CLIP_HEIGHTS
+from clocks._demos import demo_2d
 from clocks._figures import trace_decimals
 from clocks._replay import Replay, load_replay
 
@@ -1504,6 +1516,81 @@ def test_the_two_2d_descriptions_are_the_same() -> None:
     landing = _descriptions((SITE / "index.qmd").read_text(encoding="utf-8"))
     plane = _descriptions((SITE / "story/into-the-plane.qmd").read_text("utf-8"))
     assert landing["demo-2d-text"] == plane["demo-2d-text"]
+
+
+def _plane_cell() -> str:
+    (cell,) = _plot_cells(SITE / "story/into-the-plane.qmd")
+    return cell
+
+
+def test_the_plane_cell_uses_the_demos_truth() -> None:
+    """Only this catches the page's cell left at the old truth."""
+    cell = _plane_cell()
+
+    assert f"masses=np.array([{demo_2d.TRUE_M:.2f}])" in cell
+    assert f"positions=np.array([[{demo_2d.TRUE_X}, {demo_2d.TRUE_Y}]])" in cell
+    assert "mass_range=(0.005, 0.15)" in cell
+    assert "n_observations=25, seed=42" in cell
+    assert "n_particles=500" in cell
+
+
+def test_the_plane_cells_knot_is_offset_by_about_its_width() -> None:
+    """The cell's run, from its literals with the demo's mass: the cloud's
+    centre lies about one spread from the true position (0.94 at M = 0.10), and
+    the page says so rather than calling it a knot at the truth."""
+    clock_array = ClockArray(
+        positions=np.array(
+            [
+                [-4.0, 0.0],
+                [-2.0, 3.0],
+                [1.0, 4.0],
+                [4.0, 2.0],
+                [5.0, -1.0],
+                [2.0, -4.0],
+                [-1.0, -3.0],
+                [-3.0, -1.5],
+            ]
+        ),
+        track_offset=3.0,
+    )
+    noise = NoiseConfig(observation_std=0.005)
+    truth = MassConfig(
+        positions=np.array([[demo_2d.TRUE_X, demo_2d.TRUE_Y]]),
+        masses=np.array([demo_2d.TRUE_M]),
+    )
+    sim = simulate(
+        SimulationConfig(
+            clock_array=clock_array,
+            ground_truth=truth,
+            noise=noise,
+            n_observations=25,
+            seed=42,
+        )
+    )
+    result = infer(
+        sim.observations,
+        InferenceConfig(
+            clock_array=clock_array,
+            noise=noise,
+            prior=PriorConfig(position_range=(-8.0, 8.0), mass_range=(0.005, 0.15)),
+            n_particles=500,
+            n_masses=1,
+            ess_target=0.8,
+            rejuvenation_steps=2,
+            proposal_scale=2.38,
+            seed=42,
+        ),
+    )
+    offset = np.hypot(*(result.posterior_mean[:2] - truth.positions[0]))
+    ratio = offset / np.mean(result.posterior_std[:2])
+    page = " ".join((SITE / "story/into-the-plane.qmd").read_text("utf-8").split())
+
+    assert 0.5 < ratio < 1.5
+    assert (
+        "to a small knot beside the true position, offset from it by about its own "
+        "width"
+    ) in page
+    assert "tight knot at the truth" not in page
 
 
 def test_the_model_caption_counts_the_archives_observations() -> None:
