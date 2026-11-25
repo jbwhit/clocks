@@ -1364,8 +1364,9 @@ def test_embed_labels_and_captions_are_plain_text() -> None:
 
 
 def test_each_clip_is_embedded_at_its_declared_height() -> None:
-    """Only this catches a manifest height typed by hand that the drawn clip
-    does not have."""
+    """Only this catches a clip dropped consistently from the embeds, the page
+    and the manifest (the set equality with ``CLIP_HEIGHTS`` and the count of
+    seven)."""
     embedded: list[str] = []
     for page, embeds in REPLAY_EMBEDS.items():
         figures = check_site_figures.EXPECTED_FIGURES[_manifest_page(page)]

@@ -279,7 +279,7 @@ def test_a_failed_encode_leaves_the_old_clip_and_nothing_else(
 
     message = str(raised.value)
     assert "boom" in message
-    assert "3" in message
+    assert "status 3" in message
     assert "clip.mp4" in message
     assert _names(tmp_path) == ["clip.mp4"]
     assert (tmp_path / "clip.mp4").read_bytes() == b"old"

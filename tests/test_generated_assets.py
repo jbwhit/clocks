@@ -398,8 +398,8 @@ def test_echolocation_animation_provenance() -> None:
 
 
 def test_readme_describes_the_site_and_the_commands_as_they_are() -> None:
-    """Only this catches the README pointing at a deleted image, or claiming of
-    the commands what is true only of the site."""
+    """Only this catches the README claiming of the commands what is true only
+    of the site, or dropping the sentences that say what is committed."""
     readme = " ".join((ROOT / "README.md").read_text().split())
     for sentence in (
         "The site animates six of the demos and draws the density figure, all "

@@ -137,7 +137,6 @@ def _posterior_axes(fig: Figure, last: int) -> Axes:
     """The panel: y from just below 0 to just above 1; x ticks stop at T."""
     ax = fig.add_axes(LAYOUT_MODELS["posterior"])
     ax.set_gid("posterior")
-    ax.set_xlim(0, last + GUTTER)
     ax.set_ylim(*Y_LIMITS)
     ticks = MaxNLocator(nbins=5, integer=True).tick_values(0, last)
     ax.set_xticks([tick for tick in ticks if 0 <= tick <= last])

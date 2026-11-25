@@ -3,6 +3,10 @@
 import os
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+
 from clocks._site_media import render_site_media
 
 SITE = Path(__file__).resolve().parent
