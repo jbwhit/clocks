@@ -107,10 +107,14 @@ src/clocks/
     physics.py     Strict weak-field forward models
     noise.py       Gaussian noise model and log-likelihood
     inference.py   Adaptive tempered resample-move SMC
-    viz.py         Plotting and animation facade (_panels.py, _panels3d.py, _animate.py, _style.py)
+    viz.py         Public facade over _figures, _clips, _echo_study, _replay and _style
     _style.py      Shared figure style: palette, theme context, bundled font (_fonts/)
     _support.py    Conditional prior support and rejection sampling
-    _panels3d.py   3D plotting primitives for the echolocation dashboard
+    _replay.py     Replay archives: record, validate, save, load, compare
+    _figures.py    Static figures drawn from a replay, and the trace helpers
+    _clips.py      Clips drawn from replays (_clip_*.py hold the six builders)
+    _video.py      Raw frames to H.264 through FFmpeg, and the decode check
+    _site_media.py The site's clips and posters, drawn before Quarto renders
     _scenarios.py  Shared scenario builders for demos/scan harnesses/tests
     _echo_study.py Reporting helpers for the echolocation range study
     _demos/        Packaged implementations for all seven console commands

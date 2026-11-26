@@ -643,3 +643,115 @@ def test_the_earlier_seed_blocks_are_disclosed_with_their_records() -> None:
         assert f"]({_SPEC_URL}{relative})" in page, relative
         assert (ROOT / relative).is_file(), relative
         assert phrase in _normalised(relative), relative
+
+
+# The parts of the Architecture page this plan changes (decision C14): the
+# Visualization subgraph, every edge to or from a node of it, the replay archive
+# or the demos, and two sentences. The rest of the diagram is not pinned.
+ARCHITECTURE_VIS_SUBGRAPH = "\n".join(
+    (
+        '    subgraph vis["Visualization"]',
+        "        viz",
+        '        figures["_figures"]',
+        '        clips["_clips, _clip_*"]',
+        '        video["_video"]',
+        '        sitemedia["_site_media, _sources"]',
+        '        figstyle["_style, _fonts/"]',
+        "    end",
+    )
+)
+ARCHITECTURE_EDGES = {
+    ("viz", "figures"), ("viz", "clips"), ("viz", "echo"), ("viz", "replay"),
+    ("viz", "figstyle"), ("figures", "replay"), ("figures", "figstyle"),
+    ("clips", "figures"), ("clips", "replay"), ("clips", "video"),
+    ("clips", "figstyle"), ("sitemedia", "clips"), ("sitemedia", "replay"),
+    ("sitemedia", "video"), ("sitemedia", "figstyle"), ("replay", "api"),
+    ("replay", "config"), ("replay", "types"), ("echo", "figstyle"),
+    ("demos", "api"), ("demos", "scenario"), ("demos", "replay"),
+    ("demos", "figures"), ("demos", "clips"), ("demos", "video"),
+    ("demos", "figstyle"),
+}  # fmt: skip
+_CHANGED_NODES = {
+    "viz", "figures", "clips", "video", "sitemedia", "figstyle", "replay", "demos",
+}  # fmt: skip
+ARCHITECTURE_SENTENCES = (
+    "`viz` is the public facade over the private figure and clip modules "
+    "(`_figures`, `_echo_study` for the range-study figure, and `_clips` with "
+    "its `_clip_*` builders), the replay archive "
+    "(`_replay`) and the shared figure style (`_style`, with its bundled fonts); "
+    "`_video` encodes and checks the clips, and `_site_media` draws the site's "
+    "clips and posters before Quarto renders.",
+    "Modules whose names begin with an underscore, including `_support`, "
+    "`_scenarios`, `_echo_study`, `_replay`, `_figures`, `_clips` and `_demos`, "
+    "are internal; library callers import from `clocks`, and the figure, clip "
+    "and style names from `clocks.viz`.",
+)
+_NOT_MODULES = {"console", "wrappers", "end"}
+
+
+def _mermaid(page: str) -> str:
+    return page.split("```{mermaid}\n", 1)[1].split("\n```", 1)[0]
+
+
+def _diagram_modules(block: str) -> list[str]:
+    """Each module a node of ``block`` names: its label split on ``, ``."""
+    names = []
+    for line in block.splitlines():
+        match = re.fullmatch(r'\s+(\w+)(?:\["([^"]+)"\])?', line)
+        if match and match.group(1) not in _NOT_MODULES:
+            names += (match.group(2) or match.group(1)).split(", ")
+    return names
+
+
+def _in_package(name: str) -> bool:
+    package = ROOT / "src" / "clocks"
+    if name.endswith("/"):
+        return (package / name.rstrip("/")).is_dir()
+    if name.endswith("/*"):
+        return (package / name.removesuffix("/*")).is_dir()
+    if name.endswith("*"):
+        return any(package.glob(f"{name}.py"))
+    return (package / f"{name}.py").is_file()
+
+
+def test_the_architecture_page_maps_the_drawing_modules_as_they_are() -> None:
+    """Only this catches the module map's visualization part or the demos'
+    imports drawn otherwise than this plan pins them, or any node naming a
+    module the package does not have."""
+    page = (ROOT / "site/reproduce/architecture.qmd").read_text(encoding="utf-8")
+    block = _mermaid(page)
+    assert block.count(ARCHITECTURE_VIS_SUBGRAPH) == 1
+    edges = {
+        (match.group(1), match.group(2))
+        for match in re.finditer(r"^\s+(\w+) --> (\w+)$", block, re.MULTILINE)
+    }
+    assert {e for e in edges if _CHANGED_NODES & set(e)} == ARCHITECTURE_EDGES
+    names = _diagram_modules(block)
+    assert "_figures" in names
+    assert [name for name in names if not _in_package(name)] == []
+    flat = " ".join(page.split())
+    for sentence in ARCHITECTURE_SENTENCES:
+        assert sentence in flat
+
+
+README_PACKAGE_ENTRIES = (
+    "types.py", "config.py", "results.py", "api.py", "physics.py", "noise.py",
+    "inference.py", "viz.py", "_style.py", "_support.py", "_replay.py",
+    "_figures.py", "_clips.py", "_video.py", "_site_media.py", "_scenarios.py",
+    "_echo_study.py", "_demos/",
+)  # fmt: skip
+
+
+def test_the_readme_structure_names_the_package_as_it_is() -> None:
+    """Only this catches the README's module list naming a file the package does
+    not have, or losing one it lists."""
+    lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    listing = [line for line in _block(lines, "src/clocks/") if line.strip()]
+    entries = tuple(line.split()[0] for line in listing)
+    assert entries == README_PACKAGE_ENTRIES
+    assert all((ROOT / "src" / "clocks" / entry).exists() for entry in entries)
+    viz_line = (
+        "    viz.py         Public facade over _figures, _clips, _echo_study, "
+        "_replay and _style"
+    )
+    assert viz_line in listing

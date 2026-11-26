@@ -1,8 +1,11 @@
 """Tests for the public library API."""
 
+import importlib.util
+
 import numpy as np
 import pytest
 
+import clocks.viz
 from clocks.api import (
     _make_log_prior,
     build_model_comparison,
@@ -656,3 +659,37 @@ class TestInference3D:
         assert isinstance(result, InferenceResult)
         expected = np.array([1.0, -1.5, 0.5, 0.05])
         assert np.all(np.abs(result.posterior_mean - expected) < 0.5)
+
+
+ANIMATE = (
+    "animate_echolocation", "animate_inference", "animate_inference_2d",
+    "animate_inference_multi_1d", "animate_inference_multi_2d",
+    "animate_model_comparison",
+)  # fmt: skip
+PLOT = (
+    "plot_centered_rates", "plot_clock_rates", "plot_clock_rates_2d",
+    "plot_clock_setup", "plot_clock_setup_2d", "plot_mass_histogram",
+    "plot_particle_cloud", "plot_particle_cloud_2d", "plot_particle_cloud_multi_1d",
+    "plot_particle_cloud_multi_2d", "plot_scene_3d",
+)  # fmt: skip
+DASHBOARD = ("create_echolocation_dashboard", "create_inference_dashboard")
+VIZ_NAMES = {
+    "THEMES", "Palette", "density_figure", "load_replay", "palette",
+    "range_study_figure", "render_clip", "show", "style",
+}  # fmt: skip
+
+
+def test_viz_exports_exactly_the_documented_names() -> None:
+    """Only this catches a public name added to `clocks.viz` without the upgrade
+    note changing."""
+    assert sorted(clocks.viz.__all__) == sorted(VIZ_NAMES)
+    assert all(hasattr(clocks.viz, name) for name in VIZ_NAMES)
+
+
+def test_the_removed_names_are_gone() -> None:
+    """Only this catches a removed name still importable from `clocks.viz`
+    though no longer listed, or an old module still in the package."""
+    for name in (*ANIMATE, *PLOT, *DASHBOARD):
+        assert not hasattr(clocks.viz, name), name
+    for module in ("clocks._animate", "clocks._panels", "clocks._panels3d"):
+        assert importlib.util.find_spec(module) is None, module
