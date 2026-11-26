@@ -33,7 +33,8 @@ class EncoderNotFound(RuntimeError):
 
 
 class EncoderError(RuntimeError):
-    """The encoder exited with a non-zero status."""
+    """The encoder exited with a non-zero status, or exited 0 after a write to it,
+    or the close of its input, broke the pipe."""
 
 
 class StreamInfo(NamedTuple):
@@ -112,8 +113,10 @@ def encode(
     Each frame, ``width * height * 4`` bytes, is written ``count`` times. The
     pairs are taken one at a time, so a clip is never held in memory. The clip
     is written beside ``path`` under a temporary name and moved into place only
-    when the encoder succeeds; on any failure ``path`` is left as it was.
-    Returns the number of video frames written.
+    when the encoder exits 0 and no write to it, nor the close of its input,
+    failed with a broken pipe; on any failure ``path`` is left as it was.
+    Returns the number of frames sent with no broken pipe seen, which is not a
+    count of the frames in the file.
     """
     if width % 2 or height % 2:
         raise ValueError(
@@ -151,8 +154,11 @@ def encode(
                 f"{_tail(errors)}"
             )
         os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
+    except BaseException as error:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            error.add_note(f"{temporary} was left behind: {cleanup_error}")
         raise
     return written
 
@@ -263,6 +269,10 @@ def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, 
     returns, and its input is closed (or it is terminated) before it is waited
     for. Standard error goes to a file, so a chatty encoder cannot block. An
     encoder that cannot be started at all raises ``EncoderError`` naming it.
+    An encoder that exits 0 after a broken pipe, on a write or on the close,
+    raises ``EncoderError``; an encoder that exits 0 having let every write
+    succeed is trusted here, and only a decode of the file can say whether it
+    holds every frame.
     """
     with tempfile.TemporaryFile() as errors:
         try:
@@ -274,7 +284,7 @@ def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, 
                 f"the encoder {command[0]} could not be started: {error}"
             ) from error
         try:
-            _feed(process.stdin, frames)
+            complete = _feed(process.stdin, frames)
         except BaseException:
             process.terminate()
             try:
@@ -286,24 +296,38 @@ def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, 
         status = process.wait()
         errors.seek(0)
         text = errors.read().decode(errors="replace")
+    if status == 0 and not complete:
+        raise EncoderError(
+            f"{command[0]} exited with status 0 before reading all of its input, "
+            f"writing {command[-1]}: {_tail(text)}"
+        )
     return status, text
 
 
-def _feed(pipe: IO[bytes], frames: Iterable[bytes]) -> None:
-    """Write each frame to ``pipe`` and close it, stopping at a broken pipe.
+def _feed(pipe: IO[bytes], frames: Iterable[bytes]) -> bool:
+    """Write each frame to ``pipe`` and close it; return whether every write and
+    the close succeeded with no broken pipe seen.
 
-    Only a write or the close can break the pipe here: an exception raised while
+    ``True`` does not show that the encoder read the frames: a process that
+    exits without reading can still let every write and the close succeed.
+
+    A broken pipe, on a write or on the close that flushes the buffer, means
+    the encoder stopped reading: writing stops and ``False`` is returned. Only
+    a write or the close can break the pipe here: an exception raised while
     taking the next frame, a ``BrokenPipeError`` included, is the caller's.
     """
+    complete = True
     for frame in frames:
         try:
             pipe.write(frame)
         except BrokenPipeError:
+            complete = False
             break  # the encoder has exited; its status says why
     try:
         pipe.close()
     except BrokenPipeError:
-        pass  # a buffered pipe can report the same break again when closed
+        complete = False  # buffered frames were lost at the flush
+    return complete
 
 
 def _run_decoder(command: Sequence[str]) -> tuple[int, str, str]:

@@ -434,6 +434,67 @@ def test_run_encoder_reaps_the_process(
     assert calls[-1] == "wait"
 
 
+@pytest.mark.parametrize(
+    ("break_write", "break_close"),
+    [
+        pytest.param(True, False, id="write_breaks"),
+        pytest.param(False, True, id="close_breaks"),
+    ],
+)
+def test_an_encoder_that_stops_reading_early_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    break_write: bool,
+    break_close: bool,
+) -> None:
+    """Only this catches a partial clip moved into place by an encoder that
+    exited 0 after its input broke, on a write or only on the final close."""
+    (tmp_path / "clip.mp4").write_bytes(b"old")
+    calls: list[str] = []
+    base = _process_class(
+        calls, status=0, break_write=break_write, break_close=break_close
+    )
+
+    class PartialWriter(base):
+        def __init__(self, command, *args, **kwargs) -> None:
+            super().__init__(command, *args, **kwargs)
+            Path(command[-1]).write_bytes(b"partial")
+
+    monkeypatch.setattr(clocks._video.subprocess, "Popen", PartialWriter)
+
+    with pytest.raises(EncoderError) as raised:
+        encode(_small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e")
+
+    message = str(raised.value)
+    assert "status 0" in message
+    assert "before reading all of its input" in message
+    assert "clip.mp4" in message
+    assert _names(tmp_path) == ["clip.mp4"]
+    assert (tmp_path / "clip.mp4").read_bytes() == b"old"
+
+
+def test_a_failed_cleanup_keeps_the_encoders_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches the cleanup's own error replacing the encoder's."""
+    made: list[Path] = []
+
+    def stand_in(command, frames) -> tuple[int, str]:
+        temporary = Path(command[-1])
+        temporary.mkdir()  # removing a directory with unlink() raises OSError
+        made.append(temporary)
+        for _ in frames:
+            pass
+        return 3, "boom"
+
+    monkeypatch.setattr(clocks._video, "_run_encoder", stand_in)
+
+    with pytest.raises(EncoderError, match="status 3") as raised:
+        encode(_small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e")
+
+    assert any(made[0].name in note for note in getattr(raised.value, "__notes__", []))
+
+
 def test_encode_looks_for_the_encoder_first(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

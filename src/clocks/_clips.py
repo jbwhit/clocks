@@ -95,8 +95,9 @@ def render_clip(
     The frames are 1500 pixels wide and twice the clip's declared height tall,
     at 20 a second; each row is drawn only when the encoder asks for it. The
     encoder is looked up before anything is drawn. ``path`` is written by
-    ``clocks._video.encode`` alone, whole or not at all. Returns the number of
-    video frames written.
+    ``clocks._video.encode`` alone, whole or not at all. Returns ``encode``'s count: the
+    frames sent with no broken pipe seen. Only a decode of the file
+    (``clocks._video.probe``) counts the frames it holds.
 
     A model-comparison replay may hold at most three candidates, one per
     colour of the palette's ``ordered``; more raise ``ValueError``.
