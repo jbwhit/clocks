@@ -10,7 +10,7 @@
 
 **Spec:** docs/plans/2026-11-19-replay-and-animation-design.md (section 7; section 9 as it concerns the commands; section 11 item 3's command and removal parts; "Testing", "Site", the `tests/test_cli.py` line; "Not doing").
 
-**Status:** Draft for review. Revised after Codex xhigh round 1 at 8f9b6f4 (NOT YET: two Blocking, five Important, three Minor) round 2 at 887bc21 (NOT YET: one Blocking, three Important, one Minor), round 3 at 180738c (NOT YET: two wording fixes) and round 4 at b643965 (NOT YET: two wording fixes).
+**Status:** Draft for review. Revised after Codex xhigh round 1 at 8f9b6f4 (NOT YET: two Blocking, five Important, three Minor) round 2 at 887bc21 (NOT YET: one Blocking, three Important, one Minor), round 3 at 180738c (NOT YET: two wording fixes) and round 4 at b643965 (NOT YET: two wording fixes). Round 5: Codex SOUND ENOUGH TO IMPLEMENT at 165c201; Gemini NOT YET (one Blocking, confirmed); revised.
 
 This is pull request 4. It was split from pull request 3 (`docs/plans/2026-11-24-replay-clips.md`) by the coordinator's ruling during that plan's review: round 1 (Codex xhigh at `1c3a6b5`) found two Blocking faults in what is now this plan, fixed as decisions C4 and C6 below; round 2 (at `906eb19`) found that a publication spy would have counted the renames `save_replay` and the encoder make while staging; round 3 (at `c292181`) raised nothing further here. The earlier draft was written against pull request 3's plan; this revision was written against the merged tree at `6e0527c`, and every statement below about present code was read there or measured (Measurements). Codex xhigh's round 1 on this revision (at `8f9b6f4`) found that the encoder could still publish a short clip through a buffered close, and that the print test rejected NumPy's wrapped output; both are fixed (Task 1 and decision C2; Task 3), with its five Important and three Minor findings applied as the coordinator ruled, apart from the request to drop the session trailer from commits, which the project's attribution policy requires. The plan adopts pull request 3's rules for the mutation run (its Task 14 and decisions D47 and D48) and its content-identity freshness for site media (`src/clocks/_site_media.py`, which replaced its D15), which this plan does not touch.
 
@@ -52,7 +52,7 @@ Each is something the design leaves open or states in a way that conflicts with 
 - **C3. The writer, then the commands, then the removals.** Task 2 adds `write_outputs` beside the present commands; Task 3 switches all seven commands and their prose at once; Task 5 deletes the old modules once nothing imports them. Each commit imports cleanly and every sentence about the commands is true at it.
 - **C4. Long options cannot be abbreviated** (round 1, Blocking 2). Every command's parser is made by `make_parser`, with `allow_abbrev=False`, so `--output` is an error, as the design's "replaces" requires, and so is `--obs`. Cost: a user who abbreviated `--observations` must spell it.
 - **C5. `--video` with no encoder stops before inference**, through `parser.error`: exit status 2, the library's own message (it names `imageio-ffmpeg` and `ffmpeg on PATH`), nothing written, no directory made. The design says the command "stops and says how to get one" without saying when. An `EncoderError` during the run ends the command with status 1 and a one-line message, not a traceback. Other errors (a full disk) propagate as they do today.
-- **C6. Outputs are staged, then published together** (the coordinator's ruling on round 1's Blocking 3). Each output of a run is first written beside its destination under a staged name, the final name with `.staged-` in front: the archive with `save_replay`, the PNG with `save_png` into a file created exclusively, the clip with `render_clip`. Before staging, the run unlinks its own three staged names, so a leftover of an interrupted run (a file or a link) neither blocks it nor is written through; an unlink that fails (a directory at a staged name, say) raises, before anything is written. A final name that is a directory (not a link) stops the run before anything is staged, since its rename would fail after the archive's had succeeded (Codex, round 1). Nothing is moved into place until every output of the run is staged and the clip has decoded to every frame (C2); a failure before then, when it raises through `write_outputs`, leaves every existing file as it was, and the handler tries to remove the staged files (the limits are below). Publication is one `os.replace` per file, archive, PNG, clip, inside the same cleanup, and the `Saved:` lines are printed only after the last rename, so a closed standard output cannot stop it part-way; a destination that is a symbolic link is replaced, never written through. The output directory itself may be a link: it is the user's to choose, and nothing outside the run's own names is removed. Stated limits: the two or three renames are not one atomic step, so a failure or an interruption between them (which, with the preflight, needs the file system itself to fail, or a signal) can leave files of two runs side by side. When the failure is an exception that unwinds through `write_outputs`, its handler tries to remove the staged files left and records any removal that fails as a note on the error, and the command exits with that error (`test_a_failed_rename_removes_the_staged_files` pins this); a process killed outright removes nothing, and the next run unlinks its own staged names before it stages. Two runs at once into one directory are not supported.
+- **C6. Outputs are staged, then published together** (the coordinator's ruling on round 1's Blocking 3). Each output of a run is first written beside its destination under a staged name, the final name with `.staged-` in front: the archive with `save_replay`, the PNG with `save_png` into a file created exclusively, the clip with `render_clip`. Before staging, the run unlinks its own staged names (two, or three with `--video`), so a leftover of an interrupted run (a file or a link) neither blocks it nor is written through; an unlink that fails (a directory at a staged name, say) raises, before anything is written. A final name that is a directory (not a link) stops the run before anything is staged, since its rename would fail after the archive's had succeeded (Codex, round 1). Nothing is moved into place until every output of the run is staged and the clip has decoded to every frame (C2); a failure before then, when it raises through `write_outputs`, leaves every existing file as it was, and the handler tries to remove the staged files (the limits are below). Publication is one `os.replace` per file, archive, PNG, clip, inside the same cleanup, and the `Saved:` lines are printed only after the last rename, so a closed standard output cannot stop it part-way; a destination that is a symbolic link is replaced, never written through. The output directory itself may be a link: it is the user's to choose, and nothing outside the run's own names is removed. Stated limits: the two or three renames are not one atomic step, so a failure or an interruption between them (which, with the preflight, needs the file system itself to fail, or a signal) can leave files of two runs side by side. When the failure is an exception that unwinds through `write_outputs`, its handler tries to remove the staged files left and records any removal that fails as a note on the error, and the command exits with that error (`test_a_failed_rename_removes_the_staged_files` pins this); a process killed outright removes nothing, and the next run unlinks its own staged names before it stages (a `.staged-<demo>.mp4` left by a killed `--video` run stays until the next `--video` run, since a run without one stages no clip). The `Kept:` line is printed only for the six clip demos: `demo-density` has no clip and no `--video` (Gemini, round 5). An `EncoderError`'s notes (a file left behind) are printed by `run_command` after its message, one `note:` line each. Two runs at once into one directory are not supported.
 - **C7. A run without `--video` keeps an existing `<demo>.mp4` and says so** (the coordinator's ruling): one line, `Kept: <path> is from an earlier run and was not updated (--video writes a new one)`, whenever an entry is at that name, a dangling link included (`exists()` alone misses one). Cost: a stale clip can sit beside a newer archive, disclosed only at run time and in the README.
 - **C8. `demo-density` writes its archive too**, with `--output-dir` and `--theme` and no `--video`. Section 7 says each command records its run and writes an archive and a PNG. Pull request 2's tests that it "writes only its PNG" at a path given go (`test_density_command_writes_png_bytes_at_the_path_given`, `test_density_command_writes_only_its_png`); the per-demo command test covers what it writes now.
 - **C9. The old names go at once**, with no deprecation period: section 7 calls it a documented break. None is in `clocks.__all__` (read).
@@ -71,7 +71,7 @@ Run on 2026-11-26 in this worktree at `6e0527c` (the merge of pull request 3), m
 
 - **K1. Abbreviation.** `argparse.ArgumentParser()` with only `--output-dir`: `parse_args(["--output", "x"])` gives `Namespace(output_dir='x')`. With `allow_abbrev=False` the same call exits with status 2, "unrecognized arguments: --output x". The seven parsers are built today with `argparse.ArgumentParser(description=__doc__)`, the default (read).
 - **K2. The version and the lock.** `pyproject.toml` and `uv.lock` (the entry `name = "clocks"`, `version = "0.1.0"`, `source = { editable = "." }`) both say 0.1.0; CI installs with `uv sync --locked`. In a copy of the tree (`git archive HEAD | tar -x -C <copy>`), setting `version = "0.2.0"` and running `uv lock` printed "Updated clocks v0.1.0 -> v0.2.0" and changed two lines of `uv.lock`: that version, and `exclude-newer = "2026-11-17T21:46:28.880603Z"` to the date seven days before the run; no package entry changed. With the original lock, `uv lock --check` fails ("needs to be updated"); with only the version line edited by hand it passes.
-- **K3. Who uses the old names.** `git grep -nE "clocks\.viz|_animate|_panels|animate_|create_(echolocation|inference)_dashboard|plot_(centered_rates|clock_rates|clock_setup|mass_histogram|particle_cloud|scene_3d)" -- . ':!docs'`: the removed names are imported by the six clip demo modules, `src/clocks/viz.py` and `tests/test_viz.py` only; `_animate.py` imports `_panels` and `_panels3d`, and nothing else imports any of the three. Prose naming them: `README.md` lines 106 and 109 and `site/reproduce/architecture.qmd` lines 29 to 31, 62 to 69 and 88 to 90. `tests/test_viz.py` holds 18 classes and 39 tests; its only package imports are the removed names and `api`, `config`, `inference`, `noise`, `physics` and `types`, so every test in it exercises removed names. Other tests use `clocks.viz` only for the names that stay (`tests/test_clips.py`, `test_figures.py`, `test_echo_study.py`, `test_site_figure_style.py`) and no test imports `_animate`, `_panels` or `_panels3d`.
+- **K3. Who uses the old names.** `git grep -nE "clocks\.viz|_animate|_panels|animate_|create_(echolocation|inference)_dashboard|plot_(centered_rates|clock_rates|clock_setup|mass_histogram|particle_cloud|scene_3d)" -- . ':!docs'`: the removed names are imported by the six clip demo modules, `src/clocks/viz.py` and `tests/test_viz.py` only; `_animate.py` imports `_panels` and `_panels3d`, and nothing else imports any of the three. Prose naming them: `README.md` lines 106 and 109 and `site/reproduce/architecture.qmd` lines 29 to 31, 62 to 69 and 88 to 90. `tests/test_viz.py` holds 18 classes and 39 tests; its package imports are the removed names and `api`, `config`, `inference`, `noise`, `physics` and `types` at module level, and `clocks._scenarios` and `clocks._animate` inside some tests (read; Gemini, round 5); every test in it exercises removed names. Other tests use `clocks.viz` only for the names that stay (`tests/test_clips.py`, `test_figures.py`, `test_echo_study.py`, `test_site_figure_style.py`) and no test imports `_animate`, `_panels` or `_panels3d`.
 - **K4. Today's parser test asserts lower bounds.** `tests/test_cli.py`, `test_demo_parser_preserves_defaults_and_accepts_fast_overrides`: `assert defaults.observations > 1` and `assert defaults.particles > 16` (read). Task 3 ties each default to the demo's `scenario()`.
 - **K5. Small runs.** For each demo: `record(n_observations=1, n_particles=16)` 0.03 to 0.13 s; `save_replay` and the PNG inside `style("light")` (`final_frame`, or `density_figure` for `demo_density`) 0.04 to 0.46 s; `render_clip` of `record(n_observations=2, n_particles=16)` 0.3 to 3.7 s (echolocation the longest), 92 frames each, and `probe` reports 92 frames. PNG and frame sizes are 1500 by 900 (`demo_1d`, `demo_2d`), 1000 (`demo_multi_mass`), 1100 (`demo_multi_mass_2d`, `demo_echolocation_3d`), 840 (`demo_model_comparison`) and, for the density PNG, 1080: twice `CLIP_HEIGHTS`, and 5.4 inches at 200 dpi.
 - **K6. An encoder that exits 0 early.** A stand-in encoder script that writes five bytes to its last argument and exits 0 without reading its input, given to `encode([(bytes(1500 * 900 * 4), 50)], <dir>/clip.mp4, width=1500, height=900, encoder=<script>)` with `b"old"` already at `clip.mp4`: `encode` returned 1, and `clip.mp4` held the five bytes. The 1 counts a frame handed to the pipe, not one the encoder read. `_feed` treats a broken pipe, on a write or on the close, as the encoder having exited and leaves the verdict to its status (read), and `stdin` is a buffered pipe (`subprocess.PIPE` with the default buffering), so frames written into the buffer can be lost at the close after the generator is exhausted (Codex, round 1; read, not measured).
@@ -221,7 +221,7 @@ def _feed(pipe: IO[bytes], frames: Iterable[bytes]) -> bool:
 - Create: `tests/test_demo_outputs.py`
 
 **Interfaces:**
-- Consumes: `save_replay(path, replay)` and `Replay` from `clocks._replay`; `style(theme)`, `save_png(fig, path_or_file)` and `Palette` from `clocks._style`; `render_clip(replay, path, *, theme="light", encoder=None) -> int` from `clocks._clips`; `probe(path, encoder=None) -> StreamInfo` (its `frames` is the count the decoder decoded, not one read from the container) and `EncoderError` from `clocks._video`; `matplotlib.pyplot` (only to close a pyplot-held figure: `density_figure`'s is, `final_frame`'s is not, and `plt.close` on the latter does nothing).
+- Consumes: `save_replay(path, replay)` and `Replay` from `clocks._replay`; `style(theme)`, `save_png(fig, path_or_file)` and `Palette` from `clocks._style`; `render_clip(replay, path, *, theme="light", encoder=None) -> int` and `BUILDERS` (the six clip demos' names, as keys) from `clocks._clips`; `probe(path, encoder=None) -> StreamInfo` (its `frames` is the count the decoder decoded, not one read from the container) and `EncoderError` from `clocks._video`; `matplotlib.pyplot` (only to close a pyplot-held figure: `density_figure`'s is, `final_frame`'s is not, and `plt.close` on the latter does nothing).
 - Produces, in `src/clocks/_demos/_common.py` (the module's `positive_int` and its present `add_common_arguments` stay untouched until Task 3):
 
 ```python
@@ -274,7 +274,8 @@ def write_outputs(
     for final in finals:
         print(f"Saved: {final}")
     clip = directory / f"{demo}.mp4"
-    if encoder is None and (clip.is_symlink() or clip.exists()):
+    has_clip = demo in BUILDERS  # demo_density has no clip and no --video
+    if has_clip and encoder is None and (clip.is_symlink() or clip.exists()):
         print(
             f"Kept: {clip} is from an earlier run and was not updated "
             "(--video writes a new one)"
@@ -645,8 +646,8 @@ def test_a_failed_rename_removes_the_staged_files(
 def test_a_closed_output_stream_does_not_stop_publication(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Only this catches a `Saved:` line printed between renames, where a closed
-    standard output would stop publication part-way."""
+    """Only this catches a closed standard output stopping publication part-way
+    (a `Saved:` line printed between renames)."""
     _existing_set(tmp_path)
 
     def closed(*args, **kwargs) -> None:
@@ -660,11 +661,68 @@ def test_a_closed_output_stream_does_not_stop_publication(
     assert load_replay(tmp_path / "demo_1d.npz").meta["demo"] == "demo_1d"
     assert (tmp_path / "demo_1d.png").read_bytes()[:8] == PNG_SIGNATURE
     assert _staged_names(tmp_path) == []
+
+
+def test_a_failed_cleanup_keeps_the_error_and_removes_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches a staged file that cannot be removed replacing the
+    run's own error (here the clip, staged last, so the others are removed
+    first either way)."""
+    _existing_set(tmp_path)
+
+    def failing(replay, path, *, theme="light", encoder=None):
+        path.mkdir()  # removing a directory with unlink() raises OSError
+        raise EncoderError("the encoder failed")
+
+    monkeypatch.setattr(common, "render_clip", failing)
+
+    with pytest.raises(EncoderError, match="the encoder failed") as raised:
+        write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
+
+    staged_clip = f"{STAGED}demo_1d.mp4"
+    notes = getattr(raised.value, "__notes__", [])
+    assert any(staged_clip in note and "left behind" in note for note in notes)
+    assert _staged_names(tmp_path) == [staged_clip]
+    assert _contents(tmp_path) == OLD
+
+
+def test_a_link_to_a_directory_at_an_output_name_is_replaced(tmp_path: Path) -> None:
+    """Only this catches the directory preflight following a link, which would
+    refuse a link the rename can replace (decision C6)."""
+    target = tmp_path / "a_directory"
+    target.mkdir()
+    (target / "kept").write_bytes(b"inside")
+    try:
+        os.symlink(target, tmp_path / "demo_1d.png", target_is_directory=True)
+    except OSError:
+        pytest.skip("this system refuses symbolic links")
+
+    write_outputs(small("demo_1d"), tmp_path, final_frame)
+
+    assert not (tmp_path / "demo_1d.png").is_symlink()
+    assert (tmp_path / "demo_1d.png").read_bytes()[:8] == PNG_SIGNATURE
+    assert (target / "kept").read_bytes() == b"inside"
+
+
+def test_the_density_demo_says_nothing_of_a_clip(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only this catches the `Kept:` line, which names `--video`, printed for
+    the density demo, which has no clip and no `--video`."""
+    (tmp_path / "demo_density.mp4").write_bytes(b"not ours")
+
+    write_outputs(small("demo_density"), tmp_path, density_figure)
+
+    assert not any(
+        line.startswith("Kept: ") for line in capsys.readouterr().out.splitlines()
+    )
+    assert (tmp_path / "demo_density.mp4").read_bytes() == b"not ours"
 ```
 
   (`test_a_failed_rename_removes_the_staged_files` replaces `os.replace` for the whole process; `save_replay`'s own move onto `.staged-demo_1d.npz` passes through it, and only the PNG's publication fails.)
 
-- [ ] **Step 2: Stage the names, then run.** Add to `_common.py` the imports the Interfaces list (`os`, `Callable`, `Figure`, `matplotlib.pyplot as plt`, `Replay`, `save_replay`, `Palette`, `save_png`, `style`, `render_clip`, `probe`, `EncoderError`), `STAGED`, and `write_outputs` with the signature above and the body `return []`. Run `uv run pytest tests/test_demo_outputs.py -q`: every test fails on its assertions (nothing written, no `Saved:` lines, the spies never called, `log` empty, no `EncoderError`, `OSError`, `IsADirectoryError` or `BrokenPipeError` raised), none on an import.
+- [ ] **Step 2: Stage the names, then run.** Add to `_common.py` the imports the Interfaces list (`os`, `Callable`, `Figure`, `matplotlib.pyplot as plt`, `Replay`, `save_replay`, `Palette`, `save_png`, `style`, `render_clip`, `BUILDERS`, `probe`, `EncoderError`), `STAGED`, and `write_outputs` with the signature above and the body `return []`. Run `uv run pytest tests/test_demo_outputs.py -q`: every test fails on its assertions (nothing written, no `Saved:` lines, the spies never called, `log` empty, no `EncoderError`, `OSError`, `IsADirectoryError` or `BrokenPipeError` raised), none on an import.
 
 - [ ] **Step 3: Implement** `write_outputs`, `_stage_png`, `_check_clip` and `_remove` as above. `_common.py` now imports `matplotlib.pyplot` and `clocks._clips`; every demo module imports `_common` after `matplotlib.use("Agg")` already (read), and `test_demo_selects_agg_before_importing_pyplot` keeps checking that.
 
@@ -678,7 +736,7 @@ def test_a_closed_output_stream_does_not_stop_publication(
 
 **Files:**
 - Modify: `src/clocks/_demos/_common.py`, `demo_1d.py`, `demo_2d.py`, `demo_multi_mass.py`, `demo_multi_mass_2d.py`, `demo_model_comparison.py`, `demo_density.py`, `demo_echolocation_3d.py` (all under `src/clocks/_demos/`); `README.md`; `site/reproduce/getting-started.qmd`; `site/reproduce/reproducibility.qmd`; `site/reproduce/architecture.qmd` (one edge)
-- Test: `tests/test_cli.py` (rewritten), `tests/test_density_demo.py`, `tests/test_generated_assets.py`
+- Test: `tests/test_cli.py` (rewritten), `tests/test_density_demo.py`, `tests/test_generated_assets.py`, `tests/test_site_figure_style.py` (the stray-video scan, which is the code under test there, as pull request 3 treated that file's guard helpers)
 
 **Interfaces:**
 - Consumes: `write_outputs` and `STAGED` (Task 2); `final_frame` from `clocks._clips`; `find_encoder`, `EncoderNotFound`, `EncoderError` from `clocks._video`; `trace_decimals` from `clocks._figures`; each demo module's existing `scenario()` and `record(*, n_observations, n_particles) -> Replay` (read: all seven have both, with the module constants as defaults); `clocks._replay.DEMOS` (the seven names in the order `demo_1d`, `demo_2d`, `demo_multi_mass`, `demo_multi_mass_2d`, `demo_model_comparison`, `demo_density`, `demo_echolocation_3d`).
@@ -735,7 +793,9 @@ def run_command(
     try:
         run(args)
     except EncoderError as error:
-        parser.exit(1, f"{parser.prog}: error: {error}\n")
+        notes = getattr(error, "__notes__", ())
+        lines = [f"error: {error}", *(f"note: {note}" for note in notes)]
+        parser.exit(1, "".join(f"{parser.prog}: {line}\n" for line in lines))
     return 0
 
 
@@ -1006,17 +1066,22 @@ def test_video_without_an_encoder_stops_before_the_run(
 def test_a_failed_encode_ends_with_a_message_not_a_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Only this catches an encoder failure reaching the user as a traceback."""
+    """Only this catches an encoder failure reaching the user as a traceback, or
+    without the notes that say what was left behind."""
 
     def failing(replay, path, *, theme="light", encoder=None):
-        raise EncoderError("the encoder failed")
+        error = EncoderError("the encoder failed")
+        error.add_note("a-file was left behind: busy")
+        raise error
 
     monkeypatch.setattr(common, "find_encoder", lambda: "the-encoder")
     monkeypatch.setattr(common, "render_clip", failing)
     with pytest.raises(SystemExit) as raised:
         _module("demo_1d").main(["--output-dir", ".", "--video", *FAST])
     assert raised.value.code == 1
-    assert capsys.readouterr().err.endswith(": error: the encoder failed\n")
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[-2].endswith(": error: the encoder failed")
+    assert lines[-1].endswith(": note: a-file was left behind: busy")
 
 
 def _plain(name: str) -> str:
@@ -1074,8 +1139,14 @@ def test_command_prints_the_recorded_run(
 def test_model_comparison_command_prints_from_the_replay_and_records_once(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Only this catches the comparison recorded a second time for its printout."""
-    stub = committed("demo_model_comparison")
+    """Only this catches the comparison recorded a second time for its printout,
+    or its truth printed from the module's constants rather than the replay."""
+    base = committed("demo_model_comparison")
+    rates = base.arrays["true_rates"].copy()
+    rates[0] = 0.5
+    truth = base.arrays["true_params"].copy()
+    truth[0] += 0.5
+    stub = edited(base, true_rates=rates, true_params=truth)
     calls: list[dict] = []
 
     def record(**keywords: int):
@@ -1090,6 +1161,12 @@ def test_model_comparison_command_prints_from_the_replay_and_records_once(
     assert len(calls) == 1
     out = capsys.readouterr().out
     a, meta = stub.arrays, stub.meta
+    names = [_plain(n) for n in meta["param_names"]]
+    pairs = ", ".join(f"{n}={v:g}" for n, v in zip(names, a["true_params"]))
+    assert out.startswith(
+        f"Truth: {pairs}\nTrue rates: {a['true_rates']}\n"
+        f"True model: K={meta['true_k']}\n"
+    )
     ks = [int(k) for k in a["model_ks"]]
     expected = [f"True model: K={meta['true_k']}"]
     for k in range(20, meta["n_observations"] + 1, 20):
@@ -1139,7 +1216,7 @@ def test_no_demo_module_imports_the_facade_or_the_old_drawing_code() -> None:
 
   followed by today's four structural tests, kept with their bodies and parametrized by `name` over `DEMOS` (the executable is `name.replace("_", "-")`): `test_demo_help_exits_without_running`, `test_project_scripts_point_directly_to_packaged_demo_modules` (reading `ROOT / "pyproject.toml"`), `test_demo_selects_agg_before_importing_pyplot` and `test_source_demo_is_only_a_thin_wrapper` (reading `ROOT / "scripts" / f"{name}.py"`). The two tests they replace, `test_demo_parser_preserves_defaults_and_accepts_fast_overrides` and `test_demo_main_executes_with_fast_overrides`, go.
 
-  In `tests/test_density_demo.py`, every test that calls `main` first runs `monkeypatch.chdir(tmp_path)`, so no run can write into the checkout. `test_default_format_prints_the_amplitude_to_four_places`, `test_density_command_prints_and_draws_the_recorded_run` and `test_density_command_prints_progress_from_the_replay` pass `"--output-dir", str(tmp_path)` where they passed `--output`, and the second reads `tmp_path / "demo_density.png"`. `test_density_command_saves_the_figure_it_drew` keeps its figure spy and its assertions on the replay's counts, the light palette and the face colour, and its save spy moves to `clocks._demos._common.save_png` (taking `(fig, file)`): it asserts `saved[0][0] is fig` and drops the path (the staged name is `test_the_png_is_the_figure_drawn_for_the_theme`'s), so a same-size, same-colour substitute figure still fails it. `test_a_failed_save_still_closes_the_figure` patches `clocks._demos._common.save_png` the same way and passes `"--output-dir", str(tmp_path)`. Deleted: `test_density_command_writes_png_bytes_at_the_path_given` and `test_density_command_writes_only_its_png` (decision C8; what the density command writes is `test_demo_main_writes_its_archive_and_png[demo_density-*]`'s). Remove the imports ruff then reports unused.
+  In `tests/test_density_demo.py`, every test that calls `main` first runs `monkeypatch.chdir(tmp_path)`, so no run can write into the checkout. `test_default_format_prints_the_amplitude_to_four_places`, `test_density_command_prints_and_draws_the_recorded_run`, `test_density_command_prints_progress_from_the_replay`, `test_density_command_saves_the_figure_it_drew` and `test_a_failed_save_still_closes_the_figure` each pass `"--output-dir", str(tmp_path)` exactly where they passed `--output` and its path, keeping their other flags (decision C15: none of them may fall back to the missing default `output/`); a test that has no `monkeypatch` parameter yet (`test_density_command_prints_and_draws_the_recorded_run`) gains one, and the second reads `tmp_path / "demo_density.png"`. `test_density_command_saves_the_figure_it_drew` keeps its figure spy and its assertions on the replay's counts, the light palette and the face colour, and its save spy moves to `clocks._demos._common.save_png` (taking `(fig, file)`): it asserts `saved[0][0] is fig` and drops the path (the staged name is `test_the_png_is_the_figure_drawn_for_the_theme`'s), so a same-size, same-colour substitute figure still fails it. `test_a_failed_save_still_closes_the_figure` patches `clocks._demos._common.save_png` the same way. Deleted: `test_density_command_writes_png_bytes_at_the_path_given` and `test_density_command_writes_only_its_png` (decision C8; what the density command writes is `test_demo_main_writes_its_archive_and_png[demo_density-*]`'s). Remove the imports ruff then reports unused.
 
   In `tests/test_generated_assets.py` (it imports `DEMOS` from `clocks._replay` beside `load_replay`):
 
@@ -1172,6 +1249,33 @@ def test_the_command_block_is_the_commands(relative: str) -> None:
     assert text.count(_command_block()) == 1
     assert ".gif" not in text
 ```
+
+  In `tests/test_site_figure_style.py`, the Getting Started block's `output/demo_2d.mp4` would trip `test_no_page_has_unpinned_video_markup[site/reproduce/getting-started.qmd]`: `_VIDEO_MARKUP` holds `".mp4"` and `_replay_embed_violations` flags it on any line outside a pinned embed (read; Gemini, round 5). A command's own output path is not video markup, so the scan drops it first, by the prefix rule `_retired_asset_mentions` uses for `output/` paths:
+
+```python
+# A command's own output clip, `output/<name>.mp4` standing alone (the rule
+# `_retired_asset_mentions` uses for `output/`), is a path, not an embed.
+_COMMAND_CLIP = re.compile(r"(?<![\w./-])output/[\w.-]+\.mp4")
+```
+
+  and in `_replay_embed_violations` the stray-markup comprehension tests `_COMMAND_CLIP.sub("", line).lower()` in place of `line.lower()`. `test_replay_embed_violations` gains two cases:
+
+```python
+        pytest.param(
+            PAGE_TEXT + "uv run demo-2d --video   # also → output/demo_2d.mp4\n",
+            (_EMBED_2D,),
+            [],
+            id="a_command_output_clip",
+        ),
+        pytest.param(
+            PAGE_TEXT + "[the clip](assets/output/demo_2d.mp4)\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="an_output_clip_under_another_directory",
+        ),
+```
+
+  (`a_link_to_a_clip`, `../media/demo_2d.light.mp4`, stays refused.)
 
   `test_the_commands_are_described_as_they_are` becomes:
 
@@ -1224,7 +1328,7 @@ def test_readme_describes_the_site_and_the_commands_as_they_are() -> None:
         assert stale not in flat
 ```
 
-- [ ] **Step 2: Run against today's code, then stage the mechanical part, then run again.** First run `uv run pytest tests/test_cli.py tests/test_density_demo.py tests/test_generated_assets.py -q` as the tree stands: the parser tests fail on their assertions (no `output_dir`; `--output` accepted, so today's run starts and no `SystemExit` comes), the command-block and both prose tests fail (the files still list GIFs), and `test_no_demo_module_imports_the_facade_or_the_old_drawing_code` lists the six clip demos; the tests that pass `--output-dir` exit with status 2 before any assertion, which says nothing yet. Then stage the mechanical part: in `_common.py`, `make_parser`, the new `add_common_arguments`, `add_video_argument` and `run_command` as the Interfaces give them, with the imports they need, and `ascii_name`, `print_truth` and `print_estimate` with bodies that print nothing; in each demo module, `build_parser` and `main` as the Interfaces give them, `final_frame` (or `density_figure`) imported, the import from `clocks.viz` removed, and `_run_demo` replaced by a stub that does nothing (`pass`). Run the same command again. Expected now, each on its assertion: no archive or PNG written (`test_demo_main_writes_its_archive_and_png`, `test_the_default_run_writes_into_output`, `test_video_writes_the_clip`, the density command tests), `record` never called with the given counts (`test_command_prints_the_recorded_run`, the model-comparison test), `final_frame` never called (`test_png_is_the_final_frame`), no `SystemExit(1)` (`test_a_failed_encode_ends_with_a_message_not_a_traceback`); the parser tests and `test_video_without_an_encoder_stops_before_the_run` now pass, since staging them is their implementation.
+- [ ] **Step 2: Run against today's code, then stage the mechanical part, then run again.** First run `uv run pytest tests/test_cli.py tests/test_density_demo.py tests/test_generated_assets.py tests/test_site_figure_style.py -q` as the tree stands (after Task 2). Expected: `test_demo_parser_defaults` fails (no `output_dir`); `test_output_is_no_longer_an_option` fails for every demo, since today's parser takes `--output x.png` and the run starts (for the clip demos, Matplotlib's movie writer is asked for a `.png`, which raises; for `demo_density`, `record` is `_never`), so no `SystemExit` comes; `test_png_is_the_final_frame` and `test_a_failed_encode_ends_with_a_message_not_a_traceback` fail at `monkeypatch.setattr`, with `AttributeError` (the modules have no `final_frame`, and Task 2 gave `_common` no `find_encoder`); the tests that pass `--output-dir` exit with status 2 before their assertions (`test_video_without_an_encoder_stops_before_the_run` then fails on the message); the command-block and both prose tests fail (the files still list GIFs), as does `test_no_demo_module_imports_the_facade_or_the_old_drawing_code`, listing the six clip demos; `a_command_output_clip` fails (line 14 flagged). `test_options_cannot_be_abbreviated` fails too (`--obs` is an unambiguous prefix of `--observations` today, so today's `demo-1d` run starts). `test_density_has_no_video_option` already passes, since today's density parser has no `--video`: it is the one test that is green before and after. Where the run's output differs from this list, the output is what is recorded. Then stage the mechanical part: in `_common.py`, `make_parser`, the new `add_common_arguments`, `add_video_argument` and `run_command` as the Interfaces give them, with the imports they need, and `ascii_name`, `print_truth` and `print_estimate` with bodies that print nothing; in each demo module, `build_parser` and `main` as the Interfaces give them, `final_frame` (or `density_figure`) imported, the import from `clocks.viz` removed, and `_run_demo` replaced by a stub that does nothing (`pass`). Run the same command again. Expected now, each on its assertion: no archive or PNG written (`test_demo_main_writes_its_archive_and_png`, `test_the_default_run_writes_into_output`, `test_video_writes_the_clip`, the density command tests), `record` never called with the given counts (`test_command_prints_the_recorded_run`, the model-comparison test), `final_frame` never called (`test_png_is_the_final_frame`), no `SystemExit(1)` (`test_a_failed_encode_ends_with_a_message_not_a_traceback`); the parser tests and `test_video_without_an_encoder_stops_before_the_run` now pass, since staging them is their implementation.
 
 - [ ] **Step 3: Implement** the `_common.py` functions as above and the seven demo modules as the Interfaces say. Imports in each demo module stay after `matplotlib.use("Agg")`.
 
@@ -1236,7 +1340,7 @@ def test_readme_describes_the_site_and_the_commands_as_they_are() -> None:
 
   > The site animates six of the demos and draws the density figure, all from replay data, with commentary: [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The site's clips and posters are build products and are not committed. What is committed is replay data, `assets/replays/<demo>.npz`: what each packaged run produced, in numbers, tied to the code by tests of its inputs and of bounded summaries. The echolocation range study behind the site's final page: `scripts/scan_echolocation_range.py`.
 
-  replacing the two paragraphs there today (the sentence "Six of the commands above still write GIFs…" and the paragraph "Most GIF demos animate…", with its second link to the site, go). On the Architecture page, whose solid arrows are imports, the edge `    demos --> viz` becomes `    demos --> figstyle` (the demos now import `clocks._style`, through `_common` and `demo_density`, and no longer import `clocks.viz`); Task 5 redraws the rest of that diagram. Wrap at about 78 columns, as the file does. In `site/reproduce/getting-started.qmd`, "## Run the demos" holds the same `_command_block()` text in place of its line "Six animated demos plus the density figure:" and its block. On the Reproducibility page, the two sentences "`uv run demo-density` records the same configured scenario and draws its result. The other six `uv run demo-*` commands run the same scenarios again and still write GIFs, drawn by the earlier animation code and not from these archives." become the two the test pins. `site/story/gravitational-echolocation.qmd`'s "`uv run demo-echolocation-3d` regenerates the demo;" stays true and is not touched.
+  replacing the two paragraphs there today (the sentence "Six of the commands above still write GIFs…" and the paragraph "Most GIF demos animate…", with its second link to the site, go). On the Architecture page, whose solid arrows are imports, the edge `    demos --> viz` becomes `    demos --> figstyle` (the demos now import `clocks._style` through `_common`, and no longer import `clocks.viz`); Task 5 redraws the rest of that diagram. Wrap at about 78 columns, as the file does. In `site/reproduce/getting-started.qmd`, "## Run the demos" holds the same `_command_block()` text in place of its line "Six animated demos plus the density figure:" and its block. On the Reproducibility page, the two sentences "`uv run demo-density` records the same configured scenario and draws its result. The other six `uv run demo-*` commands run the same scenarios again and still write GIFs, drawn by the earlier animation code and not from these archives." become the two the test pins. `site/story/gravitational-echolocation.qmd`'s "`uv run demo-echolocation-3d` regenerates the demo;" stays true and is not touched.
 
 - [ ] **Step 4: Tests pass; full gate; render the site and run both checks** (three pages changed: Getting Started, Reproducibility, Architecture); **then the wheel check** on `dist/clocks-0.1.0-py3-none-any.whl` (every command's `--help` still prints usage).
 
@@ -1408,7 +1512,8 @@ _CHANGED_NODES = {
 }  # fmt: skip
 ARCHITECTURE_SENTENCES = (
     "`viz` is the public facade over the private figure and clip modules "
-    "(`_figures`, and `_clips` with its `_clip_*` builders), the replay archive "
+    "(`_figures`, `_echo_study` for the range-study figure, and `_clips` with "
+    "its `_clip_*` builders), the replay archive "
     "(`_replay`) and the shared figure style (`_style`, with its bundled fonts); "
     "`_video` encodes and checks the clips, and `_site_media` draws the site's "
     "clips and posters before Quarto renders.",
@@ -1482,7 +1587,8 @@ def test_the_readme_structure_names_the_package_as_it_is() -> None:
     assert entries == README_PACKAGE_ENTRIES
     assert all((ROOT / "src" / "clocks" / entry).exists() for entry in entries)
     viz_line = (
-        "    viz.py         Public facade over _figures, _clips, _replay and _style"
+        "    viz.py         Public facade over _figures, _clips, _echo_study, "
+        "_replay and _style"
     )
     assert viz_line in listing
 ```
@@ -1521,7 +1627,7 @@ __all__ = [
 ]
 ```
 
-  - `README.md`, "Project structure": the `viz.py` line becomes `    viz.py         Public facade over _figures, _clips, _replay and _style`; the `_panels3d.py` line goes; after `_support.py` and before `_scenarios.py` come `    _replay.py     Replay archives: record, validate, save, load, compare`, `    _figures.py    Static figures drawn from a replay, and the trace helpers`, `    _clips.py      Clips drawn from replays (_clip_*.py hold the six builders)`, `    _video.py      Raw frames to H.264 through FFmpeg, and the decode check` and `    _site_media.py The site's clips and posters, drawn before Quarto renders`. The other lines stand.
+  - `README.md`, "Project structure": the `viz.py` line becomes `    viz.py         Public facade over _figures, _clips, _echo_study, _replay and _style`; the `_panels3d.py` line goes; after `_support.py` and before `_scenarios.py` come `    _replay.py     Replay archives: record, validate, save, load, compare`, `    _figures.py    Static figures drawn from a replay, and the trace helpers`, `    _clips.py      Clips drawn from replays (_clip_*.py hold the six builders)`, `    _video.py      Raw frames to H.264 through FFmpeg, and the decode check` and `    _site_media.py The site's clips and posters, drawn before Quarto renders`. The other lines stand.
   - `site/reproduce/architecture.qmd`: the Mermaid block becomes the following (the first 26 lines and the edges among `contracts`, `physnoise` and `core` are today's; every edge was read from the modules' imports at this plan's head, after Task 3; like today's, the diagram shows a selection of each module's imports, not all of them):
 
 ````text
@@ -1710,12 +1816,15 @@ The run changes no file; a fix it leads to is made in the task that owns the cod
 | 2 | `write_outputs`: `except BaseException as error:` becomes `except EncoderError as error:` | `test_a_failed_png_leaves_every_existing_output_as_it_was`; `test_a_failed_rename_removes_the_staged_files` |
 | 2 | `write_outputs`: the preflight loop refusing a directory at a final name deleted | `test_a_directory_at_an_output_name_stops_the_run_before_anything_changes` |
 | 2 | `write_outputs`: the rename loop moved out of the `try`, after the `except` clause | `test_a_failed_rename_removes_the_staged_files` |
-| 2 | `write_outputs`: the `Saved:` loop deleted, and `print(f"Saved: {final}")` placed after each `os.replace` inside the rename loop | `test_a_closed_output_stream_does_not_stop_publication` |
+| 2 | `write_outputs`: the `Saved:` loop deleted, and `print(f"Saved: {final}")` placed after each `os.replace` inside the rename loop | `test_a_closed_output_stream_does_not_stop_publication`; `test_a_failed_rename_removes_the_staged_files` (the archive's `Saved:` line is printed before the PNG's rename fails) |
 | 2 | `write_outputs`: the `_check_clip(...)` call deleted | `test_a_clip_that_does_not_decode_to_every_frame_is_not_published[short]`, `[undecodable]`; `test_the_clip_is_drawn_from_the_replay_in_the_theme` (its `probed` list stays empty) |
 | 2 | `_check_clip`: the `try`/`except ValueError` round `probe` removed | `test_a_clip_that_does_not_decode_to_every_frame_is_not_published[undecodable]` |
 | 2 | `write_outputs`: when `encoder is None` and an entry is at the clip's name, `clip.unlink()` before the `Kept:` line | `test_a_run_without_a_clip_keeps_an_earlier_one_and_says_so[earlier_clip]`, `[dangling_clip_link]` |
 | 2 | `write_outputs`: the `Kept:` `print(...)` call replaced by `pass` | `test_a_run_without_a_clip_keeps_an_earlier_one_and_says_so[earlier_clip]`, `[dangling_clip_link]` |
 | 2 | `write_outputs`: the `Kept:` condition reduced to `if encoder is None:` | `test_a_run_without_a_clip_keeps_an_earlier_one_and_says_so[no_clip]`; `test_write_outputs_writes_the_archive_and_png_into_a_new_directory[demo_1d]`, `[demo_density]` |
+| 2 | `write_outputs`: `has_clip and ` deleted from the `Kept:` condition | `test_the_density_demo_says_nothing_of_a_clip` |
+| 2 | `write_outputs`: `not final.is_symlink() and ` deleted from the directory preflight | `test_a_link_to_a_directory_at_an_output_name_is_replaced` |
+| 2 | `_remove`: the `try`/`except OSError` round `path.unlink(missing_ok=True)` removed | `test_a_failed_cleanup_keeps_the_error_and_removes_the_rest` |
 | 2 | `write_outputs`: `clip.is_symlink() or ` deleted from the `Kept:` condition | `test_a_run_without_a_clip_keeps_an_earlier_one_and_says_so[dangling_clip_link]` |
 | 2 | `_stage_png`: `style(theme)` becomes `style("light")` | `test_the_png_is_the_figure_drawn_for_the_theme[dark]`; `test_demo_main_writes_its_archive_and_png` (each `-dark` case, seven) |
 | 2 | `_stage_png`: `figure(replay, colors)` becomes `figure(replay, palette("light"))` (with `palette` imported) | `test_the_png_is_the_figure_drawn_for_the_theme[dark]` |
@@ -1732,9 +1841,13 @@ The run changes no file; a fix it leads to is made in the task that owns the cod
 | 3 | `run_command`: the `find_encoder()` lookup and its `try` moved after `run(args)`, so `args.encoder` is `None` during the run | `test_video_writes_the_clip` (each, six); `test_video_without_an_encoder_stops_before_the_run` (each, six); `test_a_failed_encode_ends_with_a_message_not_a_traceback` |
 | 3 | `run_command`: the `try`/`except EncoderNotFound` round `find_encoder()` removed | `test_video_without_an_encoder_stops_before_the_run` (each, six) |
 | 3 | `run_command`: the `try`/`except EncoderError` round `run(args)` removed | `test_a_failed_encode_ends_with_a_message_not_a_traceback` |
+| 3 | `run_command`: `notes = ()` in place of `getattr(error, "__notes__", ())` | `test_a_failed_encode_ends_with_a_message_not_a_traceback` |
+| 3 | `_replay_embed_violations` (`tests/test_site_figure_style.py`): `_COMMAND_CLIP.sub("", line).lower()` back to `line.lower()` | `test_replay_embed_violations[a_command_output_clip]`; `test_no_page_has_unpinned_video_markup[site/reproduce/getting-started.qmd]` |
+| 3 | `_COMMAND_CLIP`: the lookbehind `(?<![\w./-])` removed | `test_replay_embed_violations[an_output_clip_under_another_directory]` |
+| 3 | `demo_model_comparison._run_demo`: `print_truth(replay)` replaced by `print(f"Truth: x1={TRUE_X1}, x2={TRUE_X2}, M1={TRUE_M1}, M2={TRUE_M2}")` and `print(f"True rates: {scenario().true_rates}")` | `test_model_comparison_command_prints_from_the_replay_and_records_once` |
 | 3 | `demo_1d._run_demo`: `record(n_observations=args.observations)`, `n_particles` not passed | `test_demo_main_writes_its_archive_and_png[demo_1d-light]`, `[demo_1d-dark]`; `test_command_prints_the_recorded_run[demo_1d]` |
 | 3 | `demo_2d._run_demo`: `theme="light"` passed to `write_outputs` | `test_demo_main_writes_its_archive_and_png[demo_2d-dark]` |
-| 3 | `demo_1d._run_demo`: the figure passed is `lambda replay, colors: build_clip(replay, colors).fig` (the first frame; `build_clip` imported) | `test_png_is_the_final_frame[demo_1d]` |
+| 3 | `demo_1d._run_demo`: the figure passed is `lambda replay, colors: build_clip(replay, colors).fig` (`build_clip` imported; for `demo_1d` that figure already shows the last row, `_clip_tracks.update` being called before it returns, so the mutant is a different call that bypasses `final_frame`, caught by its spy, not a different picture) | `test_png_is_the_final_frame[demo_1d]` |
 | 3 | `demo_multi_mass._run_demo`: `encoder=None` passed to `write_outputs` | `test_video_writes_the_clip[demo_multi_mass]` |
 | 3 | `print_estimate`: `meta['n_particles']` in the ESS line replaced by `1000` | `test_command_prints_the_recorded_run` (each, five) |
 | 3 | `print_estimate`: `d = trace_decimals(prior_range)` | `test_command_prints_the_recorded_run` (each, five) |
