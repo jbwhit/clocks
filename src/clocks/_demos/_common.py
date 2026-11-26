@@ -163,10 +163,9 @@ def write_outputs(
 
     A run that fails removes what it staged. A process killed outright removes
     nothing: its ``STAGED`` files are removed by the next run that writes the
-    same outputs, but the randomly
-    named temporaries that ``encode`` and ``save_replay`` write beside them
-    (``.staged-<demo>.mp4.<hex>.part`` and ``..staged-<demo>.npz.<random>.tmp``)
-    are left for good; no later run removes them.
+    same outputs, but the randomly named temporaries that ``encode`` and
+    ``save_replay`` write beside them (``.staged-<demo>.mp4.<hex>.part`` and
+    ``..staged-<demo>.npz.<random>.tmp``) stay; no later run removes them.
     """
     demo = replay.meta["demo"]
     directory.mkdir(parents=True, exist_ok=True)
