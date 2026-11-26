@@ -492,7 +492,8 @@ def test_a_failed_cleanup_keeps_the_encoders_error(
     with pytest.raises(EncoderError, match="status 3") as raised:
         encode(_small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e")
 
-    assert any(made[0].name in note for note in getattr(raised.value, "__notes__", []))
+    notes = getattr(raised.value, "__notes__", [])
+    assert any(made[0].name in note and "was left behind" in note for note in notes)
 
 
 def test_encode_looks_for_the_encoder_first(

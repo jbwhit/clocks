@@ -33,8 +33,15 @@ class EncoderNotFound(RuntimeError):
 
 
 class EncoderError(RuntimeError):
-    """The encoder exited with a non-zero status, or exited 0 after a write to it,
-    or the close of its input, broke the pipe."""
+    """The encoder failed, or its clip cannot be trusted.
+
+    Raised when the encoder exits with a non-zero status; exits 0 after a
+    write to it, or the close of its input, broke the pipe; cannot be started
+    at all; or prints no version line to ``-version`` (``encoder_version``).
+    The demo commands raise it too (``clocks._demos._common._check_clip``) for
+    a clip that does not decode, or decodes to a frame count other than the
+    frames sent.
+    """
 
 
 class StreamInfo(NamedTuple):
@@ -264,7 +271,7 @@ def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, 
     """Pipe ``frames`` to ``command``; return its exit status and standard error.
 
     A broken pipe means the encoder stopped reading (it has exited): writing
-    stops and its status is returned. An exception from ``frames`` itself ends
+    stops, and a non-zero status is returned. An exception from ``frames`` itself ends
     the encoder and propagates. Either way the process is reaped before this
     returns, and its input is closed (or it is terminated) before it is waited
     for. Standard error goes to a file, so a chatty encoder cannot block. An

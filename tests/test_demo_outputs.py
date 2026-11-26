@@ -125,9 +125,12 @@ def test_the_png_is_the_figure_drawn_for_the_theme(
 
 
 def test_the_clip_is_drawn_from_the_replay_in_the_theme(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Only this catches the clip drawn in the default theme whatever was asked."""
+    """Only this catches the clip drawn in the default theme whatever was asked,
+    or a `--video` run that does not print one `Saved:` line per output, or
+    calls the clip it has just replaced `Kept:`."""
+    _existing_set(tmp_path)
     replay = small("demo_1d")
     log: list = []
     probed: list = []
@@ -146,6 +149,7 @@ def test_the_clip_is_drawn_from_the_replay_in_the_theme(
     assert written[2] == tmp_path / "demo_1d.mp4"
     assert written[2].read_bytes() == b"new clip"
     assert _staged_names(tmp_path) == []
+    assert capsys.readouterr().out.splitlines() == [f"Saved: {p}" for p in written]
 
 
 def test_a_failed_clip_leaves_every_existing_output_as_it_was(
@@ -185,13 +189,16 @@ def test_a_failed_png_leaves_every_existing_output_as_it_was(
     assert _staged_names(tmp_path) == []
 
 
-@pytest.mark.parametrize("case", ["earlier_clip", "dangling_clip_link", "no_clip"])
+@pytest.mark.parametrize(
+    "case", ["earlier_clip", "dangling_clip_link", "clip_directory", "no_clip"]
+)
 def test_a_run_without_a_clip_keeps_an_earlier_one_and_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], case: str
 ) -> None:
     """Only this catches an earlier clip, or a dangling link at its name,
     removed without being asked or kept without a word, or a clip announced
-    when there is none (Review Focus 3)."""
+    when there is none (Review Focus 3); a directory at the clip's name is
+    left alone and is not announced as a clip."""
     clip = tmp_path / "demo_1d.mp4"
     if case == "earlier_clip":
         _existing_set(tmp_path)
@@ -200,13 +207,16 @@ def test_a_run_without_a_clip_keeps_an_earlier_one_and_says_so(
             os.symlink(tmp_path / "gone.mp4", clip)
         except OSError:
             pytest.skip("this system refuses symbolic links")
+    elif case == "clip_directory":
+        clip.mkdir()
+        (clip / "kept").write_bytes(b"inside")
 
     written = write_outputs(small("demo_1d"), tmp_path, final_frame)
 
     out = capsys.readouterr().out.splitlines()
     kept = [line for line in out if line.startswith("Kept: ")]
     assert written == [tmp_path / "demo_1d.npz", tmp_path / "demo_1d.png"]
-    if case != "no_clip":
+    if case in ("earlier_clip", "dangling_clip_link"):
         assert clip.is_symlink() == (case == "dangling_clip_link")
         if case == "earlier_clip":
             assert clip.read_bytes() == b"old clip"
@@ -214,6 +224,9 @@ def test_a_run_without_a_clip_keeps_an_earlier_one_and_says_so(
             f"Kept: {clip} is from an earlier run and was not updated "
             "(--video writes a new one)"
         ]
+    elif case == "clip_directory":
+        assert (clip / "kept").read_bytes() == b"inside"
+        assert kept == []
     else:
         assert not clip.exists()
         assert kept == []
@@ -254,21 +267,26 @@ def test_no_output_is_written_through_a_link_or_onto_a_leftover(
     assert _staged_names(tmp_path) == []
 
 
-@pytest.mark.parametrize("case", ["short", "undecodable"])
+@pytest.mark.parametrize("case", ["short", "over", "undecodable"])
 def test_a_clip_that_does_not_decode_to_every_frame_is_not_published(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
 ) -> None:
     """Only this catches a clip published without its decoded frames being
-    counted against the frames sent (Review Focus 4)."""
+    counted against the frames sent (Review Focus 4), or published when it
+    decodes to more frames than were sent."""
     _existing_set(tmp_path)
     monkeypatch.setattr(common, "render_clip", _clip_stand_in([], b"short clip"))
-    probe = (
-        _probe_stand_in([], frames=91)
-        if case == "short"
-        else _probe_stand_in([], error=ValueError("the decoder failed"))
-    )
+    probe = {
+        "short": _probe_stand_in([], frames=91),
+        "over": _probe_stand_in([], frames=93),
+        "undecodable": _probe_stand_in([], error=ValueError("the decoder failed")),
+    }[case]
     monkeypatch.setattr(common, "probe", probe)
-    expected = "91 of the 92 frames" if case == "short" else "does not decode"
+    expected = {
+        "short": "to 91 frames, but 92 were sent",
+        "over": "to 93 frames, but 92 were sent",
+        "undecodable": "does not decode",
+    }[case]
 
     with pytest.raises(EncoderError, match=expected):
         write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
@@ -277,23 +295,35 @@ def test_a_clip_that_does_not_decode_to_every_frame_is_not_published(
     assert _staged_names(tmp_path) == []
 
 
+@pytest.mark.parametrize("suffix", ["png", "mp4"])
 def test_a_directory_at_an_output_name_stops_the_run_before_anything_changes(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    suffix: str,
 ) -> None:
-    """Only this catches a directory collision found by a rename part-way
-    through publication, after the archive had been replaced."""
+    """Only this catches a directory collision, at the PNG's name or the
+    clip's, found by a rename part-way through publication, after the archive
+    had been replaced, or found only once the clip has been drawn."""
     _existing_set(tmp_path)
-    (tmp_path / "demo_1d.png").unlink()
-    (tmp_path / "demo_1d.png").mkdir()
-    (tmp_path / "demo_1d.png" / "kept").write_bytes(b"inside")
+    collision = tmp_path / f"demo_1d.{suffix}"
+    collision.unlink()
+    collision.mkdir()
+    (collision / "kept").write_bytes(b"inside")
+
+    def never(replay, path, *, theme="light", encoder=None):
+        pytest.fail("the clip was drawn")
+
+    monkeypatch.setattr(common, "render_clip", never)
 
     with pytest.raises(IsADirectoryError, match="is a directory"):
-        write_outputs(small("demo_1d"), tmp_path, final_frame)
+        write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
 
-    assert (tmp_path / "demo_1d.npz").read_bytes() == OLD["npz"]
-    assert (tmp_path / "demo_1d.mp4").read_bytes() == OLD["mp4"]
-    assert (tmp_path / "demo_1d.png" / "kept").read_bytes() == b"inside"
+    others = {s: data for s, data in OLD.items() if s != suffix}
+    assert {s: (tmp_path / f"demo_1d.{s}").read_bytes() for s in others} == others
+    assert (collision / "kept").read_bytes() == b"inside"
     assert _staged_names(tmp_path) == []
+    assert capsys.readouterr().out == ""
 
 
 def test_a_failed_rename_removes_the_staged_files(
@@ -338,6 +368,23 @@ def test_a_closed_output_stream_does_not_stop_publication(
 
     assert load_replay(tmp_path / "demo_1d.npz").meta["demo"] == "demo_1d"
     assert (tmp_path / "demo_1d.png").read_bytes()[:8] == PNG_SIGNATURE
+    assert (tmp_path / "demo_1d.mp4").read_bytes() == OLD["mp4"]
+    assert _staged_names(tmp_path) == []
+
+
+def test_an_interrupted_run_leaves_every_existing_output_as_it_was(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches staged files left behind by an interruption that is
+    not an `Exception` (here Ctrl-C while the clip is being written)."""
+    _existing_set(tmp_path)
+    interrupted = _clip_stand_in([], b"partial", KeyboardInterrupt())
+    monkeypatch.setattr(common, "render_clip", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
+
+    assert _contents(tmp_path) == OLD
     assert _staged_names(tmp_path) == []
 
 

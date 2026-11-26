@@ -216,8 +216,37 @@ def test_a_failed_encode_ends_with_a_message_not_a_traceback(
         _module("demo_1d").main(["--output-dir", ".", "--video", *FAST])
     assert raised.value.code == 1
     lines = capsys.readouterr().err.splitlines()
+    assert lines[-3].endswith(": error: the encoder failed")
+    assert lines[-2].endswith(": note: a-file was left behind: busy")
+
+
+def test_a_failed_encode_says_that_nothing_was_saved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only this catches a failed `--video` run that does not say its archive
+    and PNG were discarded with the clip, and how to get them."""
+    old = {"npz": b"old archive", "png": b"old png", "mp4": b"old clip"}
+    for suffix, data in old.items():
+        (tmp_path / f"demo_1d.{suffix}").write_bytes(data)
+
+    def failing(replay, path, *, theme="light", encoder=None):
+        path.write_bytes(b"partial")
+        raise EncoderError("the encoder failed")
+
+    monkeypatch.setattr(common, "find_encoder", lambda: "the-encoder")
+    monkeypatch.setattr(common, "render_clip", failing)
+    with pytest.raises(SystemExit) as raised:
+        _module("demo_1d").main(["--output-dir", ".", "--video", *FAST])
+    assert raised.value.code == 1
+    lines = capsys.readouterr().err.splitlines()
     assert lines[-2].endswith(": error: the encoder failed")
-    assert lines[-1].endswith(": note: a-file was left behind: busy")
+    assert lines[-1].endswith(
+        ": note: nothing was saved: this run's archive and PNG were discarded "
+        "with its clip; a run without --video writes them"
+    )
+    names = sorted(p.name for p in tmp_path.iterdir())
+    assert names == sorted(f"demo_1d.{suffix}" for suffix in old)
+    assert {s: (tmp_path / f"demo_1d.{s}").read_bytes() for s in old} == old
 
 
 def _plain(name: str) -> str:

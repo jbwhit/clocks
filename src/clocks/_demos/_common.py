@@ -18,6 +18,10 @@ from clocks._style import THEMES, Palette, save_png, style
 from clocks._video import EncoderError, EncoderNotFound, find_encoder, probe
 
 STAGED = ".staged-"
+NOTHING_SAVED = (
+    "nothing was saved: this run's archive and PNG were discarded with its clip; "
+    "a run without --video writes them"
+)
 
 
 def positive_int(value: str) -> int:
@@ -83,7 +87,12 @@ def run_command(
     run: Callable[[argparse.Namespace], None],
     argv: Sequence[str] | None,
 ) -> int:
-    """Parse ``argv``, find the encoder if ``--video`` asks for one, then run."""
+    """Parse ``argv``, find the encoder if ``--video`` asks for one, then run.
+
+    An ``EncoderError`` can only come from a ``--video`` run's clip, which
+    ``write_outputs`` checks before it moves anything into place: it ends the
+    command with the error, its notes, and a note that nothing was saved.
+    """
     args = parser.parse_args(argv)
     args.encoder = None
     if getattr(args, "video", False):
@@ -95,7 +104,11 @@ def run_command(
         run(args)
     except EncoderError as error:
         notes = getattr(error, "__notes__", ())
-        lines = [f"error: {error}", *(f"note: {note}" for note in notes)]
+        lines = [
+            f"error: {error}",
+            *(f"note: {note}" for note in notes),
+            f"note: {NOTHING_SAVED}",
+        ]
         parser.exit(1, "".join(f"{parser.prog}: {line}\n" for line in lines))
     return 0
 
@@ -144,8 +157,16 @@ def write_outputs(
     none is moved into place until all are staged and the clip decodes to every
     frame sent (decision C6 of the commands plan). Nothing is printed until
     every rename is made. For a clip demo run without ``encoder``, an entry at
-    ``<demo>.mp4`` (a link, dangling or not, included) is kept, and a line says
-    so; the density demo, which has no clip, says nothing of one.
+    ``<demo>.mp4`` is kept; a line says so unless it is a directory (a link,
+    dangling or not, is announced). The density demo, which has no clip, says
+    nothing of one.
+
+    A run that fails removes what it staged. A process killed outright removes
+    nothing: its ``STAGED`` files are removed by the next run that writes the
+    same outputs, but the randomly
+    named temporaries that ``encode`` and ``save_replay`` write beside them
+    (``.staged-<demo>.mp4.<hex>.part`` and ``..staged-<demo>.npz.<random>.tmp``)
+    are left for good; no later run removes them.
     """
     demo = replay.meta["demo"]
     directory.mkdir(parents=True, exist_ok=True)
@@ -177,7 +198,8 @@ def write_outputs(
         print(f"Saved: {final}")
     clip = directory / f"{demo}.mp4"
     has_clip = demo in BUILDERS  # demo_density has no clip and no --video
-    if has_clip and encoder is None and (clip.is_symlink() or clip.exists()):
+    is_entry = clip.is_symlink() or (clip.exists() and not clip.is_dir())
+    if has_clip and encoder is None and is_entry:
         print(
             f"Kept: {clip} is from an earlier run and was not updated "
             "(--video writes a new one)"
@@ -199,14 +221,15 @@ def _stage_png(
 
 
 def _check_clip(path: Path, sent: int, encoder: str) -> None:
-    """Refuse, with ``EncoderError``, a staged clip that does not decode to all
-    ``sent`` frames (``probe`` runs the same encoder binary as a decoder)."""
+    """Refuse, with ``EncoderError``, a staged clip that does not decode to
+    exactly the ``sent`` frames (``probe`` runs the same encoder binary as a
+    decoder)."""
     try:
         decoded = probe(path, encoder).frames
     except ValueError as error:
         raise EncoderError(f"{path} does not decode: {error}") from error
     if decoded != sent:
-        raise EncoderError(f"{path} decodes to {decoded} of the {sent} frames sent")
+        raise EncoderError(f"{path} decodes to {decoded} frames, but {sent} were sent")
 
 
 def _remove(paths: list[Path], error: BaseException) -> None:
