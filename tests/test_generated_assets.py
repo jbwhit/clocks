@@ -646,8 +646,12 @@ def test_the_earlier_seed_blocks_are_disclosed_with_their_records() -> None:
 
 
 # The parts of the Architecture page this plan changes (decision C14): the
-# Visualization subgraph, every edge to or from a node of it, the replay archive
-# or the demos, and two sentences. The rest of the diagram is not pinned.
+# Visualization subgraph, the replay archive's node line in the Scenario tooling
+# subgraph, every edge to or from a node of the Visualization subgraph, the
+# replay archive or the demos (dotted edges included), and two sentences. Every
+# line of the diagram must be in one of the forms the parse below reads, so an
+# edge spelt another way cannot slip past the edge set. The rest of the
+# diagram's content is not pinned.
 ARCHITECTURE_VIS_SUBGRAPH = "\n".join(
     (
         '    subgraph vis["Visualization"]',
@@ -671,9 +675,26 @@ ARCHITECTURE_EDGES = {
     ("demos", "figures"), ("demos", "clips"), ("demos", "video"),
     ("demos", "figstyle"),
 }  # fmt: skip
+ARCHITECTURE_DOTTED_EDGES = {
+    ("console", "pyproject entry points", "demos"),
+    ("wrappers", "thin imports", "demos"),
+}
+ARCHITECTURE_REPLAY_NODE = '        replay["_replay"]'
 _CHANGED_NODES = {
     "viz", "figures", "clips", "video", "sitemedia", "figstyle", "replay", "demos",
 }  # fmt: skip
+_EDGE = r"\s+(\w+) --> (\w+)"
+_DOTTED_EDGE = r'\s+(\w+) -\. "([^"]+)" \.-> (\w+)'
+_MERMAID_LINE_FORMS = (
+    r"(?:flowchart|graph) (?:TB|TD|BT|LR|RL)",  # the header
+    r"\s*",  # a blank line
+    r"\s*%%.*",  # a comment
+    r'\s+subgraph \w+\["[^"]+"\]',
+    r"\s+end",
+    r'\s+\w+(?:\["[^"]+"\])?',  # a node declaration
+    _DOTTED_EDGE,
+    _EDGE,
+)
 ARCHITECTURE_SENTENCES = (
     "`viz` is the public facade over the private figure and clip modules "
     "(`_figures`, `_echo_study` for the range-study figure, and `_clips` with "
@@ -703,6 +724,16 @@ def _diagram_modules(block: str) -> list[str]:
     return names
 
 
+def _subgraph_lines(block: str, name: str) -> list[str]:
+    """The lines between ``subgraph <name>[...]`` and its ``end``."""
+    lines = block.splitlines()
+    [start] = [
+        i for i, line in enumerate(lines) if line.startswith(f"    subgraph {name}[")
+    ]
+    end = lines.index("    end", start)
+    return lines[start + 1 : end]
+
+
 def _in_package(name: str) -> bool:
     package = ROOT / "src" / "clocks"
     if name.endswith("/"):
@@ -716,16 +747,27 @@ def _in_package(name: str) -> bool:
 
 def test_the_architecture_page_maps_the_drawing_modules_as_they_are() -> None:
     """Only this catches the module map's visualization part or the demos'
-    imports drawn otherwise than this plan pins them, or any node naming a
-    module the package does not have."""
+    imports drawn otherwise than this plan pins them, any node naming a
+    module the package does not have, or a diagram line in a form the edge
+    parse does not read (an edge spelt `demos-->viz`, say)."""
     page = (ROOT / "site/reproduce/architecture.qmd").read_text(encoding="utf-8")
     block = _mermaid(page)
+    unread = [
+        line
+        for line in block.splitlines()
+        if not any(re.fullmatch(form, line) for form in _MERMAID_LINE_FORMS)
+    ]
+    assert unread == []
     assert block.count(ARCHITECTURE_VIS_SUBGRAPH) == 1
-    edges = {
-        (match.group(1), match.group(2))
-        for match in re.finditer(r"^\s+(\w+) --> (\w+)$", block, re.MULTILINE)
-    }
+    lines = block.splitlines()
+    declarations = [x for x in lines if re.fullmatch(r"\s+replay(?:\[.*)?", x)]
+    assert declarations == [ARCHITECTURE_REPLAY_NODE]
+    assert ARCHITECTURE_REPLAY_NODE in _subgraph_lines(block, "scenarios")
+    edges = {m.groups() for x in lines if (m := re.fullmatch(_EDGE, x))}
     assert {e for e in edges if _CHANGED_NODES & set(e)} == ARCHITECTURE_EDGES
+    dotted = {m.groups() for x in lines if (m := re.fullmatch(_DOTTED_EDGE, x))}
+    changed = {e for e in dotted if _CHANGED_NODES & {e[0], e[2]}}
+    assert changed == ARCHITECTURE_DOTTED_EDGES
     names = _diagram_modules(block)
     assert "_figures" in names
     assert [name for name in names if not _in_package(name)] == []
