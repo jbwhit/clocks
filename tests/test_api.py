@@ -1,6 +1,8 @@
 """Tests for the public library API."""
 
 import importlib.util
+import tomllib
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -22,6 +24,8 @@ from clocks.results import (
     SimulationResult,
 )
 from clocks.types import ClockArray, MassConfig, Observation, UpdateDiagnostics
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _make_clock_array() -> ClockArray:
@@ -693,3 +697,35 @@ def test_the_removed_names_are_gone() -> None:
         assert not hasattr(clocks.viz, name), name
     for module in ("clocks._animate", "clocks._panels", "clocks._panels3d"):
         assert importlib.util.find_spec(module) is None, module
+
+
+UPGRADE_NOTE = (
+    "## Upgrading from 0.1 "
+    "Version 0.2.0 changes what the demos write and removes the old plotting "
+    "names. This note covers everything since 0.1. "
+    "- Removed from `clocks.viz`: the six `animate_*` functions, the eleven "
+    "`plot_*` functions and the two `create_*_dashboard` functions. Added since "
+    "0.1: `load_replay`, `render_clip`, `density_figure`, `range_study_figure`. "
+    "- `--output PATH` becomes `--output-dir DIR`; the file names are the "
+    "demo's, and options can no longer be abbreviated. "
+    "- Each demo writes a replay archive and a PNG where six of them wrote a "
+    "GIF; an MP4 is opt-in for those six, with `--video`. `demo-density` "
+    "already wrote a PNG and now writes its archive beside it."
+)
+
+
+def test_the_version_is_0_2_0_in_the_project_and_the_lock() -> None:
+    """Only this catches a version bump without `uv lock`, which fails CI's
+    `uv sync --locked` (K2 of the commands plan)."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    [entry] = [package for package in lock["package"] if package["name"] == "clocks"]
+    assert (project["version"], entry["version"]) == ("0.2.0", "0.2.0")
+
+
+def test_the_readme_has_the_upgrade_note() -> None:
+    """Only this catches the upgrade note changed or dropped; the counts it
+    states are the lengths of the lists of removed names above."""
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    assert UPGRADE_NOTE in readme
+    assert (len(ANIMATE), len(PLOT), len(DASHBOARD)) == (6, 11, 2)

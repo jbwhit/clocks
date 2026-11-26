@@ -81,6 +81,20 @@ numbers, tied to the code by tests of its inputs and of bounded summaries. The
 echolocation range study behind the site's final page:
 `scripts/scan_echolocation_range.py`.
 
+## Upgrading from 0.1
+
+Version 0.2.0 changes what the demos write and removes the old plotting names.
+This note covers everything since 0.1.
+
+- Removed from `clocks.viz`: the six `animate_*` functions, the eleven `plot_*`
+  functions and the two `create_*_dashboard` functions. Added since 0.1:
+  `load_replay`, `render_clip`, `density_figure`, `range_study_figure`.
+- `--output PATH` becomes `--output-dir DIR`; the file names are the demo's,
+  and options can no longer be abbreviated.
+- Each demo writes a replay archive and a PNG where six of them wrote a GIF; an
+  MP4 is opt-in for those six, with `--video`. `demo-density` already wrote a
+  PNG and now writes its archive beside it.
+
 ## Run tests
 
 `uv run pytest` runs the default non-slow suite; run `uv run pytest -m slow`
