@@ -684,8 +684,9 @@ VIZ_NAMES = {
 
 
 def test_viz_exports_exactly_the_documented_names() -> None:
-    """Only this catches a public name added to `clocks.viz` without the upgrade
-    note changing."""
+    """Only this catches a public name added to or dropped from `clocks.viz`'s
+    `__all__`, or listed there without being defined, without `VIZ_NAMES`
+    changing (the upgrade note, pinned below, names them as well)."""
     assert sorted(clocks.viz.__all__) == sorted(VIZ_NAMES)
     assert all(hasattr(clocks.viz, name) for name in VIZ_NAMES)
 
@@ -705,7 +706,8 @@ UPGRADE_NOTE = (
     "names. This note covers everything since 0.1. "
     "- Removed from `clocks.viz`: the six `animate_*` functions, the eleven "
     "`plot_*` functions and the two `create_*_dashboard` functions. Added since "
-    "0.1: `load_replay`, `render_clip`, `density_figure`, `range_study_figure`. "
+    "0.1: `load_replay`, `render_clip`, `density_figure`, `range_study_figure`, "
+    "`style`, `palette`, `Palette`, `THEMES` and `show`. "
     "- `--output PATH` becomes `--output-dir DIR`; the file names are the "
     "demo's, and options can no longer be abbreviated. "
     "- Each demo writes a replay archive and a PNG where six of them wrote a "

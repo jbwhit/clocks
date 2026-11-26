@@ -88,7 +88,8 @@ This note covers everything since 0.1.
 
 - Removed from `clocks.viz`: the six `animate_*` functions, the eleven `plot_*`
   functions and the two `create_*_dashboard` functions. Added since 0.1:
-  `load_replay`, `render_clip`, `density_figure`, `range_study_figure`.
+  `load_replay`, `render_clip`, `density_figure`, `range_study_figure`,
+  `style`, `palette`, `Palette`, `THEMES` and `show`.
 - `--output PATH` becomes `--output-dir DIR`; the file names are the demo's,
   and options can no longer be abbreviated.
 - Each demo writes a replay archive and a PNG where six of them wrote a GIF; an
