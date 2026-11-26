@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 EXECUTABLES = (
@@ -32,6 +32,20 @@ STYLE_SMOKE = (
     "from clocks.viz import style; "
     "cm = style('light'); cm.__enter__(); cm.__exit__(None, None, None)"
 )
+
+
+_INHERITED_WAYS_IN = frozenset({"PATH", "PYTHONPATH", "IMAGEIO_FFMPEG_EXE"})
+
+
+def bare_environment(
+    scripts_directory: Path, inherited: Mapping[str, str]
+) -> dict[str, str]:
+    """``inherited`` without ``PYTHONPATH`` or ``IMAGEIO_FFMPEG_EXE``, and with
+    ``PATH`` the environment's scripts directory alone, so neither a checkout
+    nor an encoder can be reached by inheritance (K7 of the commands plan)."""
+    environment = {k: v for k, v in inherited.items() if k not in _INHERITED_WAYS_IN}
+    environment["PATH"] = str(scripts_directory)
+    return environment
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +96,65 @@ def _check_wheel_contents(wheel: Path) -> None:
     print("ok: wheel ships the fonts and both licences")
 
 
+def _run_demo(
+    command: Sequence[str], directory: Path, environment: Mapping[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=directory,
+        env=dict(environment),
+    )
+
+
+def _demo_failure(
+    command: Sequence[str], result: subprocess.CompletedProcess[str], why: str
+) -> RuntimeError:
+    return RuntimeError(
+        f"{why}: {' '.join(command)}\nstatus: {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
+def _check_the_commands_without_an_encoder(
+    scripts_directory: Path, suffix: str
+) -> None:
+    executable = str(scripts_directory / f"demo-1d{suffix}")
+    command = (executable, "--output-dir", "out", "--observations", "2")
+    command += ("--particles", "16")
+    environment = bare_environment(scripts_directory, os.environ)
+    wanted = {"demo_1d.npz", "demo_1d.png"}
+    with tempfile.TemporaryDirectory(prefix="clocks-wheel-bare-") as directory:
+        work = Path(directory)
+        output = work / "out"
+
+        result = _run_demo(command, work, environment)
+        if result.returncode != 0:
+            raise _demo_failure(command, result, "demo-1d failed with no encoder")
+        if {p.name for p in output.iterdir()} != wanted:
+            raise _demo_failure(command, result, f"out/ does not hold exactly {wanted}")
+        print("ok: demo-1d writes its archive and PNG with no encoder")
+        before = {name: (output / name).read_bytes() for name in wanted}
+
+        video = (*command, "--video")
+        result = _run_demo(video, work, environment)
+        if result.returncode != 2 or "imageio-ffmpeg" not in result.stderr:
+            raise _demo_failure(
+                video,
+                result,
+                "--video did not stop with status 2 naming imageio-ffmpeg",
+            )
+        after = {p.name: p.read_bytes() for p in output.iterdir()}
+        if after != before:
+            raise _demo_failure(video, result, "--video changed the output directory")
+        print(
+            "ok: demo-1d --video stops and names imageio-ffmpeg "
+            "when there is no encoder"
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     wheel = args.wheel.resolve()
@@ -118,6 +191,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{result.stdout}"
                 )
             print(f"ok: {name} --help")
+        _check_the_commands_without_an_encoder(scripts_directory, suffix)
     return 0
 
 
