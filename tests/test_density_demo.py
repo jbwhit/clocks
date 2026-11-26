@@ -10,6 +10,7 @@ import pytest
 from _figure_artists import png_size
 from matplotlib.colors import to_hex
 
+import clocks._demos._common as common
 from clocks._demos import demo_density
 from clocks._demos.demo_density import build_density_filter, main
 from clocks._figures import trace_decimals
@@ -20,7 +21,6 @@ from clocks.physics import clock_rates_density_gaussian
 from clocks.types import ClockArray, Observation
 
 ROOT = Path(__file__).resolve().parents[1]
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def test_density_demo_builder_samples_only_its_physical_prior() -> None:
@@ -131,9 +131,10 @@ def test_default_format_prints_the_amplitude_to_four_places(
     mean = archive.arrays["mean"].copy()
     mean[-1, 2] = 0.0095
     stub = Replay(archive.meta, {**archive.arrays, "cov": cov, "mean": mean})
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(demo_density, "record", lambda **_: stub)
 
-    main(["--output", str(tmp_path / "d.png")])
+    main(["--output-dir", str(tmp_path)])
 
     lines = capsys.readouterr().out.splitlines()
     at = lines.index("Final estimate:")
@@ -141,19 +142,24 @@ def test_default_format_prints_the_amplitude_to_four_places(
 
 
 def test_density_command_prints_and_draws_the_recorded_run(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    output = tmp_path / "new" / "density.png"
+    monkeypatch.chdir(tmp_path)
 
     assert (
-        main(["--output", str(output), "--observations", "3", "--particles", "64"]) == 0
+        main(
+            ["--output-dir", str(tmp_path), "--observations", "3", "--particles", "64"]
+        )
+        == 0
     )
 
     expected = demo_density.record(n_observations=3, n_particles=64)
     lines = capsys.readouterr().out.splitlines()
     start = lines.index("Final estimate:")
     assert lines[start + 1 : start + 5] == _estimate_lines(expected.arrays, -1, 64)
-    assert png_size(output) == (1500, 1080)
+    assert png_size(tmp_path / "demo_density.png") == (1500, 1080)
 
 
 def test_density_command_prints_progress_from_the_replay(
@@ -175,12 +181,13 @@ def test_density_command_prints_progress_from_the_replay(
         calls.append(keywords)
         return stub_replay
 
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(demo_density, "record", stub_record)
 
     main(
         [
-            "--output",
-            str(tmp_path / "d.png"),
+            "--output-dir",
+            str(tmp_path),
             "--observations",
             "40",
             "--particles",
@@ -210,7 +217,7 @@ def test_density_command_saves_the_figure_it_drew(
 ) -> None:
     built: list[tuple] = []
     saved: list[tuple] = []
-    real_figure, real_save = demo_density.density_figure, demo_density.save_png
+    real_figure, real_save = demo_density.density_figure, common.save_png
 
     def figure_spy(replay: Replay, colors: object) -> object:
         face = to_hex(matplotlib.rcParams["figure.facecolor"])
@@ -218,17 +225,18 @@ def test_density_command_saves_the_figure_it_drew(
         built.append((replay, colors, fig, face))
         return fig
 
-    def save_spy(fig: object, path: Path) -> None:
-        saved.append((fig, path))
-        real_save(fig, path)
+    def save_spy(fig: object, file: object) -> None:
+        saved.append((fig, file))
+        real_save(fig, file)
 
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(demo_density, "density_figure", figure_spy)
-    monkeypatch.setattr(demo_density, "save_png", save_spy)
+    monkeypatch.setattr(common, "save_png", save_spy)
 
     main(
         [
-            "--output",
-            str(tmp_path / "d.png"),
+            "--output-dir",
+            str(tmp_path),
             "--observations",
             "2",
             "--particles",
@@ -244,23 +252,23 @@ def test_density_command_saves_the_figure_it_drew(
     assert face == palette("light").background
     assert len(saved) == 1
     assert saved[0][0] is fig
-    assert saved[0][1] == tmp_path / "d.png"
 
 
 def test_a_failed_save_still_closes_the_figure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def failing_save(fig: object, path: Path) -> None:
+    def failing_save(fig: object, file: object) -> None:
         raise OSError("disk full")
 
     plt.close("all")
-    monkeypatch.setattr(demo_density, "save_png", failing_save)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(common, "save_png", failing_save)
 
     with pytest.raises(OSError, match="disk full"):
         main(
             [
-                "--output",
-                str(tmp_path / "d.png"),
+                "--output-dir",
+                str(tmp_path),
                 "--observations",
                 "1",
                 "--particles",
@@ -269,29 +277,3 @@ def test_a_failed_save_still_closes_the_figure(
         )
 
     assert plt.get_fignums() == []
-
-
-@pytest.mark.parametrize(
-    "target", ["out/d", "out/d.jpg"], ids=["no_suffix", "misleading_suffix"]
-)
-def test_density_command_writes_png_bytes_at_the_path_given(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
-) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    main(["--output", target, "--observations", "1", "--particles", "16"])
-
-    files = [p for p in tmp_path.rglob("*") if p.is_file()]
-    assert files == [tmp_path / target]
-    assert (tmp_path / target).read_bytes()[:8] == PNG_SIGNATURE
-
-
-def test_density_command_writes_only_its_png(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    main(["--output", "out/d.png", "--observations", "1", "--particles", "16"])
-
-    files = [p for p in tmp_path.rglob("*") if p.is_file()]
-    assert files == [tmp_path / "out/d.png"]

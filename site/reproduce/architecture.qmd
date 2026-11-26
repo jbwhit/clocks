@@ -75,7 +75,7 @@ flowchart TB
     echo --> physics
     demos --> api
     demos --> scenario
-    demos --> viz
+    demos --> figstyle
     console -. "pyproject entry points" .-> demos
     wrappers -. "thin imports" .-> demos
 ```

@@ -10,7 +10,7 @@ from statistics import median
 
 import pytest
 
-from clocks._replay import load_replay
+from clocks._replay import DEMOS, load_replay
 
 ROOT = Path(__file__).parents[1]
 ASSETS = ROOT / "assets"
@@ -398,36 +398,80 @@ def test_echolocation_animation_provenance() -> None:
 
 
 def test_readme_describes_the_site_and_the_commands_as_they_are() -> None:
-    """Only this catches the README claiming of the commands what is true only
-    of the site, or dropping the sentences that say what is committed."""
-    readme = " ".join((ROOT / "README.md").read_text().split())
+    """Only this catches the README's paragraphs on the commands and on what is
+    committed losing a sentence, or linking the site twice."""
+    readme = (ROOT / "README.md").read_text()
+    flat = " ".join(readme.split())
     for sentence in (
+        "Each command records its run, prints the truth and its final estimate "
+        "from the recording, and writes a replay archive and a PNG: the final "
+        "frame of the animation for six of them, the density figure for "
+        "`demo-density`.",
+        "The six animated demos also take `--video`, which writes the animation "
+        "as an MP4 and needs an FFmpeg encoder (`uv sync` provides one in a "
+        "checkout).",
+        "`--theme dark` draws the dark version, and `--output-dir` chooses the "
+        "directory (`output/` by default).",
+        "A run of one of the six without `--video` leaves an MP4 from an earlier "
+        "run where it is and says that it was not updated.",
         "The site animates six of the demos and draws the density figure, all "
         "from replay data",
         "The site's clips and posters are build products and are not committed.",
         "What is committed is replay data, `assets/replays/<demo>.npz`: what each "
         "packaged run produced, in numbers, tied to the code by tests of its "
         "inputs and of bounded summaries.",
-        "Six of the commands above still write GIFs, drawn by the earlier "
-        "animation code; `demo-density` writes a PNG.",
     ):
-        assert sentence in readme
-    assert "assets/demo_2d.gif" not in readme
-    assert "commits no rendered media" not in readme
+        assert sentence in flat
+    section = readme.split("## Run the demos", 1)[1].split("## Run tests", 1)[0]
+    assert section.count("](https://jbwhit.github.io/clocks/)") == 1
+    for stale in (
+        "still write GIFs",
+        "assets/demo_2d.gif",
+        "commits no rendered media",
+    ):
+        assert stale not in flat
 
 
 def test_the_commands_are_described_as_they_are() -> None:
-    """Only this catches the page implying that the commands produce the clips.
-
-    Pull request 4 replaces the sentence and this test.
-    """
+    """Only this catches the Reproducibility page describing the commands as they
+    were before pull request 4."""
     page = " ".join(_reproducibility_page().split())
     assert (
-        "`uv run demo-density` records the same configured scenario and draws its "
-        "result. The other six `uv run demo-*` commands run the same scenarios "
-        "again and still write GIFs, drawn by the earlier animation code and not "
-        "from these archives."
+        "Each `uv run demo-*` command records its configured scenario again and "
+        "writes its own archive and a PNG drawn from it: the final frame for the "
+        "six animated demos, the density figure for `demo-density`. With "
+        "`--video`, the six also write the clip, drawn as the site's are."
     ) in page
+    assert "still write GIFs" not in page
+    assert "records the same configured scenario and draws its result" not in page
+
+
+FENCE = "`" * 3
+
+
+def _command_block() -> str:
+    """The command list README and Getting Started both show (decision C14)."""
+    lines = [
+        f"uv run {name.replace('_', '-'):<25}# → output/{name}.npz, output/{name}.png"
+        for name in DEMOS
+    ]
+    lines.append(f"uv run {'demo-2d --video':<25}# also → output/demo_2d.mp4")
+    return (
+        "Seven demos. Each writes a replay archive and a PNG; the six animated\n"
+        "ones also write an MP4 with `--video`:\n\n"
+        f"{FENCE}bash\n" + "\n".join(lines) + f"\n{FENCE}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "relative", ["README.md", "site/reproduce/getting-started.qmd"]
+)
+def test_the_command_block_is_the_commands(relative: str) -> None:
+    """Only this catches a command list that still promises GIFs, offers
+    `--video` to the density demo, or names a file the commands do not write."""
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    assert text.count(_command_block()) == 1
+    assert ".gif" not in text
 
 
 def _indent(line: str) -> int:

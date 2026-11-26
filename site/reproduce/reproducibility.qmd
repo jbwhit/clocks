@@ -70,13 +70,14 @@ estimate. Tests run each demo again; they compare its inputs, the computed ones
 (clock positions, true rates and readings) at `rtol=1e-12, atol=1e-12` and the
 rest exactly, and its summaries within stated bounds; they do not require the
 same random path. The video files are build products: they are not committed,
-and their bytes are not pinned. `uv run demo-density` records the same
-configured scenario and draws its result. The other six `uv run demo-*`
-commands run the same scenarios again and still write GIFs, drawn by the
-earlier animation code and not from these archives. Each archive is one finite
-realization: a fixed scenario and seed. None establishes a population recovery
-rate. Where a story page also runs a smaller example in an executed cell, that
-is a separate finite run whose settings are shown in the cell.
+and their bytes are not pinned. Each `uv run demo-*` command records its
+configured scenario again and writes its own archive and a PNG drawn from it:
+the final frame for the six animated demos, the density figure for
+`demo-density`. With `--video`, the six also write the clip, drawn as the
+site's are. Each archive is one finite realization: a fixed scenario and seed.
+None establishes a population recovery rate. Where a story page also runs a
+smaller example in an executed cell, that is a separate finite run whose
+settings are shown in the cell.
 
 The density demo samples a uniform box in $(\mu,\sigma,A)$ conditioned on
 that box and weak-field validity, and uses the same support for its prior

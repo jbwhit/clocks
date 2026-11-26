@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import argparse
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.figure import Figure
 
 from clocks._clips import BUILDERS, render_clip
+from clocks._figures import trace_decimals
 from clocks._replay import Replay, save_replay
-from clocks._style import Palette, save_png, style
-from clocks._video import EncoderError, probe
+from clocks._style import THEMES, Palette, save_png, style
+from clocks._video import EncoderError, EncoderNotFound, find_encoder, probe
 
 STAGED = ".staged-"
 
@@ -31,19 +33,20 @@ def positive_int(value: str) -> int:
     return result
 
 
+def make_parser(description: str | None) -> argparse.ArgumentParser:
+    """A command's parser: long options must be spelt out (decision C4)."""
+    return argparse.ArgumentParser(description=description, allow_abbrev=False)
+
+
 def add_common_arguments(
-    parser: argparse.ArgumentParser,
-    *,
-    output: Path,
-    observations: int,
-    particles: int,
+    parser: argparse.ArgumentParser, *, observations: int, particles: int
 ) -> None:
-    """Add the common reproducible-output and fast-smoke overrides."""
+    """Add --output-dir, --observations, --particles and --theme."""
     parser.add_argument(
-        "--output",
+        "--output-dir",
         type=Path,
-        default=output,
-        help=f"output image or animation (default: {output})",
+        default=Path("output"),
+        help="directory for the replay archive and the PNG (default: output)",
     )
     parser.add_argument(
         "--observations",
@@ -57,6 +60,73 @@ def add_common_arguments(
         default=particles,
         help=f"number of SMC particles (default: {particles})",
     )
+    parser.add_argument(
+        "--theme",
+        choices=THEMES,
+        default="light",
+        help="draw the light or the dark rendering (default: light)",
+    )
+
+
+def add_video_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--video",
+        action="store_true",
+        help="also write the clip, <demo>.mp4, into the output directory; needs "
+        "an FFmpeg encoder (imageio-ffmpeg, which `uv sync` installs in a "
+        "checkout, or ffmpeg on PATH)",
+    )
+
+
+def run_command(
+    parser: argparse.ArgumentParser,
+    run: Callable[[argparse.Namespace], None],
+    argv: Sequence[str] | None,
+) -> int:
+    """Parse ``argv``, find the encoder if ``--video`` asks for one, then run."""
+    args = parser.parse_args(argv)
+    args.encoder = None
+    if getattr(args, "video", False):
+        try:
+            args.encoder = find_encoder()
+        except EncoderNotFound as error:
+            parser.error(str(error))
+    try:
+        run(args)
+    except EncoderError as error:
+        notes = getattr(error, "__notes__", ())
+        lines = [f"error: {error}", *(f"note: {note}" for note in notes)]
+        parser.exit(1, "".join(f"{parser.prog}: {line}\n" for line in lines))
+    return 0
+
+
+_SUBSCRIPTS = str.maketrans({"₁": "1", "₂": "2"})
+
+
+def ascii_name(name: str) -> str:
+    return name.translate(_SUBSCRIPTS)
+
+
+def print_truth(replay: Replay) -> None:
+    names, values = replay.meta["param_names"], replay.arrays["true_params"]
+    pairs = (f"{ascii_name(n)}={v:g}" for n, v in zip(names, values, strict=True))
+    print("Truth: " + ", ".join(pairs))
+    print(f"True rates: {replay.arrays['true_rates']}")
+
+
+def print_estimate(replay: Replay) -> None:
+    """The last row of a filter replay, one more decimal than the trace headers."""
+    arrays, meta = replay.arrays, replay.meta
+    sd = np.sqrt(np.diagonal(arrays["cov"][-1]))
+    print(f"Final estimate after {meta['n_observations']} observations:")
+    rows = zip(meta["param_names"], meta["prior_ranges"], strict=True)
+    for j, (name, prior_range) in enumerate(rows):
+        d = trace_decimals(prior_range) + 1
+        print(
+            f"  {ascii_name(name)} = {arrays['mean'][-1, j]:.{d}f} ± {sd[j]:.{d}f}"
+            f"  (true: {arrays['true_params'][j]:g})"
+        )
+    print(f"  ESS = {arrays['ess'][-1]:.0f} / {meta['n_particles']}")
 
 
 def write_outputs(

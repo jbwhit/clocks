@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt
 import numpy as np
 
-from clocks._demos._common import add_common_arguments
+from clocks._demos._common import (
+    add_common_arguments,
+    make_parser,
+    run_command,
+    write_outputs,
+)
 from clocks._figures import density_figure, trace_decimals
 from clocks._replay import (
     Replay,
@@ -24,7 +27,6 @@ from clocks._replay import (
     validate_replay,
 )
 from clocks._rng import study_generator
-from clocks._style import save_png, style
 from clocks._support import density_support_mask, sample_conditioned_prior
 from clocks.inference import ParticleFilter
 from clocks.noise import add_clock_noise
@@ -43,7 +45,6 @@ N_OBSERVATIONS = 60
 NOISE_STD = 0.005
 N_PARTICLES = 2000
 SEED = 42
-OUTPUT_PATH = Path("output/demo_density.png")
 MU_RANGE = (-8.0, 8.0)
 SIGMA_RANGE = (0.1, 5.0)
 AMPLITUDE_RANGE = (0.001, 0.030)
@@ -113,14 +114,8 @@ def record(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser without running the simulation."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    add_common_arguments(
-        parser,
-        output=OUTPUT_PATH,
-        observations=N_OBSERVATIONS,
-        particles=N_PARTICLES,
-    )
+    parser = make_parser(__doc__)
+    add_common_arguments(parser, observations=N_OBSERVATIONS, particles=N_PARTICLES)
     return parser
 
 
@@ -205,14 +200,7 @@ def _run_demo(args: argparse.Namespace) -> None:
         print()
     print("Final estimate:")
     _print_estimate(replay, -1, n_particles)
-    with style("light") as colors:
-        fig = density_figure(replay, colors)
-        try:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            save_png(fig, args.output)
-        finally:
-            plt.close(fig)
-    print(f"Saved: {args.output}")
+    write_outputs(replay, args.output_dir, density_figure, theme=args.theme)
 
 
 def _print_estimate(replay: Replay, row: int, n_particles: int) -> None:
@@ -232,9 +220,7 @@ def _print_estimate(replay: Replay, row: int, n_particles: int) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the demo using command-line arguments from *argv*."""
-    args = build_parser().parse_args(argv)
-    _run_demo(args)
-    return 0
+    return run_command(build_parser(), _run_demo, argv)
 
 
 if __name__ == "__main__":

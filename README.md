@@ -49,31 +49,35 @@ that every finite population completes.
 
 ## Run the demos
 
-Six animated demos and one static figure:
+Seven demos. Each writes a replay archive and a PNG; the six animated
+ones also write an MP4 with `--video`:
 
 ```bash
-uv run demo-1d                  # → output/demo_1d.gif
-uv run demo-2d                  # → output/demo_2d.gif
-uv run demo-multi-mass          # → output/demo_multi_mass.gif
-uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.gif
-uv run demo-model-comparison    # → output/demo_model_comparison.gif
-uv run demo-density             # → output/demo_density.png
-uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
+uv run demo-1d                  # → output/demo_1d.npz, output/demo_1d.png
+uv run demo-2d                  # → output/demo_2d.npz, output/demo_2d.png
+uv run demo-multi-mass          # → output/demo_multi_mass.npz, output/demo_multi_mass.png
+uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.npz, output/demo_multi_mass_2d.png
+uv run demo-model-comparison    # → output/demo_model_comparison.npz, output/demo_model_comparison.png
+uv run demo-density             # → output/demo_density.npz, output/demo_density.png
+uv run demo-echolocation-3d     # → output/demo_echolocation_3d.npz, output/demo_echolocation_3d.png
+uv run demo-2d --video          # also → output/demo_2d.mp4
 ```
 
-The site animates six of the demos and draws the density figure, all from
-replay data: [jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The
-site's clips and posters are build products and are not committed. What is
-committed is replay data, `assets/replays/<demo>.npz`: what each packaged run
-produced, in numbers, tied to the code by tests of its inputs and of bounded
-summaries. Six of the commands above still write GIFs, drawn by the earlier
-animation code; `demo-density` writes a PNG.
+Each command records its run, prints the truth and its final estimate from
+the recording, and writes a replay archive and a PNG: the final frame of the
+animation for six of them, the density figure for `demo-density`. The six
+animated demos also take `--video`, which writes the animation as an MP4 and
+needs an FFmpeg encoder (`uv sync` provides one in a checkout). `--theme dark`
+draws the dark version, and `--output-dir` chooses the directory (`output/` by
+default). A run of one of the six without `--video` leaves an MP4 from an
+earlier run where it is and says that it was not updated.
 
-Most GIF demos animate the physical setup, the particle cloud converging,
-and the estimates' uncertainty; `demo-model-comparison` instead tracks
-the posterior probability over candidate mass counts, and `demo-density`
-produces a static comparison figure. All seven, with commentary:
-[jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The
+The site animates six of the demos and draws the density figure, all from
+replay data, with commentary:
+[jbwhit.github.io/clocks](https://jbwhit.github.io/clocks/). The site's clips
+and posters are build products and are not committed. What is committed is
+replay data, `assets/replays/<demo>.npz`: what each packaged run produced, in
+numbers, tied to the code by tests of its inputs and of bounded summaries. The
 echolocation range study behind the site's final page:
 `scripts/scan_echolocation_range.py`.
 
