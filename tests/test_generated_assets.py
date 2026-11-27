@@ -467,9 +467,11 @@ def _command_block() -> str:
     "relative", ["README.md", "site/reproduce/getting-started.qmd"]
 )
 def test_the_command_block_is_the_commands(relative: str) -> None:
-    """Only this catches a command list that still promises GIFs or offers
-    `--video` to the density demo; a Getting Started comment naming a file the
-    commands do not write it catches with the stray-video scan."""
+    """Only this catches a command list that still promises GIFs, offers
+    `--video` to the density demo, or names a file the commands do not write
+    other than an MP4; a Getting Started comment naming another MP4 it catches
+    with the stray-video scan, which reads video markup (`.mp4` and the like)
+    and nothing else."""
     text = (ROOT / relative).read_text(encoding="utf-8")
     assert text.count(_command_block()) == 1
     assert ".gif" not in text

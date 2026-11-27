@@ -161,7 +161,8 @@ def write_outputs(
       existing output untouched.
     - Each output is then replaced atomically, one ``os.replace`` each, but
       the two or three renames are not one atomic step: a failure between
-      them leaves the files renamed before it beside older ones, a mixed set.
+      them leaves the files renamed before it in place, beside older outputs
+      (a mixed set) or, where there were none, alone (a partial set).
     - On a failure that raises through here, removing the staged files is
       best-effort: a removal that fails is a note on the error. A process
       killed outright removes nothing; its ``STAGED`` names are unlinked by

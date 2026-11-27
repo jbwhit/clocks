@@ -3,6 +3,7 @@ import signal
 import struct
 import subprocess
 import sys
+import time
 import tomllib
 import types
 from collections.abc import Iterator
@@ -549,6 +550,92 @@ def test_an_interrupt_while_waiting_reaps_the_encoder_before_cleanup(
     assert _names(tmp_path) == []
 
 
+# Ignores SIGTERM, says so by creating the file named in its argument, then
+# reads its input to the end and stays alive: only a kill ends it.
+_TERM_IGNORING_CHILD = (
+    "import signal, sys, time, pathlib; "
+    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+    "pathlib.Path(sys.argv[1]).touch(); "
+    "sys.stdin.buffer.read(); time.sleep(60)"
+)
+
+
+@pytest.mark.parametrize(
+    "case", ["ignores_terminate", "terminate_raises", "second_interrupt"]
+)
+def test_a_cancelled_encode_keeps_its_interrupt_whatever_the_cleanup_meets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
+) -> None:
+    """Only this catches a cancelled encode whose cleanup waits without limit
+    for an encoder that ignores SIGTERM (it is killed and reaped instead), or
+    lets an exception of its own (from ``terminate()``, or a second interrupt
+    during its wait) replace the original, which keeps a note instead."""
+    started: list[subprocess.Popen] = []
+    at_cleanup: list[list[int | None]] = []
+    interrupt = KeyboardInterrupt("the first")
+    ready = tmp_path / "ready"
+    child = _TERM_IGNORING_CHILD if case == "ignores_terminate" else _LINGERING_CHILD
+
+    class Cancelled(subprocess.Popen):
+        def __init__(self, args, **kwargs) -> None:
+            self.waits = 0
+            super().__init__([sys.executable, "-c", child, str(ready)], **kwargs)
+            started.append(self)
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.waits += 1
+            if self.waits == 1:
+                if case == "ignores_terminate":
+                    deadline = time.monotonic() + 10
+                    while not ready.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                raise interrupt
+            if self.waits == 2 and case == "second_interrupt":
+                raise KeyboardInterrupt("the second")
+            return super().wait(timeout)
+
+        def terminate(self) -> None:
+            if case == "terminate_raises":
+                raise OSError("terminate failed")
+            super().terminate()
+
+    real_unlink = Path.unlink
+
+    def unlink_spy(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".part"):
+            at_cleanup.append([process.returncode for process in started])
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(clocks._video, "_CANCEL_WAIT", 0.2)
+    monkeypatch.setattr(clocks._video.subprocess, "Popen", Cancelled)
+    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            encode(
+                _small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e"
+            )
+    finally:
+        for process in started:
+            if process.returncode is None:
+                process.kill()
+                subprocess.Popen.wait(process)
+
+    assert raised.value is interrupt
+    notes = getattr(raised.value, "__notes__", [])
+    if case == "ignores_terminate":
+        assert ready.exists()
+        assert at_cleanup == [[-signal.SIGKILL]]
+        assert notes == []
+    else:
+        cause = {"terminate_raises": "OSError: terminate failed"}.get(
+            case, "KeyboardInterrupt: the second"
+        )
+        assert notes == [
+            f"stopping the encoder failed, so it may still be running: {cause}"
+        ]
+    assert [p.name for p in tmp_path.iterdir() if p.suffix == ".part"] == []
+
+
 def test_encode_looks_for_the_encoder_first(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -739,6 +826,11 @@ def _large_box(kind: bytes, large_size: int, payload: bytes = b"") -> bytes:
             _box(b"mdat", b"z" * 8, size=4) + _box(b"moov", b"x" * 4),
             ["mdat"],
             id="size_under_its_header",
+        ),
+        pytest.param(
+            _box(b"ftyp", b"isom") + struct.pack(">I4s", 1, b"free") + b"\0" * 4,
+            ["ftyp", "free"],
+            id="large_size_cut_short",
         ),
     ],
 )

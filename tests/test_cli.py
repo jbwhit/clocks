@@ -96,11 +96,12 @@ def test_options_cannot_be_abbreviated(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_demo_main_writes_its_archive_and_png(
     tmp_path: Path, name: str, theme: str
 ) -> None:
-    """Only this catches a command that writes elsewhere than `--output-dir` or
-    hands the writer another theme. A run recorded with other counts than it
-    was given it catches with `test_command_prints_the_recorded_run`, and the
-    PNG drawn outside the theme's style with
-    `test_the_png_is_the_figure_drawn_for_the_theme`."""
+    """Catches a command that writes elsewhere than `--output-dir` or hands the
+    writer another theme: alone for every demo but `demo_1d`, whose output
+    directory the encoder and odd-path tests below also read. A run recorded
+    with other counts than it was given it catches with
+    `test_command_prints_the_recorded_run`, and the PNG drawn outside the
+    theme's style with `test_the_png_is_the_figure_drawn_for_the_theme`."""
     given = tmp_path / "given"
     given.mkdir()
     assert _module(name).main(["--output-dir", "given", *FAST, "--theme", theme]) == 0
@@ -159,9 +160,10 @@ def test_png_is_the_final_frame(monkeypatch: pytest.MonkeyPatch, name: str) -> N
 
 @pytest.mark.parametrize("name", CLIP_DEMOS)
 def test_video_writes_the_clip(tmp_path: Path, name: str) -> None:
-    """Only this catches a demo whose `--video` writes no clip because it does
-    not pass the encoder on; the encoder looked up too late is caught by the
-    encoder tests below as well. It needs the encoder and fails, not skips,
+    """Catches a demo whose `--video` writes no clip because it does not pass
+    the encoder on: alone for every demo but `demo_1d`, which the encoder and
+    odd-path tests below also run with `--video`. The encoder looked up too
+    late they catch as well. It needs the encoder and fails, not skips,
     without one (pull request 3's D11)."""
     args = ["--output-dir", ".", "--video", "--observations", "2", "--particles", "16"]
     assert _module(name).main(args) == 0
@@ -178,10 +180,12 @@ def test_video_writes_into_a_directory_ffmpeg_could_misread(
 ) -> None:
     """A relative output directory that FFmpeg would read as an option (`-…`)
     or a protocol (`file:…`) is passed to it as an absolute path, for the
-    encode and for the decode check alike. It needs the encoder."""
+    encode and for the decode check alike. It needs the encoder. The directory
+    exists beforehand: only two tests start from a missing one (decision C15)."""
+    out = tmp_path / directory
+    out.mkdir()
     args = [f"--output-dir={directory}", "--video", *FAST]
     assert _module("demo_1d").main(args) == 0
-    out = tmp_path / directory
     names = sorted(p.name for p in out.iterdir())
     assert names == ["demo_1d.mp4", "demo_1d.npz", "demo_1d.png"]
     assert [p.name for p in tmp_path.iterdir()] == [directory]

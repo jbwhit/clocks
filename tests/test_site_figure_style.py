@@ -991,8 +991,9 @@ def _replay_embed_violations(
 
     Each embed's block must occur exactly once, the blocks in the table's
     order, each followed by its non-empty description div whose id occurs once;
-    with every pinned block removed, no line may hold video markup. Nothing is
-    said about what surrounds a block (see the module docstring).
+    with every pinned block removed, no line may hold video markup except
+    ``_COMMAND_CLIP_LINE``, matched whole, wherever it appears. Nothing is said
+    about what surrounds a block (see the module docstring).
     """
     blocks = [_embed_block(embed, page) for embed in embeds]
     messages: list[str] = []

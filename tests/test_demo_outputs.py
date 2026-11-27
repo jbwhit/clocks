@@ -1,6 +1,7 @@
 """The demo commands' writer: what it writes, and what it leaves alone."""
 
 import os
+import re
 from pathlib import Path
 
 import matplotlib
@@ -158,8 +159,9 @@ def test_a_failed_clip_leaves_every_existing_output_as_it_was(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Catches the PNG or the archive moved into place before the clip, the
-    last output staged, is made (Review Focus 2), as every test below that
-    fails a run over an existing set does."""
+    last output staged, is made (Review Focus 2). Other failure tests catch it
+    too, each where its failure comes after that output is staged; the Task 7
+    rows list which."""
     _existing_set(tmp_path)
     failing = _clip_stand_in([], b"partial", EncoderError("the encoder failed"))
     monkeypatch.setattr(common, "render_clip", failing)
@@ -308,6 +310,31 @@ def test_no_output_is_written_through_a_link_or_onto_a_leftover(
     assert _staged_names(tmp_path) == []
 
 
+def test_a_directory_at_the_staged_clip_name_stops_the_run_before_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only this catches the run not unlinking the clip's staged name before it
+    stages: a directory there must stop it before the archive and PNG are
+    staged or the clip drawn, which a later replace onto the name would not."""
+    _existing_set(tmp_path)
+    staged_clip = tmp_path / f"{STAGED}demo_1d.mp4"
+    staged_clip.mkdir()
+    (staged_clip / "kept").write_bytes(b"inside")
+
+    def never(replay, path, *, theme="light", encoder=None):
+        pytest.fail("the clip was drawn")
+
+    monkeypatch.setattr(common, "render_clip", never)
+
+    with pytest.raises(OSError):
+        write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
+
+    assert _contents(tmp_path) == OLD
+    assert (staged_clip / "kept").read_bytes() == b"inside"
+    assert _staged_names(tmp_path) == [staged_clip.name]
+    assert capsys.readouterr().out == ""
+
+
 @pytest.mark.parametrize("case", ["short", "over", "undecodable", "no_decoder"])
 def test_a_clip_that_does_not_decode_to_every_frame_is_not_published(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
@@ -329,8 +356,10 @@ def test_a_clip_that_does_not_decode_to_every_frame_is_not_published(
     expected = {
         "short": "to 91 frames, but 92 were sent",
         "over": "to 93 frames, but 92 were sent",
-        "undecodable": "does not decode",
-        "no_decoder": f"{STAGED}demo_1d.mp4 could not be checked: no such file",
+        "undecodable": re.escape(f"{STAGED}demo_1d.mp4 does not decode"),
+        "no_decoder": re.escape(
+            f"{STAGED}demo_1d.mp4 could not be checked: no such file"
+        ),
     }[case]
 
     with pytest.raises(EncoderError, match=expected):
