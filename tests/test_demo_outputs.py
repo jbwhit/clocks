@@ -347,9 +347,11 @@ def test_a_clip_that_does_not_decode_to_every_frame_is_not_published(
 def test_the_decode_check_counts_against_the_frames_this_clip_sent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, decoded: int, published: bool
 ) -> None:
-    """Only this catches the decode check comparing against a fixed count (the
-    92 frames every other case sends) instead of what ``render_clip`` reported:
-    a one-observation clip sends 74."""
+    """Catches the decode check comparing against a fixed count (the 92 frames
+    every other stand-in case sends) instead of what ``render_clip`` reported:
+    a one-observation clip sends 74. Of the tests that reach the decode check,
+    only this and the real-encoder run into a misreadable directory send
+    another count."""
     _existing_set(tmp_path)
     monkeypatch.setattr(common, "render_clip", _clip_stand_in([], b"new clip", sent=74))
     monkeypatch.setattr(common, "probe", _probe_stand_in([], frames=decoded))
