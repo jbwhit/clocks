@@ -153,19 +153,27 @@ def write_outputs(
     """Write ``replay``'s archive and PNG into ``directory``, and its clip when
     ``encoder`` is given; return the paths written, archive, PNG, clip.
 
-    Every output is staged under its final name with ``STAGED`` in front, and
-    none is moved into place until all are staged and the clip decodes to every
-    frame sent (decision C6 of the commands plan). Nothing is printed until
-    every rename is made. For a clip demo run without ``encoder``, an entry at
-    ``<demo>.mp4`` is kept; a line says so unless it is a directory (a link,
-    dangling or not, is announced). The density demo, which has no clip, says
-    nothing of one.
+    What this guarantees, and its limits (decision C6 of the commands plan):
 
-    A run that fails removes what it staged. A process killed outright removes
-    nothing: its ``STAGED`` files are removed by the next run that writes the
-    same outputs, but the randomly named temporaries that ``encode`` and
-    ``save_replay`` write beside them (``.staged-<demo>.mp4.<hex>.part`` and
-    ``..staged-<demo>.npz.<random>.tmp``) stay; no later run removes them.
+    - Every output is staged under its final name with ``STAGED`` in front.
+      Nothing is moved into place until all are staged and the clip decodes
+      to exactly the frames sent, so a failure up to then leaves every
+      existing output untouched.
+    - Each output is then replaced atomically, one ``os.replace`` each, but
+      the two or three renames are not one atomic step: a failure between
+      them leaves the files renamed before it beside older ones, a mixed set.
+    - On a failure that raises through here, removing the staged files is
+      best-effort: a removal that fails is a note on the error. A process
+      killed outright removes nothing; its ``STAGED`` names are unlinked by
+      the next run that stages them, but the randomly named temporaries that
+      ``encode`` and ``save_replay`` write beside them
+      (``.staged-<demo>.mp4.<hex>.part``, ``..staged-<demo>.npz.<random>.tmp``)
+      stay, and no later run removes them.
+
+    Nothing is printed until every rename is made. For a clip demo run without
+    ``encoder``, an entry at ``<demo>.mp4`` is kept; a line says so unless it
+    is a directory (a link, dangling or not, is announced). The density demo,
+    which has no clip, says nothing of one.
     """
     demo = replay.meta["demo"]
     directory.mkdir(parents=True, exist_ok=True)
@@ -222,11 +230,14 @@ def _stage_png(
 def _check_clip(path: Path, sent: int, encoder: str) -> None:
     """Refuse, with ``EncoderError``, a staged clip that does not decode to
     exactly the ``sent`` frames (``probe`` runs the same encoder binary as a
-    decoder)."""
+    decoder). A decoder that cannot be started, or a clip that cannot be read,
+    is an ``EncoderError`` too, so the command ends with a message."""
     try:
         decoded = probe(path, encoder).frames
     except ValueError as error:
         raise EncoderError(f"{path} does not decode: {error}") from error
+    except OSError as error:
+        raise EncoderError(f"{path} could not be checked: {error}") from error
     if decoded != sent:
         raise EncoderError(f"{path} decodes to {decoded} frames, but {sent} were sent")
 

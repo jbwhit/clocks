@@ -51,7 +51,9 @@ def _corner(path: Path) -> str:
 
 @pytest.mark.parametrize("name", DEMOS)
 def test_demo_parser_defaults(name: str) -> None:
-    """Only this catches a default run that is not the packaged one."""
+    """Only this catches a default count that is not the packaged one; a default
+    directory other than `output` it catches with
+    `test_the_default_run_writes_into_output`."""
     module = _module(name)
     args = module.build_parser().parse_args([])
     packaged = module.scenario()
@@ -94,8 +96,11 @@ def test_options_cannot_be_abbreviated(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_demo_main_writes_its_archive_and_png(
     tmp_path: Path, name: str, theme: str
 ) -> None:
-    """Only this catches a command that writes elsewhere than `--output-dir`,
-    records with other counts than it was given, or draws in another theme."""
+    """Only this catches a command that writes elsewhere than `--output-dir` or
+    hands the writer another theme. A run recorded with other counts than it
+    was given it catches with `test_command_prints_the_recorded_run`, and the
+    PNG drawn outside the theme's style with
+    `test_the_png_is_the_figure_drawn_for_the_theme`."""
     given = tmp_path / "given"
     given.mkdir()
     assert _module(name).main(["--output-dir", "given", *FAST, "--theme", theme]) == 0
@@ -154,8 +159,10 @@ def test_png_is_the_final_frame(monkeypatch: pytest.MonkeyPatch, name: str) -> N
 
 @pytest.mark.parametrize("name", CLIP_DEMOS)
 def test_video_writes_the_clip(tmp_path: Path, name: str) -> None:
-    """Only this catches a demo whose `--video` writes no clip. It needs the
-    encoder and fails, not skips, without one (pull request 3's D11)."""
+    """Only this catches a demo whose `--video` writes no clip because it does
+    not pass the encoder on; the encoder looked up too late is caught by the
+    encoder tests below as well. It needs the encoder and fails, not skips,
+    without one (pull request 3's D11)."""
     args = ["--output-dir", ".", "--video", "--observations", "2", "--particles", "16"]
     assert _module(name).main(args) == 0
     names = sorted(p.name for p in tmp_path.iterdir())
@@ -163,6 +170,22 @@ def test_video_writes_the_clip(tmp_path: Path, name: str) -> None:
     info = probe(tmp_path / f"{name}.mp4")
     assert (info.codec, info.pix_fmt) == ("h264", "yuv420p")
     assert (info.frames, info.width, info.height) == (92, 1500, HEIGHTS[name])
+
+
+@pytest.mark.parametrize("directory", ["-captures", "file:captures"])
+def test_video_writes_into_a_directory_ffmpeg_could_misread(
+    tmp_path: Path, directory: str
+) -> None:
+    """A relative output directory that FFmpeg would read as an option (`-…`)
+    or a protocol (`file:…`) is passed to it as an absolute path, for the
+    encode and for the decode check alike. It needs the encoder."""
+    args = [f"--output-dir={directory}", "--video", *FAST]
+    assert _module("demo_1d").main(args) == 0
+    out = tmp_path / directory
+    names = sorted(p.name for p in out.iterdir())
+    assert names == ["demo_1d.mp4", "demo_1d.npz", "demo_1d.png"]
+    assert [p.name for p in tmp_path.iterdir()] == [directory]
+    assert probe((out / "demo_1d.mp4").absolute()).frames == 74
 
 
 def test_density_has_no_video_option(
@@ -202,8 +225,9 @@ def test_video_without_an_encoder_stops_before_the_run(
 def test_a_failed_encode_ends_with_a_message_not_a_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Only this catches an encoder failure reaching the user as a traceback, or
-    without the notes that say what was left behind."""
+    """Only this catches an encoder failure's message without the notes that
+    say what was left behind; the failure reaching the user as a traceback it
+    catches with the test below."""
 
     def failing(replay, path, *, theme="light", encoder=None):
         error = EncoderError("the encoder failed")
@@ -216,8 +240,9 @@ def test_a_failed_encode_ends_with_a_message_not_a_traceback(
         _module("demo_1d").main(["--output-dir", ".", "--video", *FAST])
     assert raised.value.code == 1
     lines = capsys.readouterr().err.splitlines()
-    assert lines[-3].endswith(": error: the encoder failed")
-    assert lines[-2].endswith(": note: a-file was left behind: busy")
+    [error] = [i for i, line in enumerate(lines) if ": error: " in line]
+    assert lines[error].endswith(": error: the encoder failed")
+    assert lines[error + 1].endswith(": note: a-file was left behind: busy")
 
 
 def test_a_failed_encode_says_that_nothing_was_saved(

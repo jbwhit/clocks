@@ -1,4 +1,5 @@
 import ast
+import signal
 import struct
 import subprocess
 import sys
@@ -496,6 +497,58 @@ def test_a_failed_cleanup_keeps_the_encoders_error(
     assert any(made[0].name in note and "was left behind" in note for note in notes)
 
 
+# Reads its input to the end, then stays alive: an encoder still finishing.
+_LINGERING_CHILD = "import sys, time; sys.stdin.buffer.read(); time.sleep(60)"
+
+
+def test_an_interrupt_while_waiting_reaps_the_encoder_before_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches an interrupt during the encoder's normal wait leaving
+    the child running while `encode` removes its temporary file, which a child
+    that opens its output late could then write after the cleanup."""
+    started: list[subprocess.Popen] = []
+    at_cleanup: list[list[int | None]] = []
+    interrupt = KeyboardInterrupt()
+
+    class InterruptedOnFirstWait(subprocess.Popen):
+        def __init__(self, args, **kwargs) -> None:
+            self.interrupted = False
+            super().__init__([sys.executable, "-c", _LINGERING_CHILD], **kwargs)
+            started.append(self)
+
+        def wait(self, timeout: float | None = None) -> int:
+            if not self.interrupted:
+                self.interrupted = True
+                raise interrupt
+            return super().wait(timeout)
+
+    real_unlink = Path.unlink
+
+    def unlink_spy(self: Path, missing_ok: bool = False) -> None:
+        at_cleanup.append([process.returncode for process in started])
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(clocks._video.subprocess, "Popen", InterruptedOnFirstWait)
+    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            encode(
+                _small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e"
+            )
+    finally:
+        for process in started:
+            if process.returncode is None:
+                process.kill()
+                process.wait()
+
+    assert raised.value is interrupt
+    [process] = started
+    assert process.interrupted
+    assert at_cleanup == [[-signal.SIGTERM]]
+    assert _names(tmp_path) == []
+
+
 def test_encode_looks_for_the_encoder_first(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -804,6 +857,35 @@ def test_probe_refuses_a_clip_with_a_corrupt_frame_of_full_length(
 
 def test_encoder_version_is_the_first_line() -> None:
     assert encoder_version(find_encoder()).startswith("ffmpeg version ")
+
+
+@pytest.mark.parametrize(
+    ("result", "expected", "not_said"),
+    [
+        pytest.param(
+            (1, "ffmpeg version 9.0\n", "bad"),
+            "e -version exited with status 1: bad",
+            "version line",
+            id="non_zero_exit",
+        ),
+        pytest.param(
+            (0, "\n", "quiet"),
+            "e -version printed no version line: quiet",
+            "exited with status",
+            id="no_version_line",
+        ),
+    ],
+)
+def test_encoder_version_names_the_cause_it_saw(
+    monkeypatch: pytest.MonkeyPatch, result, expected: str, not_said: str
+) -> None:
+    """Only this catches a non-zero `-version` reported as a missing version
+    line, or the reverse."""
+    monkeypatch.setattr(clocks._video, "_run_decoder", lambda command: result)
+    with pytest.raises(EncoderError) as raised:
+        encoder_version("e")
+    assert str(raised.value) == expected
+    assert not_said not in str(raised.value)
 
 
 def test_the_encoder_is_a_development_dependency_only() -> None:
