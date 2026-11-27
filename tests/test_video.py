@@ -570,6 +570,7 @@ def test_a_cancelled_encode_keeps_its_interrupt_whatever_the_cleanup_meets(
     for an encoder that ignores SIGTERM (it is killed and reaped instead), or
     lets an exception of its own (from ``terminate()``, or a second interrupt
     during its wait) replace the original, which keeps a note instead."""
+    real_wait = subprocess.Popen.wait  # the patch below replaces the class
     started: list[subprocess.Popen] = []
     at_cleanup: list[list[int | None]] = []
     interrupt = KeyboardInterrupt("the first")
@@ -618,7 +619,7 @@ def test_a_cancelled_encode_keeps_its_interrupt_whatever_the_cleanup_meets(
         for process in started:
             if process.returncode is None:
                 process.kill()
-                subprocess.Popen.wait(process)
+                real_wait(process)
 
     assert raised.value is interrupt
     notes = getattr(raised.value, "__notes__", [])
