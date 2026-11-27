@@ -146,12 +146,14 @@ def test_density_command_prints_and_draws_the_recorded_run(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Also catches the density command writing elsewhere than `--output-dir`:
+    the directory given is not the working directory."""
     monkeypatch.chdir(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
 
     assert (
-        main(
-            ["--output-dir", str(tmp_path), "--observations", "3", "--particles", "64"]
-        )
+        main(["--output-dir", str(out), "--observations", "3", "--particles", "64"])
         == 0
     )
 
@@ -159,7 +161,8 @@ def test_density_command_prints_and_draws_the_recorded_run(
     lines = capsys.readouterr().out.splitlines()
     start = lines.index("Final estimate:")
     assert lines[start + 1 : start + 5] == _estimate_lines(expected.arrays, -1, 64)
-    assert png_size(tmp_path / "demo_density.png") == (1500, 1080)
+    assert png_size(out / "demo_density.png") == (1500, 1080)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out"]
 
 
 def test_density_command_prints_progress_from_the_replay(

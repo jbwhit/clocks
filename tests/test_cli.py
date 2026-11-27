@@ -97,8 +97,9 @@ def test_demo_main_writes_its_archive_and_png(
     tmp_path: Path, name: str, theme: str
 ) -> None:
     """Catches a command that writes elsewhere than `--output-dir` or hands the
-    writer another theme: alone for every demo but `demo_1d`, whose output
-    directory the encoder and odd-path tests below also read. A run recorded
+    writer another theme. The Task 7 rows show it alone for `demo_2d`, both
+    ways; other tests read some demos' outputs too (`demo_1d`'s in the encoder
+    and odd-path tests below, `demo_density`'s in its own test). A run recorded
     with other counts than it was given it catches with
     `test_command_prints_the_recorded_run`, and the PNG drawn outside the
     theme's style with `test_the_png_is_the_figure_drawn_for_the_theme`."""
@@ -161,10 +162,10 @@ def test_png_is_the_final_frame(monkeypatch: pytest.MonkeyPatch, name: str) -> N
 @pytest.mark.parametrize("name", CLIP_DEMOS)
 def test_video_writes_the_clip(tmp_path: Path, name: str) -> None:
     """Catches a demo whose `--video` writes no clip because it does not pass
-    the encoder on: alone for every demo but `demo_1d`, which the encoder and
-    odd-path tests below also run with `--video`. The encoder looked up too
-    late they catch as well. It needs the encoder and fails, not skips,
-    without one (pull request 3's D11)."""
+    the encoder on. The Task 7 rows show it alone for `demo_multi_mass`;
+    `demo_1d` is also run with `--video` by the encoder and odd-path tests
+    below, and the encoder looked up too late they catch as well. It needs
+    the encoder and fails, not skips, without one (pull request 3's D11)."""
     args = ["--output-dir", ".", "--video", "--observations", "2", "--particles", "16"]
     assert _module(name).main(args) == 0
     names = sorted(p.name for p in tmp_path.iterdir())

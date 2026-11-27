@@ -313,18 +313,24 @@ def test_no_output_is_written_through_a_link_or_onto_a_leftover(
 def test_a_directory_at_the_staged_clip_name_stops_the_run_before_staging(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Only this catches the run not unlinking the clip's staged name before it
-    stages: a directory there must stop it before the archive and PNG are
-    staged or the clip drawn, which a later replace onto the name would not."""
+    """Only this catches the run not unlinking the clip's staged name, or doing
+    so only after it has staged the archive and PNG: a directory there must
+    stop the run before anything is staged or drawn (each of those steps is a
+    spy that fails the test), which a later replace onto the name would not."""
     _existing_set(tmp_path)
     staged_clip = tmp_path / f"{STAGED}demo_1d.mp4"
     staged_clip.mkdir()
     (staged_clip / "kept").write_bytes(b"inside")
 
-    def never(replay, path, *, theme="light", encoder=None):
-        pytest.fail("the clip was drawn")
+    def never(what: str):
+        def step(*args, **kwargs):
+            pytest.fail(f"{what} before the staged names were cleared")
 
-    monkeypatch.setattr(common, "render_clip", never)
+        return step
+
+    monkeypatch.setattr(common, "save_replay", never("the archive was staged"))
+    monkeypatch.setattr(common, "_stage_png", never("the PNG was staged"))
+    monkeypatch.setattr(common, "render_clip", never("the clip was drawn"))
 
     with pytest.raises(OSError):
         write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")

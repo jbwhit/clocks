@@ -1,8 +1,10 @@
 import ast
+import os
 import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import types
@@ -421,8 +423,8 @@ def test_run_encoder_reaps_the_process(
         with pytest.raises(type(error)) as raised:
             _run_encoder(["the-encoder"], _frames_then(error))
         assert raised.value is error
-        assert "terminate" in calls
-        assert calls.index("terminate") < calls.index("wait")
+        assert "kill" in calls
+        assert calls.index("kill") < calls.index("wait")
     else:
         result_status, _ = _run_encoder(["the-encoder"], _frames_then(None))
         assert result_status == status
@@ -546,95 +548,162 @@ def test_an_interrupt_while_waiting_reaps_the_encoder_before_cleanup(
     assert raised.value is interrupt
     [process] = started
     assert process.interrupted
-    assert at_cleanup == [[-signal.SIGTERM]]
+    assert at_cleanup == [[-signal.SIGKILL]]
     assert _names(tmp_path) == []
 
 
-# Ignores SIGTERM, says so by creating the file named in its argument, then
-# reads its input to the end and stays alive: only a kill ends it.
-_TERM_IGNORING_CHILD = (
+# Ignores SIGTERM, says so by creating the file named in its argument, and
+# never reads its input: only a kill ends it, and a full pipe stays full.
+_DEAF_CHILD = (
     "import signal, sys, time, pathlib; "
     "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-    "pathlib.Path(sys.argv[1]).touch(); "
-    "sys.stdin.buffer.read(); time.sleep(60)"
+    "pathlib.Path(sys.argv[1]).touch(); time.sleep(60)"
 )
+_SLEEPING_CHILD = "import time; time.sleep(60)"
+
+
+def _fill(fd: int) -> None:
+    """Write to the pipe ``fd`` until it takes no more."""
+    os.set_blocking(fd, False)
+    try:
+        for size in (65536, 4096, 1):
+            try:
+                while True:
+                    os.write(fd, b"\0" * size)
+            except BlockingIOError:
+                pass
+    finally:
+        os.set_blocking(fd, True)
+
+
+def test_a_cancelled_encode_with_unflushed_input_ends_promptly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches the cancellation closing the encoder's input before it
+    kills it, or leaving the input open. Here the pipe is full, the child never
+    reads and ignores SIGTERM, and the last frame is still in the writer's
+    buffer, so a close before the kill blocks until something kills the child
+    (a watchdog, after 10 s, which must not have to)."""
+    ready = tmp_path / "ready"
+    started: list[subprocess.Popen] = []
+    error = ValueError("drawing failed")
+
+    class Recorded(subprocess.Popen):
+        def __init__(self, args, **kwargs) -> None:
+            super().__init__(args, **kwargs)
+            started.append(self)
+
+    def frames() -> Iterator[bytes]:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        _fill(started[0].stdin.fileno())
+        yield b"x" * 16  # stays in the writer's buffer: the pipe is full
+        raise error
+
+    killed_by_watchdog: list[int] = []
+
+    def watchdog() -> None:
+        for process in started:
+            if process.returncode is None:
+                killed_by_watchdog.append(process.pid)
+                os.kill(process.pid, signal.SIGKILL)
+
+    timer = threading.Timer(10, watchdog)
+    monkeypatch.setattr(clocks._video.subprocess, "Popen", Recorded)
+    command = [sys.executable, "-c", _DEAF_CHILD, str(ready)]
+    timer.start()
+    begun = time.monotonic()
+    try:
+        with pytest.raises(ValueError) as raised:
+            _run_encoder(command, frames())
+        elapsed = time.monotonic() - begun
+    finally:
+        timer.cancel()
+        for process in started:
+            if process.returncode is None:
+                os.kill(process.pid, signal.SIGKILL)
+                process.wait()
+
+    assert raised.value is error
+    assert killed_by_watchdog == []
+    assert elapsed < 5
+    [process] = started
+    assert process.returncode == -signal.SIGKILL
+    assert process.stdin.closed
 
 
 @pytest.mark.parametrize(
-    "case", ["ignores_terminate", "terminate_raises", "second_interrupt"]
+    "case", ["kill_raises", "second_interrupt", "notes_not_a_list"]
 )
-def test_a_cancelled_encode_keeps_its_interrupt_whatever_the_cleanup_meets(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
+def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
+    monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
-    """Only this catches a cancelled encode whose cleanup waits without limit
-    for an encoder that ignores SIGTERM (it is killed and reaped instead), or
-    lets an exception of its own (from ``terminate()``, or a second interrupt
-    during its wait) replace the original, which keeps a note instead."""
+    """Only this catches a cleanup step's own exception replacing the error that
+    cancelled the encode: ``kill()`` raising something other than an
+    ``OSError`` (``[kill_raises]``), a second interrupt while reaping
+    (``[second_interrupt]``), or the note itself failing because the error's
+    ``__notes__`` is not a list (``[notes_not_a_list]``, where ``kill()``
+    raises an ``OSError``)."""
     real_wait = subprocess.Popen.wait  # the patch below replaces the class
     started: list[subprocess.Popen] = []
-    at_cleanup: list[list[int | None]] = []
-    interrupt = KeyboardInterrupt("the first")
-    ready = tmp_path / "ready"
-    child = _TERM_IGNORING_CHILD if case == "ignores_terminate" else _LINGERING_CHILD
+    kill_error = {
+        "kill_raises": RuntimeError("kill failed"),
+        "notes_not_a_list": PermissionError("kill refused"),
+    }.get(case)
 
-    class Cancelled(subprocess.Popen):
+    class Failing(subprocess.Popen):
         def __init__(self, args, **kwargs) -> None:
-            self.waits = 0
-            super().__init__([sys.executable, "-c", child, str(ready)], **kwargs)
+            super().__init__(args, **kwargs)
             started.append(self)
 
+        def kill(self) -> None:
+            super().kill()  # the child does die: only the call fails
+            if kill_error is not None:
+                raise kill_error
+
         def wait(self, timeout: float | None = None) -> int:
-            self.waits += 1
-            if self.waits == 1:
-                if case == "ignores_terminate":
-                    deadline = time.monotonic() + 10
-                    while not ready.exists() and time.monotonic() < deadline:
-                        time.sleep(0.01)
-                raise interrupt
-            if self.waits == 2 and case == "second_interrupt":
+            if case == "second_interrupt":
                 raise KeyboardInterrupt("the second")
             return super().wait(timeout)
 
-        def terminate(self) -> None:
-            if case == "terminate_raises":
-                raise OSError("terminate failed")
-            super().terminate()
+    if case == "second_interrupt":
+        error: BaseException = KeyboardInterrupt("the first")
+    else:
+        error = ValueError("drawing failed")
+    if case == "notes_not_a_list":
+        error.__notes__ = ()
 
-    real_unlink = Path.unlink
+    def frames() -> Iterator[bytes]:
+        yield b"x" * 16
+        raise error
 
-    def unlink_spy(self: Path, missing_ok: bool = False) -> None:
-        if self.name.endswith(".part"):
-            at_cleanup.append([process.returncode for process in started])
-        real_unlink(self, missing_ok=missing_ok)
-
-    monkeypatch.setattr(clocks._video, "_CANCEL_WAIT", 0.2)
-    monkeypatch.setattr(clocks._video.subprocess, "Popen", Cancelled)
-    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    monkeypatch.setattr(clocks._video.subprocess, "Popen", Failing)
     try:
-        with pytest.raises(KeyboardInterrupt) as raised:
-            encode(
-                _small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e"
-            )
+        with pytest.raises(type(error)) as raised:
+            _run_encoder([sys.executable, "-c", _SLEEPING_CHILD], frames())
+        reaped = [process.returncode for process in started]
     finally:
         for process in started:
             if process.returncode is None:
-                process.kill()
-                real_wait(process)
+                real_wait(process)  # killed above; reap it
 
-    assert raised.value is interrupt
-    notes = getattr(raised.value, "__notes__", [])
-    if case == "ignores_terminate":
-        assert ready.exists()
-        assert at_cleanup == [[-signal.SIGKILL]]
-        assert notes == []
-    else:
-        cause = {"terminate_raises": "OSError: terminate failed"}.get(
-            case, "KeyboardInterrupt: the second"
-        )
-        assert notes == [
-            f"stopping the encoder failed, so it may still be running: {cause}"
+    assert raised.value is error
+    note = (
+        "cancelling the encoder, could not {}: {}; "
+        "it may be unreaped, with its input open"
+    )
+    if case == "kill_raises":
+        assert error.__notes__ == [note.format("kill it", "RuntimeError: kill failed")]
+        assert reaped == [-signal.SIGKILL]
+    elif case == "second_interrupt":
+        assert error.__notes__ == [
+            note.format("reap it", "KeyboardInterrupt: the second")
         ]
-    assert [p.name for p in tmp_path.iterdir() if p.suffix == ".part"] == []
+        assert reaped == [None]
+    else:
+        assert error.__notes__ == ()
+        assert reaped == [-signal.SIGKILL]
 
 
 def test_encode_looks_for_the_encoder_first(
