@@ -976,7 +976,10 @@ _VIDEO_MARKUP = (
 )
 # The one line outside a pinned embed that may name an MP4: Getting Started's
 # command for the 2D clip, exactly as `_command_block()` in
-# tests/test_generated_assets.py writes it. Any other `.mp4` mention is refused.
+# tests/test_generated_assets.py writes it. The exemption is that literal line,
+# matched whole, on any scanned page and any number of times: this scan does
+# not tie it to Getting Started (the command-block test pins it there). Any
+# other line with video markup, an altered copy of this one included, is refused.
 _COMMAND_CLIP_LINE = "uv run demo-2d --video          # also → output/demo_2d.mp4"
 _DIV_CLOSE = re.compile(r"^:{3,}[ \t]*$")
 
