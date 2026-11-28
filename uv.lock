@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-17T21:46:28.880603Z"
+exclude-newer = "2026-11-19T19:15:53.596559Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -295,7 +295,7 @@ wheels = [
 
 [[package]]
 name = "clocks"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },

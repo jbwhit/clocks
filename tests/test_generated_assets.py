@@ -10,7 +10,7 @@ from statistics import median
 
 import pytest
 
-from clocks._replay import load_replay
+from clocks._replay import DEMOS, load_replay
 
 ROOT = Path(__file__).parents[1]
 ASSETS = ROOT / "assets"
@@ -398,36 +398,83 @@ def test_echolocation_animation_provenance() -> None:
 
 
 def test_readme_describes_the_site_and_the_commands_as_they_are() -> None:
-    """Only this catches the README claiming of the commands what is true only
-    of the site, or dropping the sentences that say what is committed."""
-    readme = " ".join((ROOT / "README.md").read_text().split())
+    """Only this catches the README's paragraphs on the commands and on what is
+    committed losing a sentence, or linking the site twice."""
+    readme = (ROOT / "README.md").read_text()
+    flat = " ".join(readme.split())
     for sentence in (
+        "Each command records its run, prints the truth and its final estimate "
+        "from the recording, and writes a replay archive and a PNG: the final "
+        "frame of the animation for six of them, the density figure for "
+        "`demo-density`.",
+        "The six animated demos also take `--video`, which writes the animation "
+        "as an MP4 and needs an FFmpeg encoder (`uv sync` provides one in a "
+        "checkout).",
+        "`--theme dark` draws the dark version, and `--output-dir` chooses the "
+        "directory (`output/` by default).",
+        "A run of one of the six without `--video` leaves an MP4 from an earlier "
+        "run where it is and says that it was not updated.",
         "The site animates six of the demos and draws the density figure, all "
         "from replay data",
         "The site's clips and posters are build products and are not committed.",
         "What is committed is replay data, `assets/replays/<demo>.npz`: what each "
         "packaged run produced, in numbers, tied to the code by tests of its "
         "inputs and of bounded summaries.",
-        "Six of the commands above still write GIFs, drawn by the earlier "
-        "animation code; `demo-density` writes a PNG.",
     ):
-        assert sentence in readme
-    assert "assets/demo_2d.gif" not in readme
-    assert "commits no rendered media" not in readme
+        assert sentence in flat
+    section = readme.split("## Run the demos", 1)[1].split("## Run tests", 1)[0]
+    assert section.count("](https://jbwhit.github.io/clocks/)") == 1
+    for stale in (
+        "still write GIFs",
+        "assets/demo_2d.gif",
+        "commits no rendered media",
+    ):
+        assert stale not in flat
 
 
 def test_the_commands_are_described_as_they_are() -> None:
-    """Only this catches the page implying that the commands produce the clips.
-
-    Pull request 4 replaces the sentence and this test.
-    """
+    """Only this catches the Reproducibility page describing the commands as they
+    were before pull request 4."""
     page = " ".join(_reproducibility_page().split())
     assert (
-        "`uv run demo-density` records the same configured scenario and draws its "
-        "result. The other six `uv run demo-*` commands run the same scenarios "
-        "again and still write GIFs, drawn by the earlier animation code and not "
-        "from these archives."
+        "Each `uv run demo-*` command records its configured scenario again and "
+        "writes its own archive and a PNG drawn from it: the final frame for the "
+        "six animated demos, the density figure for `demo-density`. With "
+        "`--video`, the six also write the clip, drawn as the site's are."
     ) in page
+    assert "still write GIFs" not in page
+    assert "records the same configured scenario and draws its result" not in page
+
+
+FENCE = "`" * 3
+
+
+def _command_block() -> str:
+    """The command list README and Getting Started both show (decision C14)."""
+    lines = [
+        f"uv run {name.replace('_', '-'):<25}# → output/{name}.npz, output/{name}.png"
+        for name in DEMOS
+    ]
+    lines.append(f"uv run {'demo-2d --video':<25}# also → output/demo_2d.mp4")
+    return (
+        "Seven demos. Each writes a replay archive and a PNG; the six animated\n"
+        "ones also write an MP4 with `--video`:\n\n"
+        f"{FENCE}bash\n" + "\n".join(lines) + f"\n{FENCE}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "relative", ["README.md", "site/reproduce/getting-started.qmd"]
+)
+def test_the_command_block_is_the_commands(relative: str) -> None:
+    """Only this catches a command list that still promises GIFs, offers
+    `--video` to the density demo, or names a file the commands do not write
+    other than an MP4; a Getting Started comment naming another MP4 it catches
+    with the stray-video scan, which reads video markup (`.mp4` and the like)
+    and nothing else."""
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    assert text.count(_command_block()) == 1
+    assert ".gif" not in text
 
 
 def _indent(line: str) -> int:
@@ -599,3 +646,157 @@ def test_the_earlier_seed_blocks_are_disclosed_with_their_records() -> None:
         assert f"]({_SPEC_URL}{relative})" in page, relative
         assert (ROOT / relative).is_file(), relative
         assert phrase in _normalised(relative), relative
+
+
+# The parts of the Architecture page this plan changes (decision C14): the
+# Visualization subgraph, the replay archive's node line in the Scenario tooling
+# subgraph, every edge to or from a node of the Visualization subgraph, the
+# replay archive or the demos (dotted edges included), and two sentences. Every
+# line of the diagram must be in one of the forms the parse below reads, so an
+# edge spelt another way cannot slip past the edge set. The rest of the
+# diagram's content is not pinned.
+ARCHITECTURE_VIS_SUBGRAPH = "\n".join(
+    (
+        '    subgraph vis["Visualization"]',
+        "        viz",
+        '        figures["_figures"]',
+        '        clips["_clips, _clip_*"]',
+        '        video["_video"]',
+        '        sitemedia["_site_media, _sources"]',
+        '        figstyle["_style, _fonts/"]',
+        "    end",
+    )
+)
+ARCHITECTURE_EDGES = {
+    ("viz", "figures"), ("viz", "clips"), ("viz", "echo"), ("viz", "replay"),
+    ("viz", "figstyle"), ("figures", "replay"), ("figures", "figstyle"),
+    ("clips", "figures"), ("clips", "replay"), ("clips", "video"),
+    ("clips", "figstyle"), ("sitemedia", "clips"), ("sitemedia", "replay"),
+    ("sitemedia", "video"), ("sitemedia", "figstyle"), ("replay", "api"),
+    ("replay", "config"), ("replay", "types"), ("echo", "figstyle"),
+    ("demos", "api"), ("demos", "scenario"), ("demos", "replay"),
+    ("demos", "figures"), ("demos", "clips"), ("demos", "video"),
+    ("demos", "figstyle"),
+}  # fmt: skip
+ARCHITECTURE_DOTTED_EDGES = {
+    ("console", "pyproject entry points", "demos"),
+    ("wrappers", "thin imports", "demos"),
+}
+ARCHITECTURE_REPLAY_NODE = '        replay["_replay"]'
+_CHANGED_NODES = {
+    "viz", "figures", "clips", "video", "sitemedia", "figstyle", "replay", "demos",
+}  # fmt: skip
+_EDGE = r"\s+(\w+) --> (\w+)"
+_DOTTED_EDGE = r'\s+(\w+) -\. "([^"]+)" \.-> (\w+)'
+_MERMAID_LINE_FORMS = (
+    r"(?:flowchart|graph) (?:TB|TD|BT|LR|RL)",  # the header
+    r"\s*",  # a blank line
+    r"\s*%%.*",  # a comment
+    r'\s+subgraph \w+\["[^"]+"\]',
+    r"\s+end",
+    r'\s+\w+(?:\["[^"]+"\])?',  # a node declaration
+    _DOTTED_EDGE,
+    _EDGE,
+)
+ARCHITECTURE_SENTENCES = (
+    "`viz` is the public facade over the private figure and clip modules "
+    "(`_figures`, `_echo_study` for the range-study figure, and `_clips` with "
+    "its `_clip_*` builders), the replay archive "
+    "(`_replay`) and the shared figure style (`_style`, with its bundled fonts); "
+    "`_video` encodes and checks the clips, and `_site_media` draws the site's "
+    "clips and posters before Quarto renders.",
+    "Modules whose names begin with an underscore, including `_support`, "
+    "`_scenarios`, `_echo_study`, `_replay`, `_figures`, `_clips` and `_demos`, "
+    "are internal; library callers import from `clocks`, and the figure, clip "
+    "and style names from `clocks.viz`.",
+)
+_NOT_MODULES = {"console", "wrappers", "end"}
+
+
+def _mermaid(page: str) -> str:
+    return page.split("```{mermaid}\n", 1)[1].split("\n```", 1)[0]
+
+
+def _diagram_modules(block: str) -> list[str]:
+    """Each module a node of ``block`` names: its label split on ``, ``."""
+    names = []
+    for line in block.splitlines():
+        match = re.fullmatch(r'\s+(\w+)(?:\["([^"]+)"\])?', line)
+        if match and match.group(1) not in _NOT_MODULES:
+            names += (match.group(2) or match.group(1)).split(", ")
+    return names
+
+
+def _subgraph_lines(block: str, name: str) -> list[str]:
+    """The lines between ``subgraph <name>[...]`` and its ``end``."""
+    lines = block.splitlines()
+    [start] = [
+        i for i, line in enumerate(lines) if line.startswith(f"    subgraph {name}[")
+    ]
+    end = lines.index("    end", start)
+    return lines[start + 1 : end]
+
+
+def _in_package(name: str) -> bool:
+    package = ROOT / "src" / "clocks"
+    if name.endswith("/"):
+        return (package / name.rstrip("/")).is_dir()
+    if name.endswith("/*"):
+        return (package / name.removesuffix("/*")).is_dir()
+    if name.endswith("*"):
+        return any(package.glob(f"{name}.py"))
+    return (package / f"{name}.py").is_file()
+
+
+def test_the_architecture_page_maps_the_drawing_modules_as_they_are() -> None:
+    """Only this catches the module map's visualization part or the demos'
+    imports drawn otherwise than this plan pins them, any node naming a
+    module the package does not have, or a diagram line in a form the edge
+    parse does not read (an edge spelt `demos-->viz`, say)."""
+    page = (ROOT / "site/reproduce/architecture.qmd").read_text(encoding="utf-8")
+    block = _mermaid(page)
+    unread = [
+        line
+        for line in block.splitlines()
+        if not any(re.fullmatch(form, line) for form in _MERMAID_LINE_FORMS)
+    ]
+    assert unread == []
+    assert block.count(ARCHITECTURE_VIS_SUBGRAPH) == 1
+    lines = block.splitlines()
+    declarations = [x for x in lines if re.fullmatch(r"\s+replay(?:\[.*)?", x)]
+    assert declarations == [ARCHITECTURE_REPLAY_NODE]
+    assert ARCHITECTURE_REPLAY_NODE in _subgraph_lines(block, "scenarios")
+    edges = {m.groups() for x in lines if (m := re.fullmatch(_EDGE, x))}
+    assert {e for e in edges if _CHANGED_NODES & set(e)} == ARCHITECTURE_EDGES
+    dotted = {m.groups() for x in lines if (m := re.fullmatch(_DOTTED_EDGE, x))}
+    changed = {e for e in dotted if _CHANGED_NODES & {e[0], e[2]}}
+    assert changed == ARCHITECTURE_DOTTED_EDGES
+    names = _diagram_modules(block)
+    assert "_figures" in names
+    assert [name for name in names if not _in_package(name)] == []
+    flat = " ".join(page.split())
+    for sentence in ARCHITECTURE_SENTENCES:
+        assert sentence in flat
+
+
+README_PACKAGE_ENTRIES = (
+    "types.py", "config.py", "results.py", "api.py", "physics.py", "noise.py",
+    "inference.py", "viz.py", "_style.py", "_support.py", "_replay.py",
+    "_figures.py", "_clips.py", "_video.py", "_site_media.py", "_scenarios.py",
+    "_echo_study.py", "_demos/",
+)  # fmt: skip
+
+
+def test_the_readme_structure_names_the_package_as_it_is() -> None:
+    """Only this catches the README's module list naming a file the package does
+    not have, or losing one it lists."""
+    lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    listing = [line for line in _block(lines, "src/clocks/") if line.strip()]
+    entries = tuple(line.split()[0] for line in listing)
+    assert entries == README_PACKAGE_ENTRIES
+    assert all((ROOT / "src" / "clocks" / entry).exists() for entry in entries)
+    viz_line = (
+        "    viz.py         Public facade over _figures, _clips, _echo_study, "
+        "_replay and _style"
+    )
+    assert viz_line in listing

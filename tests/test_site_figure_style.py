@@ -974,6 +974,13 @@ _VIDEO_MARKUP = (
     "{=html}",
     "{{< video",
 )
+# The one line outside a pinned embed that may name an MP4: Getting Started's
+# command for the 2D clip, exactly as `_command_block()` in
+# tests/test_generated_assets.py writes it. The exemption is that literal line,
+# matched whole, on any scanned page and any number of times: this scan does
+# not tie it to Getting Started (the command-block test pins it there). Any
+# other line with video markup, an altered copy of this one included, is refused.
+_COMMAND_CLIP_LINE = "uv run demo-2d --video          # also → output/demo_2d.mp4"
 _DIV_CLOSE = re.compile(r"^:{3,}[ \t]*$")
 
 
@@ -984,8 +991,9 @@ def _replay_embed_violations(
 
     Each embed's block must occur exactly once, the blocks in the table's
     order, each followed by its non-empty description div whose id occurs once;
-    with every pinned block removed, no line may hold video markup. Nothing is
-    said about what surrounds a block (see the module docstring).
+    with every pinned block removed, no line may hold video markup except
+    ``_COMMAND_CLIP_LINE``, matched whole, wherever it appears. Nothing is said
+    about what surrounds a block (see the module docstring).
     """
     blocks = [_embed_block(embed, page) for embed in embeds]
     messages: list[str] = []
@@ -1013,7 +1021,8 @@ def _replay_embed_violations(
     messages += [
         f"unpinned video markup: line {number}"
         for number, line in enumerate(remainder.split("\n"), start=1)
-        if any(marker in line.lower() for marker in _VIDEO_MARKUP)
+        if line != _COMMAND_CLIP_LINE
+        and any(marker in line.lower() for marker in _VIDEO_MARKUP)
     ]
     return messages
 
@@ -1220,6 +1229,30 @@ def _altered(pattern: str, new: str, count: int = 0) -> str:
             (_EMBED_2D,),
             ["unpinned video markup: line 1"],
             id="a_link_to_a_clip",
+        ),
+        pytest.param(
+            PAGE_TEXT + _COMMAND_CLIP_LINE + "\n",
+            (_EMBED_2D,),
+            [],
+            id="the_command_output_clip",
+        ),
+        pytest.param(
+            PAGE_TEXT + "uv run demo-2d --video   # also → output/demo_2d.mp4\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="the_command_line_altered",
+        ),
+        pytest.param(
+            PAGE_TEXT + "[clip](output/demo_2d.mp4)\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="a_link_to_an_output_clip",
+        ),
+        pytest.param(
+            PAGE_TEXT + "![clip](output/demo_2d.mp4)\n",
+            (_EMBED_2D,),
+            ["unpinned video markup: line 14"],
+            id="an_image_of_an_output_clip",
         ),
         pytest.param(
             PAGE_TEXT + '<iframe src="x.html"></iframe>\n',
@@ -1811,6 +1844,7 @@ _RENDERER_IMPORTS = frozenset(
         "clocks._figures",
         "clocks._video",
         "clocks._sources",
+        "clocks._notes",  # cleanup notes; it imports only the standard library
     }
 )
 

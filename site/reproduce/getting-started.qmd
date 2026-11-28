@@ -24,16 +24,18 @@ uv sync
 
 ## Run the demos
 
-Six animated demos plus the density figure:
+Seven demos. Each writes a replay archive and a PNG; the six animated
+ones also write an MP4 with `--video`:
 
 ```bash
-uv run demo-1d                  # → output/demo_1d.gif
-uv run demo-2d                  # → output/demo_2d.gif
-uv run demo-multi-mass          # → output/demo_multi_mass.gif
-uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.gif
-uv run demo-model-comparison    # → output/demo_model_comparison.gif
-uv run demo-echolocation-3d     # → output/demo_echolocation_3d.gif
-uv run demo-density             # → output/demo_density.png
+uv run demo-1d                  # → output/demo_1d.npz, output/demo_1d.png
+uv run demo-2d                  # → output/demo_2d.npz, output/demo_2d.png
+uv run demo-multi-mass          # → output/demo_multi_mass.npz, output/demo_multi_mass.png
+uv run demo-multi-mass-2d       # → output/demo_multi_mass_2d.npz, output/demo_multi_mass_2d.png
+uv run demo-model-comparison    # → output/demo_model_comparison.npz, output/demo_model_comparison.png
+uv run demo-density             # → output/demo_density.npz, output/demo_density.png
+uv run demo-echolocation-3d     # → output/demo_echolocation_3d.npz, output/demo_echolocation_3d.png
+uv run demo-2d --video          # also → output/demo_2d.mp4
 ```
 
 The echolocation range study behind the site page:
