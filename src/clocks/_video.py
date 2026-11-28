@@ -302,6 +302,9 @@ def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, 
     An exception from ``frames`` itself, or one raised while feeding or
     waiting (an interrupt, say), cancels the encode with ``_cancel`` and then
     propagates; see ``_cancel`` for what that does and does not guarantee.
+    The teardown of the standard-error file (its ``with`` block) is outside
+    that guarantee: an exception from it chains in the ordinary way, with the
+    original as its ``__context__``.
     """
     with tempfile.TemporaryFile() as errors:
         try:

@@ -94,7 +94,11 @@ def test_a_failed_step_is_a_note_and_never_raises(case: str) -> None:
 def test_a_left_behind_note_names_the_path_and_the_cause(
     failure: BaseException, expected: str
 ) -> None:
-    """Only this catches the note asserting the file *was* left behind (an
-    interrupt can land after the removal took effect), or naming no cause
-    for a bare interrupt, whose message is empty."""
+    """Pins the note's full format; for a failure that is not an interrupt
+    (``[with_a_message]``, a ``PermissionError``) only this does. The note
+    asserting the file *was* left behind (an interrupt can land after the
+    removal took effect), and a bare interrupt's cause dropped (its message is
+    empty), are caught here and by the tests the Task 7 rows for
+    ``left_behind`` name, among them
+    ``test_an_interrupted_cleanup_keeps_the_encoders_error[bare]``."""
     assert left_behind(Path("out/x.part"), failure) == expected

@@ -233,7 +233,7 @@ def test_a_failed_encode_ends_with_a_message_not_a_traceback(
 ) -> None:
     """Only this catches an encoder failure's message without the notes that
     say what was left behind; the failure reaching the user as a traceback it
-    catches with the test below."""
+    catches with the two tests below."""
 
     def failing(replay, path, *, theme="light", encoder=None):
         error = EncoderError("the encoder failed")
@@ -254,8 +254,10 @@ def test_a_failed_encode_ends_with_a_message_not_a_traceback(
 def test_a_failed_encode_says_that_nothing_was_saved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Only this catches a failed `--video` run that does not say its archive
-    and PNG were discarded with the clip, and how to get them."""
+    """Only this pins the text of the note that says a failed `--video` run's
+    archive and PNG were discarded with its clip, and how to get them (the
+    `NOTHING_SAVED` literal); a run that leaves the note out altogether it
+    catches with the malformed-notes test below."""
     old = {"npz": b"old archive", "png": b"old png", "mp4": b"old clip"}
     for suffix, data in old.items():
         (tmp_path / f"demo_1d.{suffix}").write_bytes(data)
