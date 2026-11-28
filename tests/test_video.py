@@ -726,7 +726,9 @@ def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
     monkeypatch.setattr(clocks._video.subprocess, "Popen", Failing)
     begun = time.monotonic()
     try:
-        with pytest.raises(type(error)) as raised:
+        # BaseException: a step's own interrupt that escaped would otherwise
+        # end the whole pytest session rather than fail this test.
+        with pytest.raises(BaseException) as raised:
             _run_encoder([sys.executable, "-c", _SLEEPING_CHILD], frames())
         elapsed = time.monotonic() - begun
         reaped = [process.returncode for process in started]

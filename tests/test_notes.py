@@ -19,7 +19,10 @@ def test_a_note_is_added_when_it_can_be_and_never_raises(case: str) -> None:
     if case == "tuple":
         error.__notes__ = ()
 
-    add_note(error, "the note")
+    try:
+        add_note(error, "the note")
+    except BaseException as escaped:  # an escaped interrupt would end the session
+        pytest.fail(f"add_note raised {escaped!r}")
 
     expected = {"list": ["the note"], "tuple": (), "interrupted": None}[case]
     assert getattr(error, "__notes__", None) == expected
