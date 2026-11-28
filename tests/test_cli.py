@@ -280,6 +280,29 @@ def test_a_failed_encode_says_that_nothing_was_saved(
     assert {s: (tmp_path / f"demo_1d.{s}").read_bytes() for s in old} == old
 
 
+@pytest.mark.parametrize("notes", [None, "one note"])
+def test_a_failed_encode_with_notes_not_a_list_still_ends_with_a_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], notes
+) -> None:
+    """Only this catches `run_command` failing, with a traceback, or printing
+    a note per character, when an `EncoderError`'s `__notes__` is not a list or
+    tuple: such notes are treated as none."""
+
+    def failing(replay, path, *, theme="light", encoder=None):
+        error = EncoderError("the encoder failed")
+        error.__notes__ = notes
+        raise error
+
+    monkeypatch.setattr(common, "find_encoder", lambda: "the-encoder")
+    monkeypatch.setattr(common, "render_clip", failing)
+    with pytest.raises(SystemExit) as raised:
+        _module("demo_1d").main(["--output-dir", ".", "--video", *FAST])
+    assert raised.value.code == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[-2].endswith(": error: the encoder failed")
+    assert lines[-1].endswith(f": note: {common.NOTHING_SAVED}")
+
+
 def _plain(name: str) -> str:
     return name.replace("₁", "1").replace("₂", "2")
 

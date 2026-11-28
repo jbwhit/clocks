@@ -492,7 +492,9 @@ def test_a_failed_cleanup_keeps_the_encoders_error(
         encode(_small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e")
 
     notes = getattr(raised.value, "__notes__", [])
-    assert any(made[0].name in note and "was left behind" in note for note in notes)
+    assert any(
+        made[0].name in note and "may have been left behind" in note for note in notes
+    )
 
 
 def test_a_cleanup_note_that_cannot_be_added_keeps_the_encoders_error(
@@ -516,12 +518,27 @@ def test_a_cleanup_note_that_cannot_be_added_keeps_the_encoders_error(
     assert error.__notes__ == ()
 
 
+@pytest.mark.parametrize(
+    ("interrupt", "cause"),
+    [
+        pytest.param(
+            KeyboardInterrupt("during the unlink"),
+            "KeyboardInterrupt: during the unlink",
+            id="with_a_message",
+        ),
+        pytest.param(KeyboardInterrupt(), "KeyboardInterrupt: ", id="bare"),
+    ],
+)
 def test_an_interrupted_cleanup_keeps_the_encoders_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    interrupt: KeyboardInterrupt,
+    cause: str,
 ) -> None:
     """Only this catches an interrupt while `encode` removes its temporary
     file replacing the error it is cleaning up after; the interrupt becomes
-    the note instead."""
+    the note instead, naming its type even when it has no message
+    (``[bare]``, as a real SIGINT raises it)."""
     error = ValueError("drawing failed")
 
     def stand_in(command, frames) -> tuple[int, str]:
@@ -532,7 +549,7 @@ def test_an_interrupted_cleanup_keeps_the_encoders_error(
 
     def interrupted(self: Path, missing_ok: bool = False) -> None:
         if self.name.endswith(".part"):
-            raise KeyboardInterrupt("during the unlink")
+            raise interrupt
         real_unlink(self, missing_ok=missing_ok)
 
     monkeypatch.setattr(clocks._video, "_run_encoder", stand_in)
@@ -544,7 +561,7 @@ def test_an_interrupted_cleanup_keeps_the_encoders_error(
 
     assert raised.value is error
     [note] = error.__notes__
-    assert note.endswith(".part was left behind: during the unlink")
+    assert note.endswith(f".part may have been left behind: {cause}")
 
 
 # Reads its input to the end, then stays alive: an encoder still finishing.
@@ -860,8 +877,9 @@ def test_the_default_reap_wait_is_a_short_bound() -> None:
 
 
 def test_feed_writes_every_byte_of_a_frame_across_partial_writes() -> None:
-    """Only this catches a frame written with one ``write`` call, whose
-    partial write would drop the rest of the frame."""
+    """Catches a frame written with one ``write`` call, whose partial write
+    would drop the rest of the frame (with the cut-off-frame test, which
+    the same edit fails)."""
 
     class Trickle:
         def __init__(self) -> None:

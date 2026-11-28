@@ -317,13 +317,18 @@ def test_a_directory_at_a_staged_name_stops_the_run_before_staging(
     capsys: pytest.CaptureFixture[str],
     suffix: str,
 ) -> None:
-    """Only this catches the run not unlinking an output's staged name (the
-    archive's or the clip's), or unlinking the clip's only after it has staged
-    the archive and PNG: a directory there must stop the run before anything
-    is staged or drawn (each of those steps is a spy that fails the test).
-    Only a directory shows it: a stale file or link at a staged name is
-    replaced anyway, by the ``os.replace`` that ``save_replay`` and ``encode``
-    end with."""
+    """Catches the run not unlinking an output's staged name (the archive's,
+    the PNG's or the clip's; alone for the archive's and the clip's, and with
+    the leftover test for the PNG's, per the Task 7 rows), or unlinking one
+    only after an
+    earlier output has been staged (the PNG's after the archive, the clip's
+    after the PNG): a directory there must stop the run before anything is
+    staged or drawn (each of those steps is a spy that fails the test). Only a
+    directory shows it for the archive and the clip: a stale file or link at
+    their staged names is replaced anyway, by the ``os.replace`` that
+    ``save_replay`` and ``encode`` end with. The PNG's staged file is created
+    with ``open("xb")``, which a stale file or link would make fail; that is
+    the leftover test's case, and the directory here is this one's."""
     _existing_set(tmp_path)
     staged_dir = tmp_path / f"{STAGED}demo_1d.{suffix}"
     staged_dir.mkdir()
@@ -597,7 +602,9 @@ def test_an_interrupted_removal_keeps_the_error_and_removes_the_rest(
 
     assert raised.value is error
     staged_png = tmp_path / f"{STAGED}demo_1d.png"
-    assert error.__notes__ == [f"{staged_png} was left behind: during the removal"]
+    assert error.__notes__ == [
+        f"{staged_png} may have been left behind: KeyboardInterrupt: during the removal"
+    ]
     assert _staged_names(tmp_path) == [staged_png.name]
     assert _contents(tmp_path) == OLD
 

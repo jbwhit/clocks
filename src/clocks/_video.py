@@ -21,10 +21,11 @@ import struct
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from functools import partial
 from pathlib import Path
 from typing import IO, NamedTuple
 
-from clocks._notes import attempt
+from clocks._notes import attempt, left_behind
 
 FPS = 20
 
@@ -179,7 +180,7 @@ def encode(
         attempt(
             error,
             lambda: temporary.unlink(missing_ok=True),
-            lambda failure: f"{temporary} was left behind: {failure}",
+            partial(left_behind, temporary),
         )
         raise
     return written
@@ -333,20 +334,20 @@ def _cancel(process: subprocess.Popen, error: BaseException) -> None:
     The encode is abandoned and its clip discarded, so the encoder is killed
     outright. Nothing here can block without limit: the input is unbuffered,
     so its close flushes nothing, and the reap waits at most ``_REAP_WAIT``
-    seconds. Each step runs through ``clocks._notes.attempt``: one that fails,
-    a second interrupt included, never replaces ``error`` and never stops the
-    steps after it, and is noted on it, with what it leaves, when a note can
-    be added. If the kill fails, the encoder is left running; if the close
-    fails, its input may stay open; if the reap times out or fails, it is left
-    unreaped. A surviving encoder may still create its temporary file after
-    ``encode`` has tried to remove it.
+    seconds (only a describer that itself blocks could delay it). Each step
+    runs through ``clocks._notes.attempt``, with its describer built at
+    import, so nothing is called before each step: an exception raised by a
+    step (an interrupt included), or while its note is built or added, never
+    replaces ``error`` and never stops the steps after it, and is noted on it,
+    with what it leaves, when a note can be added. An asynchronous interrupt
+    delivered between the steps, outside those calls, is not excluded: it
+    propagates, with ``error`` as its ``__context__``. If the kill fails, the
+    encoder is left running; if the close fails, its input may stay open; if
+    the reap times out or fails, it is left unreaped. A surviving encoder may
+    still create its temporary file after ``encode`` has tried to remove it.
     """
-    attempt(error, process.kill, _step_note("could not kill it", _RUNNING))
-    attempt(
-        error,
-        process.stdin.close,
-        _step_note("could not close its input", "its input may still be open"),
-    )
+    attempt(error, process.kill, _KILL_NOTE)
+    attempt(error, process.stdin.close, _CLOSE_NOTE)
     attempt(error, lambda: process.wait(timeout=_REAP_WAIT), _reap_note)
 
 
@@ -368,7 +369,13 @@ def _reap_note(failure: BaseException) -> str:
             f"cancelling the encoder, it was not reaped within {_REAP_WAIT:g} s: "
             f"{_RUNNING}"
         )
-    return _step_note("could not reap it", "it may be left unreaped")(failure)
+    return _REAP_FAILED_NOTE(failure)
+
+
+# Built once, at import: in _cancel nothing is called before each attempt.
+_KILL_NOTE = _step_note("could not kill it", _RUNNING)
+_CLOSE_NOTE = _step_note("could not close its input", "its input may still be open")
+_REAP_FAILED_NOTE = _step_note("could not reap it", "it may be left unreaped")
 
 
 def _feed(pipe: IO[bytes], frames: Iterable[bytes]) -> bool:

@@ -776,7 +776,9 @@ def test_an_interrupted_cleanup_keeps_the_write_error(
 
     assert raised.value is error
     [note] = error.__notes__
-    assert note.endswith(".tmp was left behind: during the unlink")
+    assert note.endswith(
+        ".tmp may have been left behind: KeyboardInterrupt: during the unlink"
+    )
 
 
 @pytest.mark.parametrize("name", EACH_FIXTURE)

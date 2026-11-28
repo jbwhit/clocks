@@ -14,7 +14,7 @@ from matplotlib.figure import Figure
 
 from clocks._clips import BUILDERS, render_clip
 from clocks._figures import trace_decimals
-from clocks._notes import attempt
+from clocks._notes import attempt, left_behind
 from clocks._replay import Replay, save_replay
 from clocks._style import THEMES, Palette, save_png, style
 from clocks._video import EncoderError, EncoderNotFound, find_encoder, probe
@@ -106,6 +106,8 @@ def run_command(
         run(args)
     except EncoderError as error:
         notes = getattr(error, "__notes__", ())
+        if not isinstance(notes, (list, tuple)):
+            notes = ()  # malformed (None, a string): print no notes, not fail
         lines = [
             f"error: {error}",
             *(f"note: {note}" for note in notes),
@@ -166,10 +168,13 @@ def write_outputs(
       them leaves the files renamed before it in place, beside older outputs
       (a mixed set) or, where there were none, alone (a partial set).
     - On a failure that raises through here, removing the staged files is
-      best-effort: every one is tried, and a removal that fails is a note on
-      the error (when a note can be added; it never replaces the error). A
-      process killed outright removes nothing; its ``STAGED`` names are
-      unlinked by the next run that stages them.
+      best-effort: every one is tried, and an exception raised by a removal,
+      or while its note is built or added, is a note on the error when one
+      can be added and never replaces it. An asynchronous interrupt delivered
+      between removals, outside those calls, is not excluded: it propagates,
+      with the original error as its ``__context__``. A process killed
+      outright removes nothing; its ``STAGED`` names are unlinked by the next
+      run that stages them.
     - The randomly named temporaries that ``encode`` and ``save_replay``
       write beside the staged names (``.staged-<demo>.mp4.<hex>.part``,
       ``..staged-<demo>.npz.<random>.tmp``) can be left too: by a process
@@ -250,15 +255,13 @@ def _check_clip(path: Path, sent: int, encoder: str) -> None:
 
 
 def _remove(paths: list[Path], error: BaseException) -> None:
-    """Try to remove each of ``paths``; a removal that fails, an interrupt
-    included, is a note on ``error`` (``clocks._notes.attempt``)."""
+    """Try to remove each of ``paths``; an exception raised by a removal, an
+    interrupt included, is a note on ``error`` and does not stop the rest
+    (``clocks._notes.attempt``). An asynchronous interrupt between removals
+    is not excluded (see ``attempt``)."""
     for path in paths:
         attempt(
             error,
             partial(path.unlink, missing_ok=True),
-            partial(_left_behind, path),
+            partial(left_behind, path),
         )
-
-
-def _left_behind(path: Path, failure: BaseException) -> str:
-    return f"{path} was left behind: {failure}"
