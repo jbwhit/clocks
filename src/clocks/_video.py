@@ -6,10 +6,11 @@ dwell asks, at ``FPS`` frames a second. The encoder is FFmpeg: the binary that
 library), else ``ffmpeg`` on ``PATH``. ``probe`` runs the same binary as a
 decoder, since the bundle has no ``ffprobe``, and reads its report.
 
-Only the standard library is imported at module level, so ``clocks.viz`` still
-imports from a wheel installed without the encoder. The two functions
-``_run_encoder`` and ``_run_decoder`` are the only places a process is started;
-tests replace them to check arguments and failure handling.
+Only the standard library, and ``clocks._notes`` (which imports nothing), are
+imported at module level, so ``clocks.viz`` still imports from a wheel installed
+without the encoder. The two functions ``_run_encoder`` and ``_run_decoder``
+are the only places a process is started; tests replace them to check
+arguments and failure handling.
 """
 
 import os
@@ -23,9 +24,14 @@ from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import IO, NamedTuple
 
+from clocks._notes import add_note
+
 FPS = 20
 
 _TAIL_LINES = 20
+
+# Seconds a cancelled encoder, already sent SIGKILL, is given to be reaped.
+_REAP_WAIT = 5.0
 
 
 class EncoderNotFound(RuntimeError):
@@ -172,7 +178,7 @@ def encode(
         try:
             temporary.unlink(missing_ok=True)
         except OSError as cleanup_error:
-            error.add_note(f"{temporary} was left behind: {cleanup_error}")
+            add_note(error, f"{temporary} was left behind: {cleanup_error}")
         raise
     return written
 
@@ -278,31 +284,26 @@ def _tail(text: str) -> str:
 def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, str]:
     """Pipe ``frames`` to ``command``; return its exit status and standard error.
 
-    A broken pipe means the read end of the encoder's input closed; the
-    encoder may still be running, and its exit status need not say why.
-    Writing stops, the encoder is waited for, and its status is returned (a
-    status of 0 raises, below). Its input is closed before it is waited for.
+    The encoder's input is an unbuffered pipe: every byte is written by
+    ``_feed`` itself, so closing it flushes nothing and can neither block nor
+    report a broken pipe. A write that observes a broken pipe has found the
+    read end closed; the encoder may still be running, and its exit status
+    need not say why. Writing stops, the input is closed, the encoder is
+    waited for, and its status is returned. An encoder that exits 0 after a
+    broken pipe raises ``EncoderError``; one that exits 0 having taken every
+    byte without a broken pipe is trusted here, and only a decode of the file
+    can say whether it holds every frame. An encoder that cannot be started
+    at all raises ``EncoderError`` naming it. Standard error goes to a file,
+    so a chatty encoder cannot block.
 
     An exception from ``frames`` itself, or one raised while feeding or
-    waiting (an interrupt, say), cancels the encode (``_cancel``): the encoder
-    is killed, its input closed and the process reaped, and then the exception
-    propagates. That holds unless a cleanup step itself fails (``kill()``
-    raising, a second interrupt during the reap): the original exception
-    still propagates, with a note when one can be added, and the encoder may
-    then be unreaped with its input open. Only then can a caller's cleanup race
-    it: a surviving encoder can create its temporary file after ``encode`` has
-    tried to remove it. Standard error goes to a file, so a chatty encoder
-    cannot block. An
-    encoder that cannot be started at all raises ``EncoderError`` naming it.
-    An encoder that exits 0 after a broken pipe, on a write or on the close,
-    raises ``EncoderError``; an encoder that exits 0 having let every write
-    succeed is trusted here, and only a decode of the file can say whether it
-    holds every frame.
+    waiting (an interrupt, say), cancels the encode with ``_cancel`` and then
+    propagates; see ``_cancel`` for what that does and does not guarantee.
     """
     with tempfile.TemporaryFile() as errors:
         try:
             process = subprocess.Popen(
-                list(command), stdin=subprocess.PIPE, stderr=errors
+                list(command), stdin=subprocess.PIPE, stderr=errors, bufsize=0
             )
         except OSError as error:
             raise EncoderError(
@@ -327,12 +328,14 @@ def _run_encoder(command: Sequence[str], frames: Iterable[bytes]) -> tuple[int, 
 def _cancel(process: subprocess.Popen, error: BaseException) -> None:
     """Kill ``process``, close its input and reap it, before ``error`` propagates.
 
-    The encode is being abandoned and its clip discarded, so the encoder is
-    killed outright: SIGKILL cannot be ignored, so neither the close (whose
-    flush into a dead reader raises a broken pipe at once) nor the wait
-    (which returns as soon as the kill lands) can block for long. Each step
-    is best-effort: one that raises, a second interrupt included, does not
-    replace ``error`` but is recorded as a note on it, if a note can be added.
+    The encode is abandoned and its clip discarded, so the encoder is killed
+    outright. Nothing here can block without limit: the input is unbuffered,
+    so its close flushes nothing, and the reap waits at most ``_REAP_WAIT``
+    seconds. Each step is best-effort, and one that fails, a second interrupt
+    included, is recorded as a note on ``error`` (``clocks._notes.add_note``)
+    and never replaces it. If the kill fails, the encoder is left running; if
+    the reap times out or fails, it is left unreaped: either way it may still
+    create its temporary file after ``encode`` has tried to remove it.
     """
     try:
         process.kill()
@@ -340,53 +343,56 @@ def _cancel(process: subprocess.Popen, error: BaseException) -> None:
         _note(error, "could not kill it", step_error)
     try:
         process.stdin.close()
-    except OSError:
-        pass  # a broken pipe: the reader is gone, as intended
     except BaseException as step_error:
         _note(error, "could not close its input", step_error)
     try:
-        process.wait()
+        process.wait(timeout=_REAP_WAIT)
+    except subprocess.TimeoutExpired:
+        add_note(
+            error,
+            f"cancelling the encoder, it was not reaped within {_REAP_WAIT:g} s: "
+            "it may still be running",
+        )
     except BaseException as step_error:
         _note(error, "could not reap it", step_error)
 
 
 def _note(error: BaseException, what: str, step_error: BaseException) -> None:
-    """Add a note on ``error`` about a failed cleanup step, if one can be added
-    (``add_note`` raises when ``__notes__`` is not a list)."""
-    try:
-        error.add_note(
-            f"cancelling the encoder, {what}: {type(step_error).__name__}: "
-            f"{step_error}; it may be unreaped, with its input open"
-        )
-    except Exception:
-        pass  # the original error is what the caller must see, note or not
+    add_note(
+        error,
+        f"cancelling the encoder, {what}: {type(step_error).__name__}: "
+        f"{step_error}; it may still be running",
+    )
 
 
 def _feed(pipe: IO[bytes], frames: Iterable[bytes]) -> bool:
-    """Write each frame to ``pipe`` and close it; return whether every write and
-    the close succeeded with no broken pipe seen.
+    """Write every byte of each frame to the unbuffered ``pipe``, then close it;
+    return whether every write went through with no broken pipe seen.
 
     ``True`` does not show that the encoder read the frames: a process that
-    exits without reading can still let every write and the close succeed.
-
-    A write, or the close that flushes the buffer, that observes a broken pipe
-    has found the read end closed (the encoder may still be running, and its
-    exit status need not say why): writing stops and ``False`` is returned.
-    Only a write or the close can break the pipe here: an exception raised
-    while taking the next frame, a ``BrokenPipeError`` included, is the
-    caller's.
+    exits without reading can still let every write succeed. A write may take
+    only part of a frame, so each frame is written until none of it is left;
+    a write that takes nothing (``None`` or 0) raises ``EncoderError``. A write
+    that observes a broken pipe has found the read end closed: writing stops
+    and ``False`` is returned. Only a write can observe one here: the close
+    flushes nothing, and an exception raised while taking the next frame, a
+    ``BrokenPipeError`` included, is the caller's.
     """
     complete = True
     for frame in frames:
+        view = memoryview(frame)
         try:
-            pipe.write(frame)
+            while view:
+                taken = pipe.write(view)
+                if not taken:
+                    raise EncoderError(
+                        f"the encoder's input took no bytes of a frame ({taken!r})"
+                    )
+                view = view[taken:]
         except BrokenPipeError:
             complete = False
             break  # the read end closed; the exit status need not say why
-    try:
-        pipe.close()
-    except BrokenPipeError:
-        complete = False  # buffered frames were lost at the flush
+    pipe.close()
     return complete
 
 

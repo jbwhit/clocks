@@ -13,6 +13,7 @@ from matplotlib.figure import Figure
 
 from clocks._clips import BUILDERS, render_clip
 from clocks._figures import trace_decimals
+from clocks._notes import add_note
 from clocks._replay import Replay, save_replay
 from clocks._style import THEMES, Palette, save_png, style
 from clocks._video import EncoderError, EncoderNotFound, find_encoder, probe
@@ -164,12 +165,16 @@ def write_outputs(
       them leaves the files renamed before it in place, beside older outputs
       (a mixed set) or, where there were none, alone (a partial set).
     - On a failure that raises through here, removing the staged files is
-      best-effort: a removal that fails is a note on the error. A process
-      killed outright removes nothing; its ``STAGED`` names are unlinked by
-      the next run that stages them, but the randomly named temporaries that
-      ``encode`` and ``save_replay`` write beside them
-      (``.staged-<demo>.mp4.<hex>.part``, ``..staged-<demo>.npz.<random>.tmp``)
-      stay, and no later run removes them.
+      best-effort: every one is tried, and a removal that fails is a note on
+      the error (when a note can be added; it never replaces the error). A
+      process killed outright removes nothing; its ``STAGED`` names are
+      unlinked by the next run that stages them.
+    - The randomly named temporaries that ``encode`` and ``save_replay``
+      write beside the staged names (``.staged-<demo>.mp4.<hex>.part``,
+      ``..staged-<demo>.npz.<random>.tmp``) can be left too: by a process
+      killed outright, by their own removal failing (a note says so), or by
+      an encoder that outlived a failed cancellation and wrote its file late.
+      No later run removes them.
 
     Nothing is printed until every rename is made. For a clip demo run without
     ``encoder``, an entry at ``<demo>.mp4`` is kept; a line says so unless it
@@ -249,4 +254,4 @@ def _remove(paths: list[Path], error: BaseException) -> None:
         try:
             path.unlink(missing_ok=True)
         except OSError as cleanup_error:
-            error.add_note(f"{path} was left behind: {cleanup_error}")
+            add_note(error, f"{path} was left behind: {cleanup_error}")

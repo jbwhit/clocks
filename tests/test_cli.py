@@ -115,8 +115,9 @@ def test_demo_main_writes_its_archive_and_png(
 
 
 def test_the_default_run_writes_into_output(tmp_path: Path) -> None:
-    """One of the two tests that start from a missing directory (decision C15):
-    only this catches a default output directory other than `output/`."""
+    """One of the two tests that start from a missing directory (decision C15).
+    A default output directory other than `output/` it catches with
+    `test_demo_parser_defaults` (the Task 7 row for that default)."""
     assert _module("demo_1d").main(FAST) == 0
     assert [p.name for p in tmp_path.iterdir()] == ["output"]
     names = sorted(p.name for p in (tmp_path / "output").iterdir())

@@ -23,6 +23,7 @@ import numpy as np
 import scipy
 from numpy.typing import NDArray
 
+from clocks._notes import add_note
 from clocks.api import build_particle_filter, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.types import ClockArray, MassConfig, Observation
@@ -155,7 +156,7 @@ def _write_archive(
         try:
             temporary.unlink(missing_ok=True)
         except OSError as cleanup_error:
-            error.add_note(f"{temporary} was left behind: {cleanup_error}")
+            add_note(error, f"{temporary} was left behind: {cleanup_error}")
         raise
 
 

@@ -1,4 +1,5 @@
 import ast
+import io
 import os
 import signal
 import struct
@@ -10,6 +11,7 @@ import tomllib
 import types
 from collections.abc import Iterator
 from pathlib import Path
+from typing import IO
 
 import numpy as np
 import pytest
@@ -19,6 +21,7 @@ from clocks._video import (
     EncoderError,
     EncoderNotFound,
     StreamInfo,
+    _feed,
     _run_encoder,
     box_order,
     dwell_frames,
@@ -180,11 +183,15 @@ def _module_level_imports(tree: ast.Module) -> Iterator[str]:
 
 
 def test_video_module_imports_only_the_standard_library() -> None:
+    """The one module of the package it imports, ``clocks._notes``, imports
+    nothing at all, so a wheel without the encoder still imports it."""
     source = (ROOT / "src" / "clocks" / "_video.py").read_text()
     names = list(_module_level_imports(ast.parse(source)))
     assert names, "no module-level import was found"
     outside = [n for n in names if n.split(".")[0] not in sys.stdlib_module_names]
-    assert outside == []
+    assert outside == ["clocks._notes"]
+    notes = (ROOT / "src" / "clocks" / "_notes.py").read_text()
+    assert list(_module_level_imports(ast.parse(notes))) == []
 
 
 def test_the_encoder_command_is_the_designs(
@@ -341,10 +348,9 @@ def test_an_error_while_drawing_leaves_no_clip(
 
 
 class _Pipe:
-    def __init__(self, calls: list[str], break_write: bool, break_close: bool):
+    def __init__(self, calls: list[str], break_write: bool):
         self.calls = calls
         self.break_write = break_write
-        self.break_close = break_close
         self.writes = 0
 
     def write(self, data: bytes) -> int:
@@ -356,14 +362,12 @@ class _Pipe:
 
     def close(self) -> None:
         self.calls.append("close")
-        if self.break_close:
-            raise BrokenPipeError("the encoder has exited")
 
 
-def _process_class(calls: list[str], *, status: int, break_write, break_close):
+def _process_class(calls: list[str], *, status: int, break_write: bool):
     class Process:
         def __init__(self, *args, **kwargs) -> None:
-            self.stdin = _Pipe(calls, break_write, break_close)
+            self.stdin = _Pipe(calls, break_write)
 
         def wait(self, timeout: float | None = None) -> int:
             calls.append("wait")
@@ -394,29 +398,26 @@ def _frames_then(error: BaseException | None) -> Iterator[bytes]:
 
 
 @pytest.mark.parametrize(
-    ("break_write", "break_close", "error"),
+    ("break_write", "error"),
     [
-        pytest.param(False, False, None, id="success"),
-        pytest.param(True, False, None, id="write_breaks"),
-        pytest.param(False, True, None, id="close_breaks"),
-        pytest.param(True, True, None, id="both_break"),
-        pytest.param(False, False, _DRAWING_FAILED, id="producer_raises"),
-        pytest.param(False, False, _CALLERS_OWN, id="producer_raises_broken_pipe"),
+        pytest.param(False, None, id="success"),
+        pytest.param(True, None, id="write_breaks"),
+        pytest.param(False, _DRAWING_FAILED, id="producer_raises"),
+        pytest.param(False, _CALLERS_OWN, id="producer_raises_broken_pipe"),
     ],
 )
 def test_run_encoder_reaps_the_process(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
     break_write: bool,
-    break_close: bool,
     error: BaseException | None,
 ) -> None:
+    """The input's close cannot break the pipe: it is unbuffered, so the
+    close flushes nothing (a broken pipe surfaces on a write)."""
     case = request.node.callspec.id
     calls: list[str] = []
     status = 0 if case == "success" else 1
-    process = _process_class(
-        calls, status=status, break_write=break_write, break_close=break_close
-    )
+    process = _process_class(calls, status=status, break_write=break_write)
     monkeypatch.setattr(clocks._video.subprocess, "Popen", process)
 
     if error is not None:
@@ -438,26 +439,16 @@ def test_run_encoder_reaps_the_process(
     assert calls[-1] == "wait"
 
 
-@pytest.mark.parametrize(
-    ("break_write", "break_close"),
-    [
-        pytest.param(True, False, id="write_breaks"),
-        pytest.param(False, True, id="close_breaks"),
-    ],
-)
+@pytest.mark.parametrize("break_write", [pytest.param(True, id="write_breaks")])
 def test_an_encoder_that_stops_reading_early_is_an_error(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    break_write: bool,
-    break_close: bool,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, break_write: bool
 ) -> None:
     """Only this catches a partial clip moved into place by an encoder that
-    exited 0 after its input broke, on a write or only on the final close."""
+    exited 0 after its input broke on a write. The close cannot break it: the
+    input is unbuffered, so the close flushes nothing."""
     (tmp_path / "clip.mp4").write_bytes(b"old")
     calls: list[str] = []
-    base = _process_class(
-        calls, status=0, break_write=break_write, break_close=break_close
-    )
+    base = _process_class(calls, status=0, break_write=break_write)
 
     class PartialWriter(base):
         def __init__(self, command, *args, **kwargs) -> None:
@@ -498,6 +489,27 @@ def test_a_failed_cleanup_keeps_the_encoders_error(
 
     notes = getattr(raised.value, "__notes__", [])
     assert any(made[0].name in note and "was left behind" in note for note in notes)
+
+
+def test_a_cleanup_note_that_cannot_be_added_keeps_the_encoders_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches `encode`'s cleanup note replacing the error when that
+    error's ``__notes__`` is not a list (``add_note`` raises)."""
+    error = ValueError("drawing failed")
+    error.__notes__ = ()
+
+    def stand_in(command, frames) -> tuple[int, str]:
+        Path(command[-1]).mkdir()  # removing a directory with unlink() raises
+        raise error
+
+    monkeypatch.setattr(clocks._video, "_run_encoder", stand_in)
+
+    with pytest.raises(ValueError) as raised:
+        encode(_small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e")
+
+    assert raised.value is error
+    assert error.__notes__ == ()
 
 
 # Reads its input to the end, then stays alive: an encoder still finishing.
@@ -576,14 +588,15 @@ def _fill(fd: int) -> None:
         os.set_blocking(fd, True)
 
 
-def test_a_cancelled_encode_with_unflushed_input_ends_promptly(
+def test_a_cancelled_encode_with_a_full_pipe_ends_promptly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Only this catches the cancellation closing the encoder's input before it
-    kills it, or leaving the input open. Here the pipe is full, the child never
-    reads and ignores SIGTERM, and the last frame is still in the writer's
-    buffer, so a close before the kill blocks until something kills the child
-    (a watchdog, after 10 s, which must not have to)."""
+    """Only this catches the cancellation leaving the encoder's input open, or
+    the input buffered (a close would then flush into the full pipe).
+    Here the pipe is full, the child never reads and ignores SIGTERM, and the
+    producer then fails: the encoder is killed and reaped within a few
+    seconds (a watchdog, after 10 s, must not have to), with no note, since
+    nothing in the cleanup failed."""
     ready = tmp_path / "ready"
     started: list[subprocess.Popen] = []
     error = ValueError("drawing failed")
@@ -598,8 +611,8 @@ def test_a_cancelled_encode_with_unflushed_input_ends_promptly(
         while not ready.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
         _fill(started[0].stdin.fileno())
-        yield b"x" * 16  # stays in the writer's buffer: the pipe is full
         raise error
+        yield b""  # a generator
 
     killed_by_watchdog: list[int] = []
 
@@ -626,41 +639,72 @@ def test_a_cancelled_encode_with_unflushed_input_ends_promptly(
                 process.wait()
 
     assert raised.value is error
+    assert getattr(error, "__notes__", []) == []
     assert killed_by_watchdog == []
     assert elapsed < 5
     [process] = started
     assert process.returncode == -signal.SIGKILL
     assert process.stdin.closed
+    # Unbuffered, so no close can flush (and block on) frames left in a buffer.
+    assert type(process.stdin) is io.FileIO
 
 
-@pytest.mark.parametrize(
-    "case", ["kill_raises", "second_interrupt", "notes_not_a_list"]
+class _CloseRaises:
+    """The encoder's input, whose ``close`` closes it and then raises."""
+
+    def __init__(self, pipe: IO[bytes], error: BaseException) -> None:
+        self.pipe, self.error = pipe, error
+
+    def write(self, data) -> int | None:
+        return self.pipe.write(data)
+
+    def close(self) -> None:
+        self.pipe.close()
+        raise self.error
+
+
+_CANCEL_CASES = (
+    "kill_fails",
+    "kill_interrupted",
+    "kill_raises",
+    "close_raises",
+    "reap_times_out",
+    "second_interrupt",
+    "notes_not_a_list",
 )
+
+
+@pytest.mark.parametrize("case", _CANCEL_CASES)
 def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
     monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
-    """Only this catches a cleanup step's own exception replacing the error that
-    cancelled the encode: ``kill()`` raising something other than an
-    ``OSError`` (``[kill_raises]``), a second interrupt while reaping
-    (``[second_interrupt]``), or the note itself failing because the error's
-    ``__notes__`` is not a list (``[notes_not_a_list]``, where ``kill()``
-    raises an ``OSError``)."""
+    """Only this catches a cleanup step's own exception replacing the error
+    that cancelled the encode, or a failed step blocking the cleanup. Each
+    case fails one step: ``kill()`` raising without killing (the reap then
+    times out, within a bound), raising an interrupt, or raising a non-OSError;
+    the close raising a non-OSError; the reap timing out; a second interrupt
+    while reaping; and a note that cannot be added (``__notes__`` not a list).
+    The reap waits ``_REAP_WAIT`` seconds, patched to 0.2."""
     real_wait = subprocess.Popen.wait  # the patch below replaces the class
     started: list[subprocess.Popen] = []
-    kill_error = {
-        "kill_raises": RuntimeError("kill failed"),
-        "notes_not_a_list": PermissionError("kill refused"),
-    }.get(case)
 
     class Failing(subprocess.Popen):
         def __init__(self, args, **kwargs) -> None:
             super().__init__(args, **kwargs)
             started.append(self)
+            if case == "close_raises":
+                self.stdin = _CloseRaises(self.stdin, RuntimeError("close failed"))
 
         def kill(self) -> None:
-            super().kill()  # the child does die: only the call fails
-            if kill_error is not None:
-                raise kill_error
+            if case in ("kill_fails", "reap_times_out"):
+                if case == "kill_fails":
+                    raise PermissionError("kill refused")
+                return  # reports success, sends nothing
+            super().kill()
+            if case == "kill_interrupted":
+                raise KeyboardInterrupt("during the kill")
+            if case in ("kill_raises", "notes_not_a_list"):
+                raise RuntimeError("kill failed")
 
         def wait(self, timeout: float | None = None) -> int:
             if case == "second_interrupt":
@@ -678,32 +722,97 @@ def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
         yield b"x" * 16
         raise error
 
+    monkeypatch.setattr(clocks._video, "_REAP_WAIT", 0.2)
     monkeypatch.setattr(clocks._video.subprocess, "Popen", Failing)
+    begun = time.monotonic()
     try:
         with pytest.raises(type(error)) as raised:
             _run_encoder([sys.executable, "-c", _SLEEPING_CHILD], frames())
+        elapsed = time.monotonic() - begun
         reaped = [process.returncode for process in started]
     finally:
         for process in started:
             if process.returncode is None:
-                real_wait(process)  # killed above; reap it
+                os.kill(process.pid, signal.SIGKILL)
+                real_wait(process)
 
     assert raised.value is error
-    note = (
-        "cancelling the encoder, could not {}: {}; "
-        "it may be unreaped, with its input open"
+    assert elapsed < 5
+
+    def note(step: str, cause: str) -> str:
+        return (
+            f"cancelling the encoder, could not {step}: {cause}; "
+            "it may still be running"
+        )
+
+    timed_out = (
+        "cancelling the encoder, it was not reaped within 0.2 s: "
+        "it may still be running"
     )
-    if case == "kill_raises":
-        assert error.__notes__ == [note.format("kill it", "RuntimeError: kill failed")]
-        assert reaped == [-signal.SIGKILL]
-    elif case == "second_interrupt":
-        assert error.__notes__ == [
-            note.format("reap it", "KeyboardInterrupt: the second")
-        ]
-        assert reaped == [None]
-    else:
-        assert error.__notes__ == ()
-        assert reaped == [-signal.SIGKILL]
+    expected = {
+        "kill_fails": (
+            [note("kill it", "PermissionError: kill refused"), timed_out],
+            None,
+        ),
+        "kill_interrupted": (
+            [note("kill it", "KeyboardInterrupt: during the kill")],
+            -signal.SIGKILL,
+        ),
+        "kill_raises": (
+            [note("kill it", "RuntimeError: kill failed")],
+            -signal.SIGKILL,
+        ),
+        "close_raises": (
+            [note("close its input", "RuntimeError: close failed")],
+            -signal.SIGKILL,
+        ),
+        "reap_times_out": ([timed_out], None),
+        "second_interrupt": ([note("reap it", "KeyboardInterrupt: the second")], None),
+        "notes_not_a_list": ((), -signal.SIGKILL),
+    }[case]
+    assert error.__notes__ == expected[0]
+    assert reaped == [expected[1]]
+
+
+def test_feed_writes_every_byte_of_a_frame_across_partial_writes() -> None:
+    """Only this catches a frame written with one ``write`` call, whose
+    partial write would drop the rest of the frame."""
+
+    class Trickle:
+        def __init__(self) -> None:
+            self.received = bytearray()
+            self.closed = False
+
+        def write(self, data) -> int:
+            taken = bytes(data[:5])
+            self.received += taken
+            return len(taken)
+
+        def close(self) -> None:
+            self.closed = True
+
+    pipe = Trickle()
+    frames = [b"0123456789abcdefghijk", b"xyz"]
+
+    assert _feed(pipe, frames) is True
+    assert bytes(pipe.received) == b"".join(frames)
+    assert pipe.closed
+
+
+@pytest.mark.parametrize("taken", [None, 0])
+def test_feed_refuses_a_write_that_takes_nothing(taken: int | None) -> None:
+    """Only this catches a write that takes no bytes being passed over, which
+    would drop the frame or loop for ever."""
+
+    class Stuck:
+        def write(self, data) -> int | None:
+            return taken
+
+        def close(self) -> None:
+            pass
+
+    with pytest.raises(EncoderError, match="took no bytes"):
+        _feed(Stuck(), [b"frame"])
 
 
 def test_encode_looks_for_the_encoder_first(

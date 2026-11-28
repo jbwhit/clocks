@@ -720,6 +720,35 @@ def test_a_failed_cleanup_does_not_mask_the_write_error(
     assert path.read_bytes() == before
 
 
+def test_a_cleanup_note_that_cannot_be_added_keeps_the_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only this catches the archive's cleanup note replacing the write error
+    when that error's ``__notes__`` is not a list (``add_note`` raises)."""
+    path = tmp_path / "x.npz"
+    error = OSError(errno.ENOSPC, "No space left on device")
+    error.__notes__ = ()
+
+    def disk_full(target: IO[bytes], **arrays: object) -> None:
+        raise error
+
+    real_unlink = Path.unlink
+
+    def cannot_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".tmp"):
+            raise PermissionError("cannot remove")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(np, "savez_compressed", disk_full)
+    monkeypatch.setattr(Path, "unlink", cannot_unlink)
+    with pytest.raises(OSError) as raised:
+        save_replay(path, _another_replay())
+    monkeypatch.undo()
+
+    assert raised.value is error
+    assert error.__notes__ == ()
+
+
 @pytest.mark.parametrize("name", EACH_FIXTURE)
 def test_create_writes_a_loadable_archive_at_a_free_path(
     name: str, tmp_path: Path

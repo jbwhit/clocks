@@ -310,17 +310,24 @@ def test_no_output_is_written_through_a_link_or_onto_a_leftover(
     assert _staged_names(tmp_path) == []
 
 
-def test_a_directory_at_the_staged_clip_name_stops_the_run_before_staging(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("suffix", ["npz", "mp4"])
+def test_a_directory_at_a_staged_name_stops_the_run_before_staging(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    suffix: str,
 ) -> None:
-    """Only this catches the run not unlinking the clip's staged name, or doing
-    so only after it has staged the archive and PNG: a directory there must
-    stop the run before anything is staged or drawn (each of those steps is a
-    spy that fails the test), which a later replace onto the name would not."""
+    """Only this catches the run not unlinking an output's staged name (the
+    archive's or the clip's), or unlinking the clip's only after it has staged
+    the archive and PNG: a directory there must stop the run before anything
+    is staged or drawn (each of those steps is a spy that fails the test).
+    Only a directory shows it: a stale file or link at a staged name is
+    replaced anyway, by the ``os.replace`` that ``save_replay`` and ``encode``
+    end with."""
     _existing_set(tmp_path)
-    staged_clip = tmp_path / f"{STAGED}demo_1d.mp4"
-    staged_clip.mkdir()
-    (staged_clip / "kept").write_bytes(b"inside")
+    staged_dir = tmp_path / f"{STAGED}demo_1d.{suffix}"
+    staged_dir.mkdir()
+    (staged_dir / "kept").write_bytes(b"inside")
 
     def never(what: str):
         def step(*args, **kwargs):
@@ -336,8 +343,8 @@ def test_a_directory_at_the_staged_clip_name_stops_the_run_before_staging(
         write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
 
     assert _contents(tmp_path) == OLD
-    assert (staged_clip / "kept").read_bytes() == b"inside"
-    assert _staged_names(tmp_path) == [staged_clip.name]
+    assert (staged_dir / "kept").read_bytes() == b"inside"
+    assert _staged_names(tmp_path) == [staged_dir.name]
     assert capsys.readouterr().out == ""
 
 
@@ -345,10 +352,11 @@ def test_a_directory_at_the_staged_clip_name_stops_the_run_before_staging(
 def test_a_clip_that_does_not_decode_to_every_frame_is_not_published(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str
 ) -> None:
-    """Only this catches a clip published when it decodes to more frames than
-    were sent, a decode error or a decoder that cannot be started reaching the
-    command as other than an `EncoderError` naming the clip. A clip published
-    with no decode check at all it catches with the themed-clip test (Review
+    """Only this catches a decode error or a decoder that cannot be started
+    reaching the command as other than an `EncoderError` naming the clip. A
+    clip published when it decodes to more frames than were sent it catches
+    with the decode-count test's `[mismatch]`, and one published with no
+    decode check at all with that case and the themed-clip test (Review
     Focus 4)."""
     _existing_set(tmp_path)
     monkeypatch.setattr(common, "render_clip", _clip_stand_in([], b"short clip"))
@@ -403,16 +411,17 @@ def test_the_decode_check_counts_against_the_frames_this_clip_sent(
     assert _staged_names(tmp_path) == []
 
 
-@pytest.mark.parametrize("suffix", ["png", "mp4"])
+@pytest.mark.parametrize("suffix", ["npz", "png", "mp4"])
 def test_a_directory_at_an_output_name_stops_the_run_before_anything_changes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     suffix: str,
 ) -> None:
-    """Only this catches a directory collision, at the PNG's name or the
-    clip's, found by a rename part-way through publication, after the archive
-    had been replaced, or found only once the clip has been drawn."""
+    """Only this catches a directory collision, at the archive's, the PNG's or
+    the clip's name, found by a rename part-way through publication, after
+    the archive had been replaced, or found only once the clip has been
+    drawn."""
     _existing_set(tmp_path)
     collision = tmp_path / f"demo_1d.{suffix}"
     collision.unlink()
@@ -520,6 +529,35 @@ def test_a_failed_cleanup_keeps_the_error_and_removes_the_rest(
     notes = getattr(raised.value, "__notes__", [])
     assert len(notes) == 1
     assert staged_png in notes[0] and "left behind" in notes[0]
+    assert _staged_names(tmp_path) == [staged_png]
+    assert _contents(tmp_path) == OLD
+
+
+def test_a_cleanup_note_that_cannot_be_added_keeps_the_error_and_removes_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches a removal's note replacing the run's own error when
+    that error's ``__notes__`` is not a list, or stopping the removal of the
+    staged files after it (here the PNG, staged second of three)."""
+    _existing_set(tmp_path)
+    staged_png = f"{STAGED}demo_1d.png"
+    error = EncoderError("the encoder failed")
+    error.__notes__ = ()
+
+    def failing(replay, path, *, theme="light", encoder=None):
+        path.write_bytes(b"partial")
+        png = path.with_name(staged_png)
+        png.unlink()
+        png.mkdir()  # removing a directory with unlink() raises OSError
+        raise error
+
+    monkeypatch.setattr(common, "render_clip", failing)
+
+    with pytest.raises(EncoderError) as raised:
+        write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
+
+    assert raised.value is error
+    assert error.__notes__ == ()
     assert _staged_names(tmp_path) == [staged_png]
     assert _contents(tmp_path) == OLD
 
