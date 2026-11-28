@@ -1844,7 +1844,7 @@ _RENDERER_IMPORTS = frozenset(
         "clocks._figures",
         "clocks._video",
         "clocks._sources",
-        "clocks._notes",  # a best-effort exception note; it imports nothing
+        "clocks._notes",  # cleanup notes; it imports only the standard library
     }
 )
 

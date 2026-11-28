@@ -1,15 +1,26 @@
-"""A best-effort note on an exception that is already propagating."""
+"""A cleanup step whose failure becomes a note on an error that is propagating."""
+
+from collections.abc import Callable
 
 
-def add_note(error: BaseException, message: str) -> None:
-    """Add ``message`` to ``error``'s notes if it can be added, and never raise.
+def attempt(
+    error: BaseException,
+    step: Callable[[], object],
+    describe: Callable[[BaseException], str],
+) -> None:
+    """Run the cleanup ``step``; if it raises anything, note it on ``error``.
 
-    Cleanup code records what it could not undo as a note on the error that
-    made it run; that note must never replace the error. ``add_note`` raises
-    ``TypeError`` when ``__notes__`` is not a list, and an interrupt can arrive
-    while it runs: either way the note is dropped and ``error`` is kept.
+    Cleanup code runs while ``error`` propagates, and nothing it does may
+    replace that error. So any exception from ``step`` (an interrupt
+    included) is caught, and ``describe(step_error)`` is both built and added
+    as a note inside the same guard: a description that raises, a
+    ``__notes__`` that is not a list, or an interrupt while the note is added
+    each drop the note, never ``error``. This never raises.
     """
     try:
-        error.add_note(message)
-    except BaseException:
-        pass  # the original error is what the caller must see, note or not
+        step()
+    except BaseException as step_error:
+        try:
+            error.add_note(describe(step_error))
+        except BaseException:
+            pass  # the original error is what the caller must see, note or not

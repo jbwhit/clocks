@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 from collections.abc import Callable, Sequence
+from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -13,7 +14,7 @@ from matplotlib.figure import Figure
 
 from clocks._clips import BUILDERS, render_clip
 from clocks._figures import trace_decimals
-from clocks._notes import add_note
+from clocks._notes import attempt
 from clocks._replay import Replay, save_replay
 from clocks._style import THEMES, Palette, save_png, style
 from clocks._video import EncoderError, EncoderNotFound, find_encoder, probe
@@ -249,9 +250,15 @@ def _check_clip(path: Path, sent: int, encoder: str) -> None:
 
 
 def _remove(paths: list[Path], error: BaseException) -> None:
-    """Remove ``paths``; a removal that fails is a note on ``error``."""
+    """Try to remove each of ``paths``; a removal that fails, an interrupt
+    included, is a note on ``error`` (``clocks._notes.attempt``)."""
     for path in paths:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as cleanup_error:
-            add_note(error, f"{path} was left behind: {cleanup_error}")
+        attempt(
+            error,
+            partial(path.unlink, missing_ok=True),
+            partial(_left_behind, path),
+        )
+
+
+def _left_behind(path: Path, failure: BaseException) -> str:
+    return f"{path} was left behind: {failure}"

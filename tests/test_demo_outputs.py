@@ -310,7 +310,7 @@ def test_no_output_is_written_through_a_link_or_onto_a_leftover(
     assert _staged_names(tmp_path) == []
 
 
-@pytest.mark.parametrize("suffix", ["npz", "mp4"])
+@pytest.mark.parametrize("suffix", ["npz", "png", "mp4"])
 def test_a_directory_at_a_staged_name_stops_the_run_before_staging(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -420,18 +420,24 @@ def test_a_directory_at_an_output_name_stops_the_run_before_anything_changes(
 ) -> None:
     """Only this catches a directory collision, at the archive's, the PNG's or
     the clip's name, found by a rename part-way through publication, after
-    the archive had been replaced, or found only once the clip has been
-    drawn."""
+    the archive had been replaced, or found only once something has been
+    staged (the archive's and PNG's staging and the clip's drawing are spies
+    that fail the test)."""
     _existing_set(tmp_path)
     collision = tmp_path / f"demo_1d.{suffix}"
     collision.unlink()
     collision.mkdir()
     (collision / "kept").write_bytes(b"inside")
 
-    def never(replay, path, *, theme="light", encoder=None):
-        pytest.fail("the clip was drawn")
+    def never(what: str):
+        def step(*args, **kwargs):
+            pytest.fail(f"{what} before the preflight")
 
-    monkeypatch.setattr(common, "render_clip", never)
+        return step
+
+    monkeypatch.setattr(common, "save_replay", never("the archive was staged"))
+    monkeypatch.setattr(common, "_stage_png", never("the PNG was staged"))
+    monkeypatch.setattr(common, "render_clip", never("the clip was drawn"))
 
     with pytest.raises(IsADirectoryError, match="is a directory"):
         write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
@@ -508,9 +514,10 @@ def test_an_interrupted_run_leaves_every_existing_output_as_it_was(
 def test_a_failed_cleanup_keeps_the_error_and_removes_the_rest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Only this catches a staged file that cannot be removed replacing the
-    run's own error, or stopping the removal of the staged files after it
-    (here the PNG, staged second of three)."""
+    """Catches a staged file that cannot be removed replacing the run's own
+    error, or stopping the removal of the staged files after it (here the
+    PNG, staged second of three); the Task 7 rows name the tests that share
+    each edit."""
     _existing_set(tmp_path)
     staged_png = f"{STAGED}demo_1d.png"
 
@@ -559,6 +566,39 @@ def test_a_cleanup_note_that_cannot_be_added_keeps_the_error_and_removes_the_res
     assert raised.value is error
     assert error.__notes__ == ()
     assert _staged_names(tmp_path) == [staged_png]
+    assert _contents(tmp_path) == OLD
+
+
+def test_an_interrupted_removal_keeps_the_error_and_removes_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches an interrupt while a staged file is removed replacing
+    the run's own error, or stopping the removal of the staged files after it
+    (here the PNG's, second of three); the interrupt becomes the note."""
+    _existing_set(tmp_path)
+    error = EncoderError("the encoder failed")
+    failing = _clip_stand_in([], b"partial", error)
+    real_unlink = Path.unlink
+    calls: list[str] = []
+
+    def interrupted(self: Path, missing_ok: bool = False) -> None:
+        if self.name.startswith(STAGED):
+            calls.append(self.name)
+            if self.name == f"{STAGED}demo_1d.png" and len(calls) > 3:
+                raise KeyboardInterrupt("during the removal")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(common, "render_clip", failing)
+    monkeypatch.setattr(Path, "unlink", interrupted)
+    # BaseException: an escaped interrupt would end the session.
+    with pytest.raises(BaseException) as raised:
+        write_outputs(small("demo_1d"), tmp_path, final_frame, encoder="the-encoder")
+    monkeypatch.undo()
+
+    assert raised.value is error
+    staged_png = tmp_path / f"{STAGED}demo_1d.png"
+    assert error.__notes__ == [f"{staged_png} was left behind: during the removal"]
+    assert _staged_names(tmp_path) == [staged_png.name]
     assert _contents(tmp_path) == OLD
 
 

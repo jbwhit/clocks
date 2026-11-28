@@ -6,11 +6,11 @@ dwell asks, at ``FPS`` frames a second. The encoder is FFmpeg: the binary that
 library), else ``ffmpeg`` on ``PATH``. ``probe`` runs the same binary as a
 decoder, since the bundle has no ``ffprobe``, and reads its report.
 
-Only the standard library, and ``clocks._notes`` (which imports nothing), are
-imported at module level, so ``clocks.viz`` still imports from a wheel installed
-without the encoder. The two functions ``_run_encoder`` and ``_run_decoder``
-are the only places a process is started; tests replace them to check
-arguments and failure handling.
+Only the standard library, and ``clocks._notes`` (which imports only the
+standard library), are imported at module level, so ``clocks.viz`` still
+imports from a wheel installed without the encoder. The two functions
+``_run_encoder`` and ``_run_decoder`` are the only places a process is
+started; tests replace them to check arguments and failure handling.
 """
 
 import os
@@ -20,11 +20,11 @@ import shutil
 import struct
 import subprocess
 import tempfile
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import IO, NamedTuple
 
-from clocks._notes import add_note
+from clocks._notes import attempt
 
 FPS = 20
 
@@ -32,6 +32,7 @@ _TAIL_LINES = 20
 
 # Seconds a cancelled encoder, already sent SIGKILL, is given to be reaped.
 _REAP_WAIT = 5.0
+_RUNNING = "it may still be running"
 
 
 class EncoderNotFound(RuntimeError):
@@ -42,8 +43,8 @@ class EncoderError(RuntimeError):
     """The encoder failed, or its clip cannot be trusted.
 
     Raised when the encoder exits with a non-zero status; exits 0 after a
-    write to it, or the close of its input, broke the pipe; or cannot be
-    started at all. Asked for ``-version`` (``encoder_version``), it is raised
+    write to it broke the pipe; takes no bytes of a write (``_feed``); or
+    cannot be started at all. Asked for ``-version`` (``encoder_version``), it is raised
     when the binary exits non-zero, or exits 0 and prints no version line.
     The demo commands raise it too (``clocks._demos._common._check_clip``) for
     a clip whose decoder cannot be started, that does not decode, or that
@@ -128,8 +129,8 @@ def encode(
     Each frame, ``width * height * 4`` bytes, is written ``count`` times. The
     pairs are taken one at a time, so a clip is never held in memory. The clip
     is written beside ``path`` under a temporary name and moved into place only
-    when the encoder exits 0 and no write to it, nor the close of its input,
-    failed with a broken pipe; on any failure ``path`` is left as it was.
+    when the encoder exits 0 and no write to it failed with a broken pipe; on
+    any failure ``path`` is left as it was.
     Returns the number of frames sent with no broken pipe seen, which is not a
     count of the frames in the file.
 
@@ -175,10 +176,11 @@ def encode(
             )
         os.replace(temporary, target)
     except BaseException as error:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError as cleanup_error:
-            add_note(error, f"{temporary} was left behind: {cleanup_error}")
+        attempt(
+            error,
+            lambda: temporary.unlink(missing_ok=True),
+            lambda failure: f"{temporary} was left behind: {failure}",
+        )
         raise
     return written
 
@@ -331,38 +333,42 @@ def _cancel(process: subprocess.Popen, error: BaseException) -> None:
     The encode is abandoned and its clip discarded, so the encoder is killed
     outright. Nothing here can block without limit: the input is unbuffered,
     so its close flushes nothing, and the reap waits at most ``_REAP_WAIT``
-    seconds. Each step is best-effort, and one that fails, a second interrupt
-    included, is recorded as a note on ``error`` (``clocks._notes.add_note``)
-    and never replaces it. If the kill fails, the encoder is left running; if
-    the reap times out or fails, it is left unreaped: either way it may still
-    create its temporary file after ``encode`` has tried to remove it.
+    seconds. Each step runs through ``clocks._notes.attempt``: one that fails,
+    a second interrupt included, never replaces ``error`` and never stops the
+    steps after it, and is noted on it, with what it leaves, when a note can
+    be added. If the kill fails, the encoder is left running; if the close
+    fails, its input may stay open; if the reap times out or fails, it is left
+    unreaped. A surviving encoder may still create its temporary file after
+    ``encode`` has tried to remove it.
     """
-    try:
-        process.kill()
-    except BaseException as step_error:
-        _note(error, "could not kill it", step_error)
-    try:
-        process.stdin.close()
-    except BaseException as step_error:
-        _note(error, "could not close its input", step_error)
-    try:
-        process.wait(timeout=_REAP_WAIT)
-    except subprocess.TimeoutExpired:
-        add_note(
-            error,
-            f"cancelling the encoder, it was not reaped within {_REAP_WAIT:g} s: "
-            "it may still be running",
-        )
-    except BaseException as step_error:
-        _note(error, "could not reap it", step_error)
-
-
-def _note(error: BaseException, what: str, step_error: BaseException) -> None:
-    add_note(
+    attempt(error, process.kill, _step_note("could not kill it", _RUNNING))
+    attempt(
         error,
-        f"cancelling the encoder, {what}: {type(step_error).__name__}: "
-        f"{step_error}; it may still be running",
+        process.stdin.close,
+        _step_note("could not close its input", "its input may still be open"),
     )
+    attempt(error, lambda: process.wait(timeout=_REAP_WAIT), _reap_note)
+
+
+def _step_note(what: str, leaves: str) -> Callable[[BaseException], str]:
+    """Describe a failed cancellation step, and what it leaves."""
+
+    def describe(failure: BaseException) -> str:
+        return (
+            f"cancelling the encoder, {what}: {type(failure).__name__}: {failure}; "
+            f"{leaves}"
+        )
+
+    return describe
+
+
+def _reap_note(failure: BaseException) -> str:
+    if isinstance(failure, subprocess.TimeoutExpired):
+        return (
+            f"cancelling the encoder, it was not reaped within {_REAP_WAIT:g} s: "
+            f"{_RUNNING}"
+        )
+    return _step_note("could not reap it", "it may be left unreaped")(failure)
 
 
 def _feed(pipe: IO[bytes], frames: Iterable[bytes]) -> bool:

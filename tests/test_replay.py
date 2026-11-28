@@ -749,6 +749,36 @@ def test_a_cleanup_note_that_cannot_be_added_keeps_the_write_error(
     assert error.__notes__ == ()
 
 
+def test_an_interrupted_cleanup_keeps_the_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only this catches an interrupt while the archive's temporary file is
+    removed replacing the write error; the interrupt becomes the note."""
+    path = tmp_path / "x.npz"
+    error = OSError(errno.ENOSPC, "No space left on device")
+
+    def disk_full(target: IO[bytes], **arrays: object) -> None:
+        raise error
+
+    real_unlink = Path.unlink
+
+    def interrupted(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".tmp"):
+            raise KeyboardInterrupt("during the unlink")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(np, "savez_compressed", disk_full)
+    monkeypatch.setattr(Path, "unlink", interrupted)
+    # BaseException: an escaped interrupt would end the session.
+    with pytest.raises(BaseException) as raised:
+        save_replay(path, _another_replay())
+    monkeypatch.undo()
+
+    assert raised.value is error
+    [note] = error.__notes__
+    assert note.endswith(".tmp was left behind: during the unlink")
+
+
 @pytest.mark.parametrize("name", EACH_FIXTURE)
 def test_create_writes_a_loadable_archive_at_a_free_path(
     name: str, tmp_path: Path

@@ -184,14 +184,16 @@ def _module_level_imports(tree: ast.Module) -> Iterator[str]:
 
 def test_video_module_imports_only_the_standard_library() -> None:
     """The one module of the package it imports, ``clocks._notes``, imports
-    nothing at all, so a wheel without the encoder still imports it."""
+    only the standard library at module level, so a wheel without the encoder
+    still imports it."""
     source = (ROOT / "src" / "clocks" / "_video.py").read_text()
     names = list(_module_level_imports(ast.parse(source)))
     assert names, "no module-level import was found"
     outside = [n for n in names if n.split(".")[0] not in sys.stdlib_module_names]
     assert outside == ["clocks._notes"]
     notes = (ROOT / "src" / "clocks" / "_notes.py").read_text()
-    assert list(_module_level_imports(ast.parse(notes))) == []
+    imported = list(_module_level_imports(ast.parse(notes)))
+    assert [n for n in imported if n.split(".")[0] not in sys.stdlib_module_names] == []
 
 
 def test_the_encoder_command_is_the_designs(
@@ -471,7 +473,9 @@ def test_an_encoder_that_stops_reading_early_is_an_error(
 def test_a_failed_cleanup_keeps_the_encoders_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Only this catches the cleanup's own error replacing the encoder's."""
+    """Catches the cleanup's own error replacing the encoder's, or a note that
+    does not name what was left behind (the Task 7 rows name the tests that
+    share each edit)."""
     made: list[Path] = []
 
     def stand_in(command, frames) -> tuple[int, str]:
@@ -510,6 +514,37 @@ def test_a_cleanup_note_that_cannot_be_added_keeps_the_encoders_error(
 
     assert raised.value is error
     assert error.__notes__ == ()
+
+
+def test_an_interrupted_cleanup_keeps_the_encoders_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only this catches an interrupt while `encode` removes its temporary
+    file replacing the error it is cleaning up after; the interrupt becomes
+    the note instead."""
+    error = ValueError("drawing failed")
+
+    def stand_in(command, frames) -> tuple[int, str]:
+        Path(command[-1]).write_bytes(b"partial")
+        raise error
+
+    real_unlink = Path.unlink
+
+    def interrupted(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".part"):
+            raise KeyboardInterrupt("during the unlink")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(clocks._video, "_run_encoder", stand_in)
+    monkeypatch.setattr(Path, "unlink", interrupted)
+    # BaseException: an escaped interrupt would end the session.
+    with pytest.raises(BaseException) as raised:
+        encode(_small_clip(), tmp_path / "clip.mp4", width=64, height=48, encoder="e")
+    monkeypatch.undo()
+
+    assert raised.value is error
+    [note] = error.__notes__
+    assert note.endswith(".part was left behind: during the unlink")
 
 
 # Reads its input to the end, then stays alive: an encoder still finishing.
@@ -591,8 +626,9 @@ def _fill(fd: int) -> None:
 def test_a_cancelled_encode_with_a_full_pipe_ends_promptly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Only this catches the cancellation leaving the encoder's input open, or
-    the input buffered (a close would then flush into the full pipe).
+    """Catches the cancellation leaving the encoder's input open, or the input
+    buffered (a close would then flush into the full pipe); the Task 7 rows
+    name the tests that share each edit.
     Here the pipe is full, the child never reads and ignores SIGTERM, and the
     producer then fails: the encoder is killed and reaped within a few
     seconds (a watchdog, after 10 s, must not have to), with no note, since
@@ -663,11 +699,20 @@ class _CloseRaises:
         raise self.error
 
 
+class _Unprintable(Exception):
+    """An exception whose description itself raises."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("cannot describe it")
+
+
 _CANCEL_CASES = (
     "kill_fails",
     "kill_interrupted",
     "kill_raises",
+    "kill_error_unprintable",
     "close_raises",
+    "close_interrupted",
     "reap_times_out",
     "second_interrupt",
     "notes_not_a_list",
@@ -678,22 +723,29 @@ _CANCEL_CASES = (
 def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
     monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
-    """Only this catches a cleanup step's own exception replacing the error
-    that cancelled the encode, or a failed step blocking the cleanup. Each
+    """Catches a cleanup step's own exception replacing the error that
+    cancelled the encode, a failed step blocking the cleanup or skipping the
+    steps after it, or a note that does not say what its step leaves. Each
     case fails one step: ``kill()`` raising without killing (the reap then
-    times out, within a bound), raising an interrupt, or raising a non-OSError;
-    the close raising a non-OSError; the reap timing out; a second interrupt
-    while reaping; and a note that cannot be added (``__notes__`` not a list).
-    The reap waits ``_REAP_WAIT`` seconds, patched to 0.2."""
+    times out, within a bound), raising an interrupt, a non-OSError, or an
+    exception whose description itself raises; the close raising a
+    non-OSError or an interrupt; the reap timing out; a second interrupt while
+    reaping; and a note that cannot be added (``__notes__`` not a list). The
+    input is closed in every case. The reap waits ``_REAP_WAIT`` seconds,
+    patched to 0.2. The Task 7 rows name the cases each edit fails."""
     real_wait = subprocess.Popen.wait  # the patch below replaces the class
     started: list[subprocess.Popen] = []
+    close_error = {
+        "close_raises": RuntimeError("close failed"),
+        "close_interrupted": KeyboardInterrupt("during the close"),
+    }.get(case)
 
     class Failing(subprocess.Popen):
         def __init__(self, args, **kwargs) -> None:
             super().__init__(args, **kwargs)
             started.append(self)
-            if case == "close_raises":
-                self.stdin = _CloseRaises(self.stdin, RuntimeError("close failed"))
+            if close_error is not None:
+                self.stdin = _CloseRaises(self.stdin, close_error)
 
         def kill(self) -> None:
             if case in ("kill_fails", "reap_times_out"):
@@ -705,6 +757,8 @@ def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
                 raise KeyboardInterrupt("during the kill")
             if case in ("kill_raises", "notes_not_a_list"):
                 raise RuntimeError("kill failed")
+            if case == "kill_error_unprintable":
+                raise _Unprintable()
 
         def wait(self, timeout: float | None = None) -> int:
             if case == "second_interrupt":
@@ -732,6 +786,7 @@ def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
             _run_encoder([sys.executable, "-c", _SLEEPING_CHILD], frames())
         elapsed = time.monotonic() - begun
         reaped = [process.returncode for process in started]
+        closed = [getattr(p.stdin, "pipe", p.stdin).closed for p in started]
     finally:
         for process in started:
             if process.returncode is None:
@@ -740,40 +795,68 @@ def test_a_failing_cleanup_step_never_replaces_the_cancelling_error(
 
     assert raised.value is error
     assert elapsed < 5
+    assert closed == [True]
 
-    def note(step: str, cause: str) -> str:
-        return (
-            f"cancelling the encoder, could not {step}: {cause}; "
-            "it may still be running"
-        )
+    def note(step: str, cause: str, leaves: str) -> str:
+        return f"cancelling the encoder, could not {step}: {cause}; {leaves}"
 
-    timed_out = (
-        "cancelling the encoder, it was not reaped within 0.2 s: "
-        "it may still be running"
-    )
+    running = "it may still be running"
+    timed_out = f"cancelling the encoder, it was not reaped within 0.2 s: {running}"
     expected = {
         "kill_fails": (
-            [note("kill it", "PermissionError: kill refused"), timed_out],
+            [note("kill it", "PermissionError: kill refused", running), timed_out],
             None,
         ),
         "kill_interrupted": (
-            [note("kill it", "KeyboardInterrupt: during the kill")],
+            [note("kill it", "KeyboardInterrupt: during the kill", running)],
             -signal.SIGKILL,
         ),
         "kill_raises": (
-            [note("kill it", "RuntimeError: kill failed")],
+            [note("kill it", "RuntimeError: kill failed", running)],
             -signal.SIGKILL,
         ),
+        "kill_error_unprintable": (None, -signal.SIGKILL),
         "close_raises": (
-            [note("close its input", "RuntimeError: close failed")],
+            [
+                note(
+                    "close its input",
+                    "RuntimeError: close failed",
+                    "its input may still be open",
+                )
+            ],
+            -signal.SIGKILL,
+        ),
+        "close_interrupted": (
+            [
+                note(
+                    "close its input",
+                    "KeyboardInterrupt: during the close",
+                    "its input may still be open",
+                )
+            ],
             -signal.SIGKILL,
         ),
         "reap_times_out": ([timed_out], None),
-        "second_interrupt": ([note("reap it", "KeyboardInterrupt: the second")], None),
+        "second_interrupt": (
+            [
+                note(
+                    "reap it",
+                    "KeyboardInterrupt: the second",
+                    "it may be left unreaped",
+                )
+            ],
+            None,
+        ),
         "notes_not_a_list": ((), -signal.SIGKILL),
     }[case]
-    assert error.__notes__ == expected[0]
+    assert getattr(error, "__notes__", None) == expected[0]
     assert reaped == [expected[1]]
+
+
+def test_the_default_reap_wait_is_a_short_bound() -> None:
+    """Only this catches the reap's default limit set so long that a
+    cancelled encode could wait for minutes (the other tests patch it)."""
+    assert 0 < clocks._video._REAP_WAIT <= 10
 
 
 def test_feed_writes_every_byte_of_a_frame_across_partial_writes() -> None:
@@ -815,6 +898,46 @@ def test_feed_refuses_a_write_that_takes_nothing(taken: int | None) -> None:
 
     with pytest.raises(EncoderError, match="took no bytes"):
         _feed(Stuck(), [b"frame"])
+
+
+class _CutOff:
+    """Takes 5 bytes of the first write, then finds the read end closed."""
+
+    def __init__(self) -> None:
+        self.writes = 0
+        self.closed = False
+
+    def write(self, data) -> int:
+        self.writes += 1
+        if self.writes == 1:
+            return 5
+        raise BrokenPipeError("the read end closed")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_a_frame_cut_off_by_a_broken_pipe_is_not_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a broken pipe part-way through a frame ending only that frame
+    (writing would go on with the next), or reported as complete; and an
+    encoder that exits 0 after it being trusted."""
+    pipe = _CutOff()
+
+    assert _feed(pipe, [b"0123456789", b"abc"]) is False
+    assert (pipe.writes, pipe.closed) == (2, True)
+
+    class ExitsZero:
+        def __init__(self, *args, **kwargs) -> None:
+            self.stdin = _CutOff()
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    monkeypatch.setattr(clocks._video.subprocess, "Popen", ExitsZero)
+    with pytest.raises(EncoderError, match="before reading all of its input"):
+        _run_encoder(["the-encoder", "clip.mp4"], iter([b"0123456789"]))
 
 
 def test_encode_looks_for_the_encoder_first(

@@ -23,7 +23,7 @@ import numpy as np
 import scipy
 from numpy.typing import NDArray
 
-from clocks._notes import add_note
+from clocks._notes import attempt
 from clocks.api import build_particle_filter, simulate
 from clocks.config import InferenceConfig, NoiseConfig, PriorConfig, SimulationConfig
 from clocks.types import ClockArray, MassConfig, Observation
@@ -153,10 +153,11 @@ def _write_archive(
     except BaseException as error:
         # The write or the publishing failed: remove the temporary file, and if
         # that fails too, keep the original error and say what was left behind.
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError as cleanup_error:
-            add_note(error, f"{temporary} was left behind: {cleanup_error}")
+        attempt(
+            error,
+            lambda: temporary.unlink(missing_ok=True),
+            lambda failure: f"{temporary} was left behind: {failure}",
+        )
         raise
 
 
